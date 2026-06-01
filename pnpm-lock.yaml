@@ -100,6 +100,21 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/opencode-go-provider:
+    devDependencies:
+      '@mariozechner/pi-ai':
+        specifier: ^0.63.1
+        version: 0.63.1(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-coding-agent':
+        specifier: ^0.63.1
+        version: 0.63.1(ws@8.20.0)(zod@4.3.6)
+      tsdown:
+        specifier: ^0.16.8
+        version: 0.16.8(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/session-name:
     devDependencies:
       '@mariozechner/pi-coding-agent':
