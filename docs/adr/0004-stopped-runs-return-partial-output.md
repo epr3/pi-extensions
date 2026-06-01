@@ -1,0 +1,3 @@
+# Keep Partial Output for Stopped Subagent Runs
+
+When `stop_subagent` cancels running background run, retrieval returns status `stopped` + safely collected partial assistant output + stop reason. Hard to reverse once clients + debug workflows depend on response shape. Surprising — cancellation usually drops output. Trade-off: debuggability vs noise/privacy. Choose partial output retention for operator visibility; keep stop state explicit.
