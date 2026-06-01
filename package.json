@@ -1,0 +1,34 @@
+{
+  "name": "pi-extensions",
+  "keywords": [
+    "pi-extension"
+  ],
+  "author": "Eduard Predescu",
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
+  "version": "0.1.0",
+  "description": "Monorepo for Pi coding agent extensions with shared modules and tsdown builds.",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "build:ext": "pnpm --filter \"@epr3/pi-extension-*\" build",
+    "clean": "pnpm -r exec rm -rf dist",
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "typecheck:ext": "pnpm --filter \"@epr3/pi-extension-*\" exec tsc --noEmit",
+    "test": "pnpm -r test",
+    "lint": "oxlint packages/",
+    "lint:fix": "oxlint --fix packages/",
+    "format": "oxfmt --write packages/",
+    "format:check": "oxfmt --check packages/"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.42.0",
+    "oxlint": "^1.57.0",
+    "tsdown": "^0.16.8",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
