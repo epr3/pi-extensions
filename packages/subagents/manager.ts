@@ -23,6 +23,8 @@ export interface AgentRecord {
   error?: string;
   tokens: number;
   toolUses: number;
+  /** Extension-specific warnings (e.g. unresolvable model refs). */
+  warnings?: ReadonlyArray<{ scope: string; reference: string; type: string }>;
 }
 
 export interface LaunchTask {

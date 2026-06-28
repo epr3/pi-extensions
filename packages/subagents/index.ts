@@ -4,6 +4,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { resolveAgentType, exploreToolset, researcherToolset } from "./agents.ts";
 import { runSubagent } from "./runner.ts";
 import { AgentManager, type AgentRecord } from "./manager.ts";
+import { resolveTypeDefaultModel, checkDefaultModelWarnings } from "./model-ref.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -63,9 +64,19 @@ export default function (pi: ExtensionAPI) {
   const raw = settingsKey();
   const cfg = {
     maxConcurrency: Number(raw.maxConcurrency) > 0 ? Number(raw.maxConcurrency) : 4,
-    explore: { extraTools: Array.isArray(raw.explore?.extraTools) ? raw.explore.extraTools : [] },
-    researcher: { extraTools: Array.isArray(raw.researcher?.extraTools) ? raw.researcher.extraTools : [] },
-    general: { excludeExtraTools: Array.isArray(raw.general?.excludeExtraTools) ? raw.general.excludeExtraTools : [] },
+    explore: {
+      extraTools: Array.isArray(raw.explore?.extraTools) ? raw.explore.extraTools : [],
+      defaultModel: String(raw.explore?.defaultModel ?? "").trim() || undefined,
+    },
+    researcher: {
+      extraTools: Array.isArray(raw.researcher?.extraTools) ? raw.researcher.extraTools : [],
+      defaultModel: String(raw.researcher?.defaultModel ?? "").trim() || undefined,
+    },
+    defaultModel: String(raw.defaultModel ?? "").trim() || undefined,
+    general: {
+      excludeExtraTools: Array.isArray(raw.general?.excludeExtraTools) ? raw.general.excludeExtraTools : [],
+      defaultModel: String(raw.general?.defaultModel ?? "").trim() || undefined,
+    },
   };
   const exploreTools = exploreToolset(cfg.explore.extraTools);
   const researcherTools = researcherToolset(cfg.researcher.extraTools);
@@ -92,12 +103,41 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const type = resolveAgentType(params.subagent_type);
       const background = !!params.run_in_background;
+      // Resolve model: type-specific override → shared default → parent model.
+      // Each level: unconfigured, invalid syntax, or registry miss → fall through.
+      const model = resolveTypeDefaultModel(
+        {
+          explore: cfg.explore.defaultModel,
+          researcher: cfg.researcher.defaultModel,
+          general: cfg.general.defaultModel,
+        },
+        type,
+        cfg.defaultModel,
+        (provider, modelId) => ctx.modelRegistry.find(provider, modelId),
+        ctx.model,
+      );
+      // Compute warnings for any configured-but-broken model refs.
+      const warnings = checkDefaultModelWarnings(
+        cfg[type].defaultModel,
+        cfg.defaultModel,
+        (provider, modelId) => ctx.modelRegistry.find(provider, modelId),
+        type,
+      );
+      // Emit UI toast for each warning when the TUI is active.
+      if (warnings.length > 0 && ctx.hasUI) {
+        for (const w of warnings) {
+          ctx.ui.notify(
+            `Default ${w.scope} subagent model "${w.reference}" is ${w.type} — falling back`,
+            "warning",
+          );
+        }
+      }
       const exec = () =>
         runSubagent({
           type,
           prompt: params.prompt,
           cwd: ctx.cwd,
-          model: ctx.model,
+          model,
           ...(type === "explore" ? { tools: exploreTools } : type === "researcher" ? { tools: researcherTools } : {}),
           excludeExtraTools: cfg.general.excludeExtraTools,
         });
@@ -115,9 +155,11 @@ export default function (pi: ExtensionAPI) {
       );
 
       if (background) {
+        record.warnings = warnings;
         return textResult(`Started ${type} sub-agent ${record.id} (background). Poll with get_subagent_result.`, {
           agent_id: record.id,
           status: record.status,
+          ...(warnings.length > 0 ? { warnings } : {}),
         });
       }
 
@@ -128,6 +170,7 @@ export default function (pi: ExtensionAPI) {
         status: rec.status,
         tokens: rec.tokens,
         toolUses: rec.toolUses,
+        ...(warnings.length > 0 ? { warnings } : {}),
       });
     },
   });
