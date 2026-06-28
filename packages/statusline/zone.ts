@@ -102,6 +102,14 @@ export const ZONE_GLYPH: Record<Zone, string> = {
   caveman: "\u25D4", // ◔ a sliver
 };
 
+/** Display labels — explicit, decoupled from Zone type value casing. */
+export const ZONE_LABEL: Record<Zone, string> = {
+  sharp: "SHARP",
+  fading: "FADING",
+  risky: "RISKY",
+  caveman: "CAVEMAN",
+};
+
 /**
  * Contiguous whole-cell meter. Fractions round to the nearest whole cell,
  * clamped to an empty or full bar. Returns filled and track separately so
@@ -117,4 +125,27 @@ export function human(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
   return `${n}`;
+}
+
+/** Pre-first-response placeholder text. */
+export const AWAITING_CONTEXT_TEXT = "\u25CB awaiting context"; // ○
+
+function pct(f: number): string {
+  return `${Math.round(f * 100)}%`;
+}
+
+/** Pure status text segments, one per themed region. Use in the renderer to
+ * build the footer line, then apply zone color / dim per segment. */
+export function formatStatusSegments(
+  zone: Zone,
+  fracEff: number,
+  fracNom: number,
+  usedTokens: number,
+  window: number,
+): { glyphAndLabel: string; effPct: string; usageMeta: string } {
+  return {
+    glyphAndLabel: `${ZONE_GLYPH[zone]} ${ZONE_LABEL[zone]}`,
+    effPct: pct(fracEff),
+    usageMeta: `eff \u00B7 ${human(usedTokens)}/${human(window)} \u00B7 ${pct(fracNom)} nom`,
+  };
 }

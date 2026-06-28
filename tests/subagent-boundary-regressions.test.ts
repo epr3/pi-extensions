@@ -116,7 +116,7 @@ async function testBackgroundLaunchReturnsIdAndStartText() {
 
   // Immediate return text mirrors what index.ts returns for background.
   const startResult = textResult(
-    `Started ${record.type} sub-agent ${record.id} (background). Poll with get_subagent_result.`,
+    `Started ${record.type} Subagent ${record.id} (background). Poll with get_subagent_result.`,
     { agent_id: record.id, status: record.status },
   );
 

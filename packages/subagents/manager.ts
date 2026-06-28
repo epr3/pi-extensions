@@ -95,7 +95,7 @@ export class AgentManager {
 
   async getResult(id: string, wait = false): Promise<AgentRecord> {
     const record = this.records.get(id);
-    if (!record) throw new Error(`No sub-agent ${id}`);
+    if (!record) throw new Error(`No subagent ${id}`);
     if (wait) {
       while (record.status === "queued" || record.status === "running") {
         await new Promise((r) => setTimeout(r, 150));

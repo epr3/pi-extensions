@@ -1,8 +1,9 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { renderQuestionCall, renderQuestionResult, type QuestionResultDetails } from "./render.ts";
 
-function textResult(text: string, details?: Record<string, unknown>) {
-  return { content: [{ type: "text" as const, text }], details: details ?? {} };
+function textResult(text: string, details: QuestionResultDetails): AgentToolResult<QuestionResultDetails> {
+  return { content: [{ type: "text" as const, text }], details };
 }
 
 /**
@@ -24,7 +25,11 @@ const optionSchema = Type.Object({
 const parameters = Type.Object({
   question: Type.String({ description: "The question to ask" }),
   header: Type.Optional(Type.String({ description: "Short label shown above the question" })),
-  options: Type.Array(optionSchema, { description: "2-4 mutually-exclusive options" }),
+  options: Type.Array(optionSchema, {
+    minItems: 2,
+    maxItems: 4,
+    description: "2-4 mutually-exclusive options",
+  }),
   multiSelect: Type.Optional(Type.Boolean({ description: "Allow choosing more than one" })),
 });
 
@@ -61,9 +66,13 @@ export default function (pi: ExtensionAPI) {
       "Use question when a skill needs a decision from the user with discrete options; the picker adds a free-prose escape hatch.",
     ],
     parameters,
+    renderCall: renderQuestionCall,
+    renderResult: renderQuestionResult,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const options = ordered(params.options as Option[]);
-      if (options.length < 2) throw new Error("question: provide at least 2 options");
+      if (options.length < 2 || options.length > 4) {
+        throw new Error("question: provide 2-4 preset options");
+      }
 
       const optionDisplays = options.map(display);
       const freeTextDisplay = uniqueDisplay(FREE_TEXT_DISPLAY, [...optionDisplays, DONE_DISPLAY]);
@@ -72,7 +81,12 @@ export default function (pi: ExtensionAPI) {
         // No interactive UI (print/json mode): surface the question as text so
         // the workflow can still proceed (the model relays it to the user).
         const prose = `${params.header ? params.header + ": " : ""}${params.question}\n  · ${[...optionDisplays, freeTextDisplay].join("\n  · ")}`;
-        return textResult(prose, { options, freeTextLabel: FREE_TEXT_LABEL });
+        return textResult(prose, {
+          options,
+          freeTextLabel: FREE_TEXT_LABEL,
+          selectedLabels: [] as string[],
+          interaction: "nonInteractive",
+        });
       }
 
       const title = params.header ? `${params.header}: ${params.question}` : params.question;
@@ -104,13 +118,17 @@ export default function (pi: ExtensionAPI) {
           if (opt && !chosen.includes(opt)) chosen.push(opt);
         }
         const labels = chosen.map((o) => o.label);
+        const hasFreeText = !!freeText;
         return textResult(
-          [`Selected: ${labels.join(", ") || "(none)"}`, freeText ? `Free text: ${freeText}` : ""]
+          [`Selected: ${labels.join(", ") || "(none)"}`, hasFreeText ? `Free text: ${freeText}` : ""]
             .filter(Boolean)
             .join("\n"),
           {
-            selected: labels,
-            ...(freeText ? { freeText } : {}),
+            options,
+            freeTextLabel: FREE_TEXT_LABEL,
+            selectedLabels: labels,
+            ...(hasFreeText ? { freeText } : {}),
+            interaction: labels.length > 0 ? ("preset" as const) : hasFreeText ? ("freeProse" as const) : ("none" as const),
           },
         );
       }
@@ -118,13 +136,29 @@ export default function (pi: ExtensionAPI) {
       const sel = await ctx.ui.select(title, [...optionDisplays, freeTextDisplay]);
       if (sel === freeTextDisplay) {
         const freeText = await collectFreeText();
-        return textResult(freeText ? `Free text: ${freeText}` : "No selection", {
-          selected: freeText ? FREE_TEXT_LABEL : undefined,
-          ...(freeText ? { freeText } : {}),
-        });
+        const hasText = !!freeText;
+        return textResult(
+          hasText ? `Free text: ${freeText}` : "No selection",
+          {
+            options,
+            freeTextLabel: FREE_TEXT_LABEL,
+            selectedLabels: [] as string[],
+            freeText: hasText ? freeText : undefined,
+            interaction: hasText ? ("freeProse" as const) : ("none" as const),
+          },
+        );
       }
       const selected = sel === undefined ? undefined : byDisplay(sel)?.label;
-      return textResult(selected ? `Selected: ${selected}` : "No selection", { selected });
+      const hasSelection = !!selected;
+      return textResult(
+        hasSelection ? `Selected: ${selected}` : "No selection",
+        {
+          options,
+          freeTextLabel: FREE_TEXT_LABEL,
+          selectedLabels: hasSelection ? [selected!] : ([] as string[]),
+          interaction: hasSelection ? ("preset" as const) : ("none" as const),
+        },
+      );
     },
   });
 }

@@ -99,7 +99,7 @@ async function testRunnerPropagatesAbortToSession() {
 
   controller.abort();
 
-  await assert.rejects(promise, /Sub-agent aborted/);
+  await assert.rejects(promise, /Subagent aborted/);
   assert.strictEqual(session.aborted, true, "session.abort() was called");
   assert.strictEqual(session.disposed, true, "session was disposed");
 
@@ -129,7 +129,7 @@ async function testRunnerStopsStreamEventsAfterAbort() {
   session.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "After" } });
   session.emit({ type: "tool_execution_end", toolName: "read", toolCallId: "c1", isError: false });
 
-  await assert.rejects(promise, /Sub-agent aborted/);
+  await assert.rejects(promise, /Subagent aborted/);
 
   assert.strictEqual(received.length, 2, "only pre-abort events forwarded");
   assert.strictEqual(received[0].type, "text_delta");
@@ -152,7 +152,7 @@ async function testRunnerRejectsImmediatelyIfAlreadyAborted() {
       onStreamEvent: (e) => received.push(e),
       abortSignal: controller.signal,
     }),
-    /Sub-agent aborted/,
+    /Subagent aborted/,
   );
 
   assert.strictEqual(received.length, 0, "no stream events emitted");
@@ -263,14 +263,14 @@ function testPartialStreamTextNotPromotedToFinalResult() {
   // record.status === "failed", so the tool call throws instead of returning.
   const record = {
     status: "failed" as const,
-    error: "Sub-agent aborted",
+    error: "Subagent aborted",
     result: undefined,
   };
 
   let threw = false;
   try {
     if (record.status === "failed") {
-      throw new Error(`Sub-agent failed: ${record.error}`);
+      throw new Error(`Subagent failed: ${record.error}`);
     }
   } catch (e: any) {
     threw = true;
@@ -297,12 +297,12 @@ async function testManagerForegroundRunFailsOnAbort() {
     () =>
       new Promise((_resolve, reject) => {
         if (controller.signal.aborted) {
-          reject(new Error("Sub-agent aborted"));
+          reject(new Error("Subagent aborted"));
           return;
         }
         controller.signal.addEventListener(
           "abort",
-          () => reject(new Error("Sub-agent aborted")),
+          () => reject(new Error("Subagent aborted")),
           { once: true },
         );
       }),
@@ -354,7 +354,7 @@ async function testManagerBackgroundRunNotAffectedByParentAbort() {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log("\nSub-agent abort behavior tests\n");
+  console.log("\nSubagent abort behavior tests\n");
 
   await testRunnerPropagatesAbortToSession();
   await testRunnerStopsStreamEventsAfterAbort();

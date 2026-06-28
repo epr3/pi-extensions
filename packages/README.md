@@ -28,7 +28,7 @@ All are real Pi extensions written against the documented `ExtensionAPI`, loaded
 | `lsp` | `lsp_definition` / `implementation` / `references` / `workspace_symbols` / `document_symbols` / `hover` / `incoming_calls` / `outgoing_calls` / `diagnostics` | dependency-free stdio LSP client; runtime-tested vs a mock server |
 | `statusline` | dumb-zone footer status | uses `ctx.getContextUsage()`, `ctx.model.contextWindow`, `ctx.cwd`, `pi.exec(git)`, `ctx.ui.setStatus` |
 
-### Sub-agents: explore + researcher + general
+### Subagents: explore + researcher + general
 
 Three types by design. `explore` is read-only (`read/grep/find/ls`) for codebase discovery; `researcher` is read-only too, adding `web_search`/`web_fetch` for web/external research grounded against the code (web tools come from separate extensions — degrades gracefully if absent); `general` has all tools and inherits the normal prompt for off-context work like the parallel interface designs. No Plan agent, steering, resume, or custom `.pi/agents`.
 
