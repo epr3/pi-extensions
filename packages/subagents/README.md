@@ -1,6 +1,6 @@
-# subagents — explore + researcher + general sub-agents (Pi extension, TypeScript)
+# subagents — explore + researcher + general subagents (Pi extension, TypeScript)
 
-Adds three sub-agent types for context hygiene. The `Agent` tool surface follows the conventions of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents), and the `researcher` role takes inspiration from [`amosblomqvist/pi-subagents`](https://github.com/amosblomqvist/pi-subagents) — used as design references, not followed verbatim; this is a lean independent build pulling in only what the suite needs.
+Adds three subagent types for context hygiene. The `Agent` tool surface follows the conventions of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents), and the `researcher` role takes inspiration from [`amosblomqvist/pi-subagents`](https://github.com/amosblomqvist/pi-subagents) — used as design references, not followed verbatim; this is a lean independent build pulling in only what the suite needs.
 
 ## Agent types
 
@@ -12,7 +12,7 @@ Adds three sub-agent types for context hygiene. The `Agent` tool surface follows
 
 No `Plan` agent, no steering, no resume, no custom `.pi/agents` — deliberately omitted.
 
-## Extension tools inside sub-agents
+## Extension tools inside subagents
 
 The sub-session uses the same resource loader as the parent, so it discovers every installed extension. The two types then differ in how tools reach the model:
 
@@ -20,13 +20,13 @@ The sub-session uses the same resource loader as the parent, so it discovers eve
 - **`explore` and `researcher` are allowlists by design** — that's what makes their read-only property structural rather than promised. `explore` holds the core read tools (plus `subagents.explore.extraTools` / `PI_SUBAGENT_EXPLORE_TOOLS`); `researcher` adds `web_search` + `web_fetch` on top of the core read tools (plus `subagents.researcher.extraTools` / `PI_SUBAGENT_RESEARCHER_TOOLS`). Only ever grant **read-only** tools — anything that writes or executes belongs to `general`. Take tools away from `general` with `subagents.general.excludeExtraTools`; the safety exclusions (`Agent`, `get_subagent_result`, `question`) are fixed and not configurable.
 - The web tools come from separate Pi extensions (e.g. `amosblomqvist/pi-config`'s `web-search` / `web-fetch`). If an allowlisted tool isn't installed, the unmatched name is simply absent; should a harness version reject unknown names instead, the runner retries a **read-only** agent (`explore` or `researcher`) with the core read tools, so it degrades gracefully rather than failing.
 
-**One level deep, enforced:** sub-sessions are created with `excludeTools: ["Agent", "get_subagent_result", "question"]`, so a sub-agent cannot recursively spawn sub-agents (the resource loader would otherwise hand it this very extension) and can't block on a question no user will see. Foreground runs return their result inline; only background settles raise a notification.
+**One level deep, enforced:** sub-sessions are created with `excludeTools: ["Agent", "get_subagent_result", "question"]`, so a subagent cannot recursively spawn subagents (the resource loader would otherwise hand it this very extension) and can't block on a question no user will see. Foreground runs return their result inline; only background settles raise a notification.
 
 ## Tools
 
 - `Agent({ subagent_type, prompt, description, run_in_background? })` — foreground blocks + returns the result; background returns an id.
 - `get_subagent_result({ agent_id, wait? })` — poll/retrieve a background agent.
-- `/subagents` — list sub-agents and status.
+- `/subagents` — list subagents and status.
 
 Background agents run through a concurrency queue (default 4, `PI_SUBAGENT_CONCURRENCY`).
 
@@ -43,7 +43,7 @@ results in normal conversation context.
 
 ```typescript
 // Same-turn fan-out: multiple Agent calls in one turn, independent prompts.
-// Running the sub-agents in the foreground — same subagent_type, each call
+// Running the subagents in the foreground — same subagent_type, each call
 // returns its own record. The concurrency cap is shared between foreground
 // and background runs.
 Agent({ subagent_type: "explore", prompt: "Search A", description: "Search A" })

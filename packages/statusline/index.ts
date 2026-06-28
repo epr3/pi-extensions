@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { classify, meter, human, configFromEnv, ZONE_COLOR, ZONE_GLYPH, ZONE_DEFAULTS } from "./zone.ts";
+import { classify, meter, configFromEnv, ZONE_COLOR, ZONE_DEFAULTS, formatStatusSegments, AWAITING_CONTEXT_TEXT } from "./zone.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -51,8 +51,6 @@ function basename(p: string | undefined): string {
   return parts[parts.length - 1] ?? "";
 }
 
-const pct = (f: number) => `${Math.round(f * 100)}%`;
-
 export default function (pi: ExtensionAPI) {
   let branch = "";
 
@@ -80,7 +78,7 @@ export default function (pi: ExtensionAPI) {
     const window = ctx.model?.contextWindow ?? 0;
 
     if (!usage || !usage.tokens || !window) {
-      segments.push(dim("○ awaiting context"));
+      segments.push(dim(AWAITING_CONTEXT_TEXT));
       ctx.ui.setStatus("dumb-zone", segments.join(sep));
       return;
     }
@@ -88,12 +86,13 @@ export default function (pi: ExtensionAPI) {
     const { zone, fracEff, fracNom } = classify(usage.tokens, window, config);
     const zoned = (t: string) => theme.fg(ZONE_COLOR[zone], t);
     const m = meter(fracEff, meterWidth);
+    const segs = formatStatusSegments(zone, fracEff, fracNom, usage.tokens, window);
 
     segments.push(
-      zoned(`${ZONE_GLYPH[zone]} ${zone.toUpperCase()}`) +
+      zoned(segs.glyphAndLabel) +
         ` ${zoned(m.filled)}${dim(m.track)} ` +
-        zoned(pct(fracEff)) +
-        dim(` eff · ${human(usage.tokens)}/${human(window)} · ${pct(fracNom)} nom`),
+        zoned(segs.effPct) +
+        dim(` ${segs.usageMeta}`),
     );
 
     ctx.ui.setStatus("dumb-zone", segments.join(sep));

@@ -278,7 +278,7 @@ function testTextDeltaWithEmptyDeltaIgnored() {
 // ---------------------------------------------------------------------------
 
 function main() {
-  console.log("\nSub-agent Stream Event mapping tests\n");
+  console.log("\nSubagent Stream Event mapping tests\n");
 
   testForwardsTextDeltas();
   testForwardsMultipleTextDeltas();

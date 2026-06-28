@@ -96,7 +96,7 @@ export function renderAgentResult(
 }
 
 /**
- * Sub-agent extension. Two types for context hygiene — `explore` (read-only
+ * Subagent extension. Two types for context hygiene — `explore` (read-only
  * discovery) and `general` (scoped read/write). The Agent tool surface follows
  * @tintinweb/pi-subagents loosely (not verbatim): Agent + get_subagent_result +
  * a concurrency queue; no Plan agent, steering, resume, or custom .pi/agents.
@@ -107,7 +107,7 @@ export function renderAgentResult(
 
 export const agentParams = Type.Object({
   subagent_type: StringEnum(["explore", "general", "researcher"] as const),
-  prompt: Type.String({ description: "The task for the sub-agent" }),
+  prompt: Type.String({ description: "The task for the subagent" }),
   description: Type.String({ description: "Short 3-5 word summary shown in UI" }),
   run_in_background: Type.Optional(
     Type.Boolean({ description: "Return an id immediately instead of blocking" }),
@@ -189,15 +189,15 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "Agent",
-    label: "Sub-agent",
+    label: "Subagent",
     description:
-      "Launch a sub-agent in an isolated session to keep the main context clean. " +
+      "Launch a Subagent in an isolated session to keep the main context clean. " +
       "subagent_type='explore' is read-only codebase discovery (read/grep/find/ls); 'researcher' is " +
       "read-only web research (web_search/web_fetch + read); 'general' has full tools. " +
       "Foreground (default) blocks and returns the result; run_in_background:true returns an id you " +
       "poll with get_subagent_result.",
     promptSnippet:
-      "Run an explore (read-only), researcher (web), or general sub-agent in an isolated context",
+      "Run an explore (read-only), researcher (web), or general Subagent in an isolated context",
     promptGuidelines: [
       "Use subagent_type='explore' to gather codebase context and 'researcher' to gather web/external context without polluting the main context; use 'general' for off-context work that writes.",
       "For independent delegated tasks of the same subagent type, issue multiple foreground Agent calls in the same assistant turn (same-turn fan-out) — one call per task, each with its own prompt and description. Do not use a batch parameter or aggregate result API; each call returns its own result.",
@@ -294,7 +294,7 @@ export default function (pi: ExtensionAPI) {
       if (background) {
         record.warnings = warnings;
         return textResult(
-          `Started ${type} sub-agent ${record.id} (background). Poll with get_subagent_result.`,
+          `Started ${type} Subagent ${record.id} (background). Poll with get_subagent_result.`,
           {
             agent_id: record.id,
             status: record.status,
@@ -304,7 +304,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const rec = await done; // foreground: block
-      if (rec.status === "failed") throw new Error(`Sub-agent failed: ${rec.error}`);
+      if (rec.status === "failed") throw new Error(`Subagent failed: ${rec.error}`);
       return textResult(rec.result ?? "(no output)", {
         agent_id: rec.id,
         status: rec.status,
@@ -317,8 +317,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "get_subagent_result",
-    label: "Sub-agent Result",
-    description: "Check status / retrieve the result of a background sub-agent.",
+    label: "Subagent Result",
+    description: "Check status / retrieve the result of a background Subagent.",
     parameters: resultParams,
     async execute(_toolCallId, params) {
       const rec = await manager.getResult(params.agent_id, params.wait ?? false);
@@ -333,10 +333,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("subagents", {
-    description: "List sub-agents and their status",
+    description: "List Subagents and their status",
     handler: async (_args, ctx) => {
       const lines = manager.list().map((r) => `${r.id}  ${r.type}  ${r.status}  ${r.description}`);
-      ctx.ui.notify(lines.length ? lines.join("\n") : "No sub-agents yet", "info");
+      ctx.ui.notify(lines.length ? lines.join("\n") : "No subagents yet", "info");
     },
   });
 }

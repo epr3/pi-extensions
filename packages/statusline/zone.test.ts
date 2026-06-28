@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { classify, meter, human, ZONE_GLYPH, ZONE_DEFAULTS, type Zone } from "./zone.ts";
+import { classify, meter, human, ZONE_GLYPH, ZONE_LABEL, ZONE_COLOR, ZONE_DEFAULTS, configFromEnv, formatStatusSegments, AWAITING_CONTEXT_TEXT, type Zone } from "./zone.ts";
 
 const PARTIAL_GLYPHS = /[\u258F\u258E\u258D\u258C\u258B\u258A\u2589]/; // ▏▎▍▌▋▊▉
 
@@ -62,4 +62,84 @@ test("zone glyphs and human formatting remain unchanged", () => {
   assert.equal(ZONE_GLYPH.caveman, "\u25D4");
   assert.equal(human(1_500), "2k");
   assert.equal(human(1_200_000), "1.2M");
+});
+
+test("ZONE_LABEL maps each zone to its uppercase display label", () => {
+  assert.equal(ZONE_LABEL.sharp, "SHARP");
+  assert.equal(ZONE_LABEL.fading, "FADING");
+  assert.equal(ZONE_LABEL.risky, "RISKY");
+  assert.equal(ZONE_LABEL.caveman, "CAVEMAN");
+});
+
+test("ZONE_COLOR maps each zone to the expected theme color role", () => {
+  assert.equal(ZONE_COLOR.sharp, "success");
+  assert.equal(ZONE_COLOR.fading, "warning");
+  assert.equal(ZONE_COLOR.risky, "warning");
+  assert.equal(ZONE_COLOR.caveman, "error");
+});
+
+test("configFromEnv uses defaults when no env vars set", () => {
+  const c = configFromEnv({}, ZONE_DEFAULTS);
+  assert.equal(c.effectiveLimit, ZONE_DEFAULTS.effectiveLimit);
+  assert.equal(c.thresholds.sharp, ZONE_DEFAULTS.thresholds.sharp);
+  assert.equal(c.thresholds.fading, ZONE_DEFAULTS.thresholds.fading);
+  assert.equal(c.thresholds.risky, ZONE_DEFAULTS.thresholds.risky);
+});
+
+test("configFromEnv accepts k/M suffix token counts and overrides individual thresholds", () => {
+  const c = configFromEnv(
+    { EFFECTIVE_LIMIT: "200k", Z_SHARP: "0.5", Z_RISKY: "0.9" },
+    ZONE_DEFAULTS,
+  );
+  assert.equal(c.effectiveLimit, 200_000);
+  assert.equal(c.thresholds.sharp, 0.5);
+  assert.equal(c.thresholds.fading, ZONE_DEFAULTS.thresholds.fading); // unset -> default
+  assert.equal(c.thresholds.risky, 0.9);
+});
+
+test("configFromEnv handles M suffix and plain number token limits", () => {
+  assert.equal(configFromEnv({ EFFECTIVE_LIMIT: "0.5M" }, ZONE_DEFAULTS).effectiveLimit, 500_000);
+  assert.equal(configFromEnv({ EFFECTIVE_LIMIT: "80000" }, ZONE_DEFAULTS).effectiveLimit, 80_000);
+});
+
+test("formatStatusSegments returns correct glyphAndLabel and effPct for each zone", () => {
+  const limit = ZONE_DEFAULTS.effectiveLimit;
+  const cases: [number, string, string][] = [
+    [limit * 0.1, `${ZONE_GLYPH.sharp} SHARP`, "10%"],
+    [limit * 0.34, `${ZONE_GLYPH.fading} FADING`, "34%"],
+    [limit * 0.67, `${ZONE_GLYPH.risky} RISKY`, "67%"],
+    [limit * 1.0, `${ZONE_GLYPH.caveman} CAVEMAN`, "100%"],
+  ];
+  for (const [used, expectedGlyphAndLabel, expectedEff] of cases) {
+    const { zone, fracEff, fracNom } = classify(used, limit * 2);
+    const segs = formatStatusSegments(zone, fracEff, fracNom, used, limit * 2);
+    assert.equal(segs.glyphAndLabel, expectedGlyphAndLabel, `glyphAndLabel at ${used} tokens`);
+    assert.equal(segs.effPct, expectedEff, `effPct at ${used} tokens`);
+  }
+});
+
+test("formatStatusSegments usageMeta contains expected wording and separator structure", () => {
+  const used = 40_000;
+  const window = 200_000;
+  const { zone, fracEff, fracNom } = classify(used, window);
+  const segs = formatStatusSegments(zone, fracEff, fracNom, used, window);
+  // "eff · 40k/200k · 20% nom"  (40k/200k = 0.2 = 20%)
+  assert.match(segs.usageMeta, /^eff · 40k\/200k · 20% nom$/);
+});
+
+test("formatStatusSegments usageMeta adapts to different token counts", () => {
+  const window = 200_000;
+  // At 1 token: "eff · 1/200k · 0% nom"
+  const { zone: z1, fracEff: e1, fracNom: n1 } = classify(1, window);
+  const segs1 = formatStatusSegments(z1, e1, n1, 1, window);
+  assert.match(segs1.usageMeta, /^eff · 1\/200k · 0% nom$/);
+
+  // At 200k tokens: "eff · 200k/200k · 100% nom" — should be caveman since limit is 120k
+  const { zone: z2, fracEff: e2, fracNom: n2 } = classify(200_000, window);
+  const segs2 = formatStatusSegments(z2, e2, n2, 200_000, window);
+  assert.match(segs2.usageMeta, /^eff · 200k\/200k · 100% nom$/);
+});
+
+test("AWAITING_CONTEXT_TEXT is the expected placeholder string", () => {
+  assert.equal(AWAITING_CONTEXT_TEXT, "\u25CB awaiting context"); // ○
 });

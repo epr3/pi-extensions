@@ -39,13 +39,13 @@ export interface SubagentSession {
 }
 
 /**
- * Run a sub-agent session to completion. This is the testable core of
+ * Run a subagent session to completion. This is the testable core of
  * `runSubagent`: it owns the event mapping, abort handling, cleanup, and final
  * result extraction, but it accepts an already-created session so tests can
  * drive it with a fake.
  *
  * When `abortSignal` fires, the session is aborted, stream forwarding stops,
- * and the promise rejects with "Sub-agent aborted". Partial stream text is
+ * and the promise rejects with "Subagent aborted". Partial stream text is
  * never promoted into the returned `RunResult`.
  */
 export async function runSubagentSession(opts: {
@@ -65,7 +65,7 @@ export async function runSubagentSession(opts: {
   if (abortSignal) {
     if (abortSignal.aborted) {
       session.dispose();
-      throw new Error("Sub-agent aborted");
+      throw new Error("Subagent aborted");
     }
     abortSignal.addEventListener("abort", onAbort, { once: true });
   }
@@ -100,7 +100,7 @@ export async function runSubagentSession(opts: {
     return { result: text, tokens, toolUses };
   } catch (e: any) {
     // If the signal caused the abort, throw a clean error.
-    if (abortSignal?.aborted) throw new Error("Sub-agent aborted");
+    if (abortSignal?.aborted) throw new Error("Subagent aborted");
     throw e;
   } finally {
     if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
@@ -197,7 +197,7 @@ function lastAssistantText(messages: any[]): string {
       .trim();
     if (text) return text;
   }
-  return "(sub-agent produced no text output)";
+  return "(subagent produced no text output)";
 }
 
 function totalTokens(messages: any[]): number {
