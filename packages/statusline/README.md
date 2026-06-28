@@ -15,7 +15,7 @@ Output (in the footer — location dim, zone glyph/label/meter/percent in the zo
 checkout-service │ ⎇ feat/login │ ◑ RISKY ██████▌░░░ 65% eff · 130k/200k · 33% nom
 ```
 
-The circle glyph is *remaining* effective headroom — ● sharp, ◕ fading, ◑ risky, ◔ caveman — and the meter fills with eighth-block resolution (`▏▎▍▌▋▊▉█`) over a dim track, so movement is visible between turns, not only at 10% jumps. Before the first response it shows `○ awaiting context`.
+The circle glyph is *remaining* effective headroom — ● sharp, ◕ fading, ◑ risky, ◔ caveman — and the meter is a contiguous whole-cell bar (`█` fill over `░` track), rounded to the nearest whole cell so the boundary stays smooth across terminals. Before the first response it shows `○ awaiting context`.
 
 ## Structure
 

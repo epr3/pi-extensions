@@ -16,7 +16,7 @@ import path from "node:path";
  *   └─ dim ─────────────────────────┘ └ zone color ──┘└dim┘└zone┘ └─────── dim ───────┘
  *
  * The circle glyph shows *remaining* effective headroom (● → ◕ → ◑ → ◔); the
- * meter fills with eighth-block resolution over a dim track.
+ * meter is a contiguous whole-cell bar over a dim track.
  */
 
 

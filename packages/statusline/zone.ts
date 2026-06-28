@@ -102,28 +102,15 @@ export const ZONE_GLYPH: Record<Zone, string> = {
   caveman: "\u25D4", // ◔ a sliver
 };
 
-const PARTIALS = ["", "\u258F", "\u258E", "\u258D", "\u258C", "\u258B", "\u258A", "\u2589"]; // ▏▎▍▌▋▊▉
-
 /**
- * Meter with sub-character resolution: eighth-blocks give width*8 steps.
- * Returns filled and track separately so the renderer can color them
- * independently (bright fill, dim track).
+ * Contiguous whole-cell meter. Fractions round to the nearest whole cell,
+ * clamped to an empty or full bar. Returns filled and track separately so
+ * the renderer can color them independently (bright fill, dim track).
  */
 export function meter(fracEff: number, width = 10): { filled: string; track: string } {
   const f = Math.max(0, Math.min(1, fracEff));
-  const cells = f * width;
-  const full = Math.floor(cells);
-  const eighth = Math.round((cells - full) * 8);
-  let filled = "\u2588".repeat(full);
-  let used = full;
-  if (eighth === 8) {
-    filled += "\u2588";
-    used += 1;
-  } else if (eighth > 0) {
-    filled += PARTIALS[eighth]!;
-    used += 1;
-  }
-  return { filled, track: "\u2591".repeat(Math.max(0, width - used)) };
+  const used = Math.max(0, Math.min(width, Math.round(f * width)));
+  return { filled: "\u2588".repeat(used), track: "\u2591".repeat(width - used) };
 }
 
 export function human(n: number): string {
