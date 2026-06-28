@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LspManager, lspToolSpecs, type ParamKind, type ServerDef } from "./tools.ts";
+import { renderLspCall } from "./render-call.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
@@ -94,6 +95,7 @@ export default async function (pi: ExtensionAPI) {
       ...(spec.promptSnippet ? { promptSnippet: spec.promptSnippet } : {}),
       ...(spec.promptGuidelines ? { promptGuidelines: spec.promptGuidelines } : {}),
       parameters: SCHEMAS[spec.paramKind],
+      renderCall: renderLspCall(spec.label, spec.paramKind),
       async execute(_id, params, _signal, _onUpdate, ctx) {
         currentCwd = ctx.cwd;
         return textResult(await spec.run(params as any));
