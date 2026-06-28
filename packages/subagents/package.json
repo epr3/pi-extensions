@@ -1,30 +1,23 @@
 {
   "name": "@epr3/pi-extension-subagents",
   "version": "0.1.0",
-  "files": ["dist"],
+  "private": true,
+  "description": "`Agent` + `get_subagent_result` tools. Types: explore (read-only), researcher (web + read), general (all).",
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./index.ts",
   "exports": {
-    ".": {
-      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
-    }
+    ".": "./index.ts"
   },
-  "publishConfig": { "access": "public" },
   "scripts": {
-    "build": "tsdown",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.80.2",
+    "@earendil-works/pi-coding-agent": "^0.80.2",
+    "typebox": "^1.1.0"
   },
   "devDependencies": {
-    "@mariozechner/pi-ai": "^0.63.1",
-    "@mariozechner/pi-coding-agent": "^0.63.1",
-    "tsdown": "^0.16.8",
     "typescript": "^5.9.3"
-  },
-  "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.63.1",
-    "@mariozechner/pi-coding-agent": "^0.63.1"
   }
 }

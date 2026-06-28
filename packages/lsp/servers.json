@@ -1,0 +1,7 @@
+{
+  "//": "language id -> { cmd, args, extensions }. Commands must be on PATH. Add languages by appending an entry.",
+  "typescript": { "cmd": "typescript-language-server", "args": ["--stdio"], "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] },
+  "python": { "cmd": "pyright-langserver", "args": ["--stdio"], "extensions": [".py", ".pyi"] },
+  "rust": { "cmd": "rust-analyzer", "args": [], "extensions": [".rs"] },
+  "go": { "cmd": "gopls", "args": [], "extensions": [".go"] }
+}

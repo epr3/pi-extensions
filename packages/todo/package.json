@@ -1,0 +1,23 @@
+{
+  "name": "@epr3/pi-extension-todo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "`todo_write` / `todo_read` checklist tool (Pi omits Claude Code's TodoWrite).",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.80.2",
+    "@earendil-works/pi-coding-agent": "^0.80.2",
+    "typebox": "^1.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
