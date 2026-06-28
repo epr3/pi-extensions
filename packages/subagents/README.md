@@ -30,6 +30,84 @@ The sub-session uses the same resource loader as the parent, so it discovers eve
 
 Background agents run through a concurrency queue (default 4, `PI_SUBAGENT_CONCURRENCY`).
 
+## Default Subagent Model
+
+Each subagent type can use a specific model instead of inheriting the parent
+session's model. Configure it under the `subagents` settings key.
+
+### Shared default
+
+A `defaultModel` setting applies to all subagent types that don't have their
+own type-specific override:
+
+```jsonc
+// ~/.pi/agent/settings.json or .pi/settings.json
+{
+  "subagents": {
+    "defaultModel": "anthropic/claude-sonnet-4-20250514"
+  }
+}
+```
+
+### Per-type overrides
+
+Each subagent type (`explore`, `researcher`, `general`) can set its own
+`defaultModel` under its own settings key. The type-specific value wins over
+the shared default for that type only:
+
+```jsonc
+{
+  "subagents": {
+    "defaultModel": "anthropic/claude-sonnet-4-20250514",
+    "explore": {
+      "defaultModel": "anthropic/claude-haiku-3-5-20241022",
+      "extraTools": ["lsp_definition", "lsp_references"]
+    },
+    "researcher": {
+      "defaultModel": "anthropic/claude-sonnet-4-20250514"
+    },
+    "general": {
+      "defaultModel": "openai/gpt-4o"
+    }
+  }
+}
+```
+
+Every model value is an exact `provider/model` string matching a model in Pi's
+model registry. Provider is the text before the first slash; model id is
+everything after. Missing slash, empty provider, or empty model id makes the
+reference invalid — the extension falls back to the next level and warns.
+
+### Resolution precedence
+
+1. **Subagent type default** — per-type `defaultModel` under
+   `subagents.{explore,researcher,general}`.
+2. **Shared default** — the `subagents.defaultModel` setting.
+3. **Parent model** — the session's active model at launch time.
+
+Each level: unconfigured, invalid reference syntax, or unresolvable ref
+(unknown provider / model id in the registry) → fall through to the next.
+
+### Invalid reference warnings
+
+When a configured model reference cannot be used, the subagent run proceeds
+with the next fallback level and emits a warning. Warnings never appear in
+the subagent result text — they are delivered in two channels:
+
+1. **Tool details** — a `warnings` array in the machine-readable `details`
+   object of the `Agent` tool result and the `get_subagent_result` tool
+   result, each entry containing `{ scope, reference, type }` where `scope`
+   is `"shared"` or the subagent type, `reference` is the raw config value,
+   and `type` is `"malformed"` (invalid syntax) or `"unresolvable"` (not
+   found in the model registry).
+2. **UI notification** — when the Pi TUI is active, each warning fires a
+   toast notification labelled `"warning"` at launch time.
+
+### Why not per-call?
+
+The `Agent` tool parameters do **not** gain a model field — model selection is
+settings-driven only, not per-call.
+
 ## Structure
 
 `manager.ts` is a deep `AgentManager` — a concurrency-limited scheduler (`launch` / `getResult` / `list`) that hides the records, queue, and lifecycle events and takes an opaque `exec` thunk (so it's testable with a fake, with no Pi). `index.ts` only wires the tools to it; `runner.ts` does the actual spawn.
