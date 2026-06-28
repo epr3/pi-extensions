@@ -7,9 +7,9 @@ function textResult(text: string, details?: Record<string, unknown>) {
 
 /**
  * Question tool. Pi has no built-in interactive question tool; this adds one so
- * the grilling/review skills can ask structured multiple-choice questions
- * instead of free prose. Backed by ctx.ui.select (single) — multi-select is
- * approximated by repeated selection until the user picks "Done".
+ * the grilling/review skills can ask structured questions with preset options
+ * plus an automatic free-prose escape hatch. Backed by ctx.ui.select (single) —
+ * multi-select is approximated by repeated selection until the user picks "Done".
  *
  * Shape mirrors AskUserQuestion / OpenCode's question: a header, a question,
  * 2-4 options, the recommended one marked and shown first.
@@ -30,6 +30,16 @@ const parameters = Type.Object({
 
 type Option = { label: string; description?: string; recommended?: boolean };
 
+const FREE_TEXT_LABEL = "Type your answer";
+const FREE_TEXT_DISPLAY = `✎ ${FREE_TEXT_LABEL} — Write a custom response`;
+const DONE_DISPLAY = "✓ Done";
+
+function uniqueDisplay(base: string, used: readonly string[]): string {
+  let out = base;
+  for (let i = 2; used.includes(out); i++) out = `${base} (${i})`;
+  return out;
+}
+
 function ordered(options: Option[]): Option[] {
   return [...options].toSorted((a, b) => (b.recommended ? 1 : 0) - (a.recommended ? 1 : 0));
 }
@@ -43,50 +53,76 @@ export default function (pi: ExtensionAPI) {
     name: "question",
     label: "Question",
     description:
-      "Ask the user a structured multiple-choice question and block until they answer. " +
-      "Prefer this over asking in prose. Provide 2-4 short, mutually-exclusive options and mark " +
-      "the suggested one recommended:true. Set multiSelect:true when several answers can apply.",
-    promptSnippet: "Ask the user a multiple-choice question",
+      "Ask the user a structured question and block until they answer. " +
+      "Provide 2-4 short, mutually-exclusive preset options; the UI automatically adds a free-prose answer. " +
+      "Mark the suggested option recommended:true. Set multiSelect:true when several preset answers can apply.",
+    promptSnippet: "Ask the user a structured question with preset options and free prose",
     promptGuidelines: [
-      "Use question when a skill needs a decision from the user with discrete options, instead of asking in prose.",
+      "Use question when a skill needs a decision from the user with discrete options; the picker adds a free-prose escape hatch.",
     ],
     parameters,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const options = ordered(params.options as Option[]);
       if (options.length < 2) throw new Error("question: provide at least 2 options");
 
+      const optionDisplays = options.map(display);
+      const freeTextDisplay = uniqueDisplay(FREE_TEXT_DISPLAY, [...optionDisplays, DONE_DISPLAY]);
+
       if (!ctx.hasUI) {
         // No interactive UI (print/json mode): surface the question as text so
         // the workflow can still proceed (the model relays it to the user).
-        const prose = `${params.header ? params.header + ": " : ""}${params.question}\n  · ${options.map(display).join("\n  · ")}`;
-        return textResult(prose, { options });
+        const prose = `${params.header ? params.header + ": " : ""}${params.question}\n  · ${[...optionDisplays, freeTextDisplay].join("\n  · ")}`;
+        return textResult(prose, { options, freeTextLabel: FREE_TEXT_LABEL });
       }
 
       const title = params.header ? `${params.header}: ${params.question}` : params.question;
+      const collectFreeText = async (): Promise<string | undefined> =>
+        (await ctx.ui.editor(`${title}: ${FREE_TEXT_LABEL}`, ""))?.trim() || undefined;
 
       // Map selections back by index, not by re-parsing display strings —
       // labels may legitimately contain "—" or "(recommended)".
-      const displays = options.map(display);
-      const byDisplay = (sel: string): Option | undefined => options[displays.indexOf(sel)];
+      const byDisplay = (sel: string): Option | undefined => options[optionDisplays.indexOf(sel)];
 
       if (params.multiSelect) {
-        const DONE = "✓ Done";
         const chosen: Option[] = [];
+        let freeText: string | undefined;
         for (;;) {
-          const remaining = displays.filter((_, i) => !chosen.includes(options[i]!));
+          const remaining = optionDisplays.filter((_, i) => !chosen.includes(options[i]!));
+          const selections = freeText
+            ? [...remaining, DONE_DISPLAY]
+            : [...remaining, freeTextDisplay, DONE_DISPLAY];
           const sel = await ctx.ui.select(
             `${title}${chosen.length ? `  [chosen: ${chosen.map((o) => o.label).join(", ")}]` : ""}`,
-            [...remaining, DONE],
+            selections,
           );
-          if (sel === undefined || sel === DONE) break;
+          if (sel === undefined || sel === DONE_DISPLAY) break;
+          if (sel === freeTextDisplay) {
+            freeText = await collectFreeText();
+            continue;
+          }
           const opt = byDisplay(sel);
           if (opt && !chosen.includes(opt)) chosen.push(opt);
         }
         const labels = chosen.map((o) => o.label);
-        return textResult(`Selected: ${labels.join(", ") || "(none)"}`, { selected: labels });
+        return textResult(
+          [`Selected: ${labels.join(", ") || "(none)"}`, freeText ? `Free text: ${freeText}` : ""]
+            .filter(Boolean)
+            .join("\n"),
+          {
+            selected: labels,
+            ...(freeText ? { freeText } : {}),
+          },
+        );
       }
 
-      const sel = await ctx.ui.select(title, displays);
+      const sel = await ctx.ui.select(title, [...optionDisplays, freeTextDisplay]);
+      if (sel === freeTextDisplay) {
+        const freeText = await collectFreeText();
+        return textResult(freeText ? `Free text: ${freeText}` : "No selection", {
+          selected: freeText ? FREE_TEXT_LABEL : undefined,
+          ...(freeText ? { freeText } : {}),
+        });
+      }
       const selected = sel === undefined ? undefined : byDisplay(sel)?.label;
       return textResult(selected ? `Selected: ${selected}` : "No selection", { selected });
     },
