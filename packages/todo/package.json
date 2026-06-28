@@ -1,8 +1,8 @@
 {
-  "name": "@epr3/pi-extension-subagents",
+  "name": "@epr3/pi-extension-todo",
   "version": "0.1.0",
   "private": true,
-  "description": "`Agent` + `get_subagent_result` tools. Types: explore (read-only), researcher (web + read), general (all).",
+  "description": "`todo_write` / `todo_read` checklist tool (Pi omits Claude Code's TodoWrite).",
   "type": "module",
   "main": "./index.ts",
   "exports": {

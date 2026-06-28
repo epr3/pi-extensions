@@ -1,8 +1,8 @@
 {
-  "name": "@epr3/pi-extension-subagents",
+  "name": "@epr3/pi-extension-statusline",
   "version": "0.1.0",
   "private": true,
-  "description": "`Agent` + `get_subagent_result` tools. Types: explore (read-only), researcher (web + read), general (all).",
+  "description": "Dumb-zone context-degradation status line rendered into Pi's footer.",
   "type": "module",
   "main": "./index.ts",
   "exports": {
@@ -13,9 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.2",
-    "@earendil-works/pi-coding-agent": "^0.80.2",
-    "typebox": "^1.1.0"
+    "@earendil-works/pi-coding-agent": "^0.80.2"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
