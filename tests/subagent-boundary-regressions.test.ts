@@ -483,6 +483,109 @@ async function testBackgroundOnSettledSeparateFromStream() {
 }
 
 // ---------------------------------------------------------------------------
+// Foreground concurrency cap
+// ---------------------------------------------------------------------------
+
+async function testForegroundObeysConcurrencyCap() {
+  const manager = new AgentManager({ maxConcurrency: 1 });
+  let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+  let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+
+  const a = manager.launch(
+    { type: "explore", description: "fg-a", background: false },
+    () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveA = resolve)),
+  );
+  const b = manager.launch(
+    { type: "explore", description: "fg-b", background: false },
+    () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveB = resolve)),
+  );
+
+  assert.strictEqual(a.record.status, "running", "first foreground runs immediately");
+  assert.strictEqual(b.record.status, "queued", "second foreground queued behind cap");
+
+  resolveA({ result: "a done", tokens: 0, toolUses: 0 });
+  await a.done;
+
+  assert.strictEqual(b.record.status, "running", "second foreground runs after first completes");
+  resolveB({ result: "b done", tokens: 0, toolUses: 0 });
+  await b.done;
+
+  assert.strictEqual(b.record.result, "b done", "second foreground returns its own result");
+
+  console.log("  Foreground obeys concurrency cap ................ PASS");
+}
+
+async function testForegroundRunsCompleteIndependently() {
+  const manager = new AgentManager({ maxConcurrency: 2 });
+  let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+  let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+
+  const a = manager.launch(
+    { type: "explore", description: "fg-indep-a", background: false },
+    () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveA = resolve)),
+  );
+  const b = manager.launch(
+    { type: "researcher", description: "fg-indep-b", background: false },
+    () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveB = resolve)),
+  );
+
+  assert.strictEqual(a.record.status, "running", "first foreground runs");
+  assert.strictEqual(b.record.status, "running", "second foreground runs concurrently under cap");
+
+  resolveB({ result: "b result", tokens: 3, toolUses: 1 });
+  await b.done;
+  assert.strictEqual(b.record.result, "b result", "second foreground completes independently");
+
+  resolveA({ result: "a result", tokens: 5, toolUses: 2 });
+  await a.done;
+  assert.strictEqual(a.record.result, "a result", "first foreground completes independently");
+
+  assert.strictEqual(a.record.tokens, 5, "a tokens preserved");
+  assert.strictEqual(b.record.tokens, 3, "b tokens preserved");
+  assert.strictEqual(a.record.toolUses, 2, "a toolUses preserved");
+  assert.strictEqual(b.record.toolUses, 1, "b toolUses preserved");
+
+  console.log("  Foreground runs complete independently ........... PASS");
+}
+
+async function testForegroundFailureDoesNotBlockSiblings() {
+  const manager = new AgentManager({ maxConcurrency: 1 });
+  let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+  let rejectA: (err: Error) => void = () => {};
+  let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+
+  const a = manager.launch(
+    { type: "explore", description: "fg-fail-a", background: false },
+    () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve, reject) => {
+      resolveA = resolve;
+      rejectA = reject;
+    }),
+  );
+  const b = manager.launch(
+    { type: "explore", description: "fg-fail-b", background: false },
+    () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveB = resolve)),
+  );
+
+  assert.strictEqual(a.record.status, "running", "first foreground runs");
+  assert.strictEqual(b.record.status, "queued", "second foreground queued");
+
+  // First foreground fails
+  rejectA(new Error("something went wrong"));
+  await a.done;
+  assert.strictEqual(a.record.status, "failed", "first foreground marked failed");
+  assert.ok(a.record.error?.includes("something went wrong"), "error message preserved");
+
+  // Second foreground should still run and succeed
+  assert.strictEqual(b.record.status, "running", "second foreground runs after first fails");
+  resolveB({ result: "b survived", tokens: 2, toolUses: 0 });
+  await b.done;
+  assert.strictEqual(b.record.status, "completed", "second foreground completes despite sibling failure");
+  assert.strictEqual(b.record.result, "b survived", "second foreground returns its own result");
+
+  console.log("  Foreground failure does not block siblings ....... PASS");
+}
+
+// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 
@@ -511,6 +614,11 @@ async function main() {
   testSchedulerDoesNotReferenceStreamOrUI();
   await testSchedulerQueueHonorsConcurrency();
   await testBackgroundOnSettledSeparateFromStream();
+
+  // Foreground concurrency cap
+  await testForegroundObeysConcurrencyCap();
+  await testForegroundRunsCompleteIndependently();
+  await testForegroundFailureDoesNotBlockSiblings();
 
   console.log("\nAll tests PASS\n");
 }
