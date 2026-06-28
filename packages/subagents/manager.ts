@@ -48,7 +48,8 @@ interface Job {
 
 export class AgentManager {
   private records = new Map<string, AgentRecord>();
-  private queue: Job[] = [];
+  private backgroundQueue: Job[] = [];
+  private foregroundQueue: Job[] = [];
   private running = 0;
   private seq = 0;
   private maxConcurrency: number;
@@ -60,10 +61,9 @@ export class AgentManager {
   }
 
   /**
-   * Launch a sub-agent. Returns its record immediately plus a `done` promise
-   * that resolves when it settles. Foreground callers await `done` (it bypasses
-   * the queue and runs at once); background callers ignore it and poll via
-   * getResult, with `onSettled` firing when it finishes.
+   * Launch a sub-agent. Returns its record and a `done` promise that resolves
+   * when the job settles. Foreground jobs enter a priority queue ahead of
+   * background jobs; both are subject to the same concurrency cap.
    */
   launch(
     task: LaunchTask,
@@ -84,11 +84,11 @@ export class AgentManager {
     const done = new Promise<AgentRecord>((resolve) => {
       const job: Job = { record, exec, onSettled, resolve };
       if (task.background) {
-        this.queue.push(job);
-        this.pump();
+        this.backgroundQueue.push(job);
       } else {
-        void this.run(job); // foreground: run immediately, bypass queue
+        this.foregroundQueue.push(job);
       }
+      this.pump();
     });
     return { record, done };
   }
@@ -128,8 +128,11 @@ export class AgentManager {
   }
 
   private pump(): void {
-    while (this.running < this.maxConcurrency && this.queue.length) {
-      void this.run(this.queue.shift()!);
+    while (this.running < this.maxConcurrency) {
+      // Foreground has priority; only drain background when no foreground jobs.
+      const job = this.foregroundQueue.shift() ?? this.backgroundQueue.shift();
+      if (!job) break;
+      void this.run(job);
     }
   }
 }

@@ -30,6 +30,44 @@ The sub-session uses the same resource loader as the parent, so it discovers eve
 
 Background agents run through a concurrency queue (default 4, `PI_SUBAGENT_CONCURRENCY`).
 
+## Same-turn fan-out
+
+The intended way to run multiple independent same-type **Subagent** tasks in parallel is
+to issue multiple foreground `Agent` tool calls in one assistant turn — one call per task,
+each with its own `subagent_type`, `prompt`, and `description`. This is called **Same-turn
+fan-out**.
+
+Each `Agent` call returns its own independent result, with its own `agent_id`, status,
+token count, tool-use count, warnings, and result text. You synthesize across sibling
+results in normal conversation context.
+
+```typescript
+// Same-turn fan-out: multiple Agent calls in one turn, independent prompts.
+// Running the sub-agents in the foreground — same subagent_type, each call
+// returns its own record. The concurrency cap is shared between foreground
+// and background runs.
+Agent({ subagent_type: "explore", prompt: "Search A", description: "Search A" })
+Agent({ subagent_type: "explore", prompt: "Search B", description: "Search B" })
+```
+
+### What it is not
+
+- **Not a batch API.** There is no `tasks` parameter on `Agent`, no aggregate result
+  object, and no batch polling tool. The `Agent` contract stays one-run-only.
+- **Not a replacement for background polling.** Foreground fan-out blocks and returns
+  results inline. Background runs with `run_in_background: true` + `get_subagent_result`
+  remain the correct pattern for long-running or fire-and-forget tasks.
+- **Not recursion.** **Subagents** cannot spawn child **Subagents** — the `Agent` and
+  `get_subagent_result` tools are excluded from sub-sessions. Same-turn fan-out is
+  sibling delegation by the parent Pi coding agent, not nested subagent spawning.
+
+### Concurrency
+
+Foreground fan-out respects the configured subagent concurrency cap (default 4,
+`PI_SUBAGENT_CONCURRENCY`). If more same-turn `Agent` calls are issued than the cap
+allows, subsequent launches queue and execute as slots free up — foreground launches
+have priority over background launches.
+
 ## Default Subagent Model
 
 Each subagent type can use a specific model instead of inheriting the parent

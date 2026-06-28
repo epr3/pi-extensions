@@ -105,7 +105,7 @@ export function renderAgentResult(
  * tools to it and supplies the env-bound exec thunk.
  */
 
-const agentParams = Type.Object({
+export const agentParams = Type.Object({
   subagent_type: StringEnum(["explore", "general", "researcher"] as const),
   prompt: Type.String({ description: "The task for the sub-agent" }),
   description: Type.String({ description: "Short 3-5 word summary shown in UI" }),
@@ -114,7 +114,7 @@ const agentParams = Type.Object({
   ),
 });
 
-const resultParams = Type.Object({
+export const resultParams = Type.Object({
   agent_id: Type.String(),
   wait: Type.Optional(Type.Boolean({ description: "Block until the agent finishes" })),
 });
@@ -200,6 +200,7 @@ export default function (pi: ExtensionAPI) {
       "Run an explore (read-only), researcher (web), or general sub-agent in an isolated context",
     promptGuidelines: [
       "Use subagent_type='explore' to gather codebase context and 'researcher' to gather web/external context without polluting the main context; use 'general' for off-context work that writes.",
+      "For independent delegated tasks of the same subagent type, issue multiple foreground Agent calls in the same assistant turn (same-turn fan-out) — one call per task, each with its own prompt and description. Do not use a batch parameter or aggregate result API; each call returns its own result.",
     ],
     renderCall: renderAgentCall,
     renderResult: renderAgentResult,
