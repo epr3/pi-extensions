@@ -267,6 +267,93 @@ function testExpandedNoWarningForSingleInProgress() {
 }
 
 // ---------------------------------------------------------------------------
+// renderTodoResult — expanded current-item line
+// ---------------------------------------------------------------------------
+
+function testExpandedShowsCurrentItemForSingleActive() {
+  const result = {
+    content: [{ type: "text" as const, text: "1/3 done" }],
+    details: {
+      items: [
+        { content: "Task A", status: "completed" },
+        { content: "Task B", status: "in_progress" },
+        { content: "Task C", status: "pending" },
+      ],
+      currentItem: { content: "Task B", status: "in_progress" },
+      currentIndex: 1,
+    },
+  };
+  const text = resultText(result, true);
+  const lines = text.split("\n");
+
+  // Shows "Current:" line with active item content
+  assert.ok(text.includes("Current: Task B"), "current item line shows active item content");
+
+  // Current-item line appears before any checklist markers
+  const currentLineIdx = lines.findIndex((l) => l.includes("Current:"));
+  const firstChecklistIdx = lines.findIndex(
+    (l) => l.includes("✓") || l.includes("◐") || (l.trim().startsWith(" ") && l.trim().length > 0),
+  );
+  assert.ok(
+    currentLineIdx < firstChecklistIdx,
+    "current item line appears before checklist items",
+  );
+
+  // Full checklist still present
+  assert.ok(text.includes("Task A"), "first item still shown");
+  assert.ok(text.includes("Task B"), "active item still shown in checklist");
+  assert.ok(text.includes("Task C"), "pending item still shown");
+  console.log("  Expanded shows current item for single active ...... PASS");
+}
+
+function testExpandedShowsCurrentNone() {
+  const result = {
+    content: [{ type: "text" as const, text: "2/3 done" }],
+    details: {
+      items: [
+        { content: "Task A", status: "completed" },
+        { content: "Task B", status: "completed" },
+        { content: "Task C", status: "pending" },
+      ],
+      currentItem: null,
+      currentIndex: null,
+    },
+  };
+  const text = resultText(result, true);
+  assert.ok(text.includes("Current: none"), 'shows "Current: none" for zero in_progress');
+  // Full checklist still present
+  assert.ok(text.includes("Task A"), "first item still shown");
+  assert.ok(text.includes("Task C"), "pending item still shown");
+  console.log("  Expanded shows Current: none ...................... PASS");
+}
+
+function testExpandedNoCurrentForMultipleActive() {
+  const result = {
+    content: [{ type: "text" as const, text: "warning text" }],
+    details: {
+      items: [
+        { content: "Active 1", status: "in_progress" },
+        { content: "Active 2", status: "in_progress" },
+        { content: "Pending", status: "pending" },
+      ],
+      currentItem: null,
+      currentIndex: null,
+      activeCandidates: [
+        { content: "Active 1", status: "in_progress" as const, index: 0 },
+        { content: "Active 2", status: "in_progress" as const, index: 1 },
+      ],
+    },
+  };
+  const text = resultText(result, true);
+  // No "Current:" line for multi-active
+  assert.ok(!text.includes("Current:"), "no Current: line for multiple in_progress");
+  // Warning still shown
+  assert.ok(text.includes("⚠ Warning"), "warning still shown for multiple in_progress");
+  assert.ok(text.includes("2 items in_progress"), "active count in warning");
+  console.log("  Expanded no current for multiple active ........... PASS");
+}
+
+// ---------------------------------------------------------------------------
 // renderTodoResult — edge cases
 // ---------------------------------------------------------------------------
 
@@ -364,6 +451,11 @@ function main() {
   testExpandedDistinctMarkers();
   testExpandedWarningForMultipleInProgress();
   testExpandedNoWarningForSingleInProgress();
+
+  // Result rendering — expanded current-item line
+  testExpandedShowsCurrentItemForSingleActive();
+  testExpandedShowsCurrentNone();
+  testExpandedNoCurrentForMultipleActive();
 
   // Result rendering — edge cases
   testMissingDetailsFallback();
