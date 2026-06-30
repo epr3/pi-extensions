@@ -133,12 +133,32 @@ export function renderTodoResult(
   const total = items.length;
 
   if (!options.expanded) {
-    // Collapsed: compact summary
+    // Collapsed: compact summary with optional current-item line
     const summary = `${done}/${total} done`;
-    const warning = active > 1 ? `, ${active} in_progress` : "";
-    const color = active > 1 ? "warning" : done === total ? "success" : "accent";
-    const prefix = active > 1 ? "⚠ " : done === total ? "✓ " : "";
-    return new Text(theme.fg(color, `${prefix}${summary}${warning}`), 0, 0);
+    let text: string;
+    let color: string;
+
+    if (active > 1) {
+      // Multiple in_progress — warning state, no current item
+      text = `⚠ ${summary}, ${active} in_progress`;
+      color = "warning";
+    } else if (done === total) {
+      // All done — success, no current item
+      text = `✓ ${summary}`;
+      color = "success";
+    } else if (active === 1) {
+      // Single in_progress — show current item from structured details
+      const d = result.details as Record<string, unknown> | undefined;
+      const currentItem = d?.currentItem as Item | null | undefined;
+      text = currentItem ? `${summary} · Current: ${currentItem.content}` : summary;
+      color = "accent";
+    } else {
+      // No in_progress items, not all done (mixed completed + pending)
+      text = summary;
+      color = "accent";
+    }
+
+    return new Text(theme.fg(color, text), 0, 0);
   }
 
   // Expanded: current-item line (from structured details) followed by full checklist

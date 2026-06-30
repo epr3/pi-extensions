@@ -189,6 +189,91 @@ function testCollapsedNoWarningForSingleInProgress() {
 }
 
 // ---------------------------------------------------------------------------
+// renderTodoResult — collapsed current-item line
+// ---------------------------------------------------------------------------
+
+function testCollapsedShowsCurrentItemForSingleActive() {
+  const result = {
+    content: [{ type: "text" as const, text: "1/3 done" }],
+    details: {
+      items: [
+        { content: "Task A", status: "completed" },
+        { content: "Task B", status: "in_progress" },
+        { content: "Task C", status: "pending" },
+      ],
+      currentItem: { content: "Task B", status: "in_progress" },
+      currentIndex: 1,
+    },
+  };
+  const text = resultText(result, false);
+
+  // Shows done/total summary
+  assert.ok(text.includes("1/3 done"), "shows done/total summary");
+
+  // Shows current item wording and content
+  assert.ok(text.includes("Current:"), "has current-item wording");
+  assert.ok(text.includes("Task B"), "includes active item content");
+
+  // No warning indicator
+  assert.ok(!text.includes("\u26a0"), "no warning indicator for single in_progress");
+  console.log("  Collapsed shows current item for single active ....... PASS");
+}
+
+function testCollapsedNoCurrentWhenNoInProgress() {
+  const result = {
+    content: [{ type: "text" as const, text: "2/3 done" }],
+    details: {
+      items: [
+        { content: "Task A", status: "completed" },
+        { content: "Task B", status: "completed" },
+        { content: "Task C", status: "pending" },
+      ],
+      currentItem: null,
+      currentIndex: null,
+    },
+  };
+  const text = resultText(result, false);
+
+  // Shows done/total summary
+  assert.ok(text.includes("2/3 done"), "shows done/total summary");
+
+  // No current item wording
+  assert.ok(!text.includes("Current:"), "no current-item wording when no in_progress");
+
+  // Compact — just the summary
+  assert.strictEqual(text.trim(), "2/3 done", "collapsed text is just the summary");
+  console.log("  Collapsed no current when no in_progress ............ PASS");
+}
+
+function testCollapsedKeepsWarningForMultipleInProgress() {
+  const result = {
+    content: [{ type: "text" as const, text: "warning text" }],
+    details: {
+      items: [
+        { content: "Active 1", status: "in_progress" },
+        { content: "Active 2", status: "in_progress" },
+        { content: "Pending", status: "pending" },
+      ],
+      currentItem: null,
+      currentIndex: null,
+      activeCandidates: [
+        { content: "Active 1", status: "in_progress" as const, index: 0 },
+        { content: "Active 2", status: "in_progress" as const, index: 1 },
+      ],
+    },
+  };
+  const text = resultText(result, false);
+
+  // Warning indicator and active count
+  assert.ok(text.includes("\u26a0"), "warning indicator for multiple in_progress");
+  assert.ok(text.includes("2 in_progress"), "shows in_progress count");
+
+  // No current item wording
+  assert.ok(!text.includes("Current:"), "no current-item wording for multiple in_progress");
+  console.log("  Collapsed keeps warning for multiple in_progress ..... PASS");
+}
+
+// ---------------------------------------------------------------------------
 // renderTodoResult — expanded checklist
 // ---------------------------------------------------------------------------
 
@@ -445,6 +530,9 @@ function main() {
   testCollapsedPartialProgress();
   testCollapsedWarningForMultipleInProgress();
   testCollapsedNoWarningForSingleInProgress();
+  testCollapsedShowsCurrentItemForSingleActive();
+  testCollapsedNoCurrentWhenNoInProgress();
+  testCollapsedKeepsWarningForMultipleInProgress();
 
   // Result rendering — expanded
   testExpandedShowsAllItems();
