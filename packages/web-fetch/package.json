@@ -1,0 +1,23 @@
+{
+  "name": "@epr3/pi-extension-web-fetch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "`web_fetch` tool for fetching URLs and extracting model-friendly Markdown from HTML and plain-text sources.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.2",
+    "@earendil-works/pi-tui": "^0.80.2",
+    "typebox": "^1.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

@@ -12,6 +12,40 @@ Adds three subagent types for context hygiene. The `Agent` tool surface follows 
 
 No `Plan` agent, no steering, no resume, no custom `.pi/agents` — deliberately omitted.
 
+### Researcher workflow
+
+The `researcher` subagent follows a five-step source-grounded research workflow built
+into its system prompt:
+
+1. **Break the research into facets.** The subagent decomposes the main question into
+   2–4 searchable angles or facets and searches each one independently, varying terms
+   across facets to cover different perspectives rather than relying on a single query.
+
+2. **Prefer official and primary sources.** Official documentation, primary-source pages,
+   and authoritative references are prioritised over blog posts, forums, or secondary
+   summaries. For libraries, APIs, frameworks, or documentation-heavy topics, the
+   subagent checks the canonical `/llms.txt` on the official documentation host first;
+   it also looks for `llms-full.txt` or `llms-all.txt` variants which may contain more
+   complete bundled documentation.
+
+3. **Verify important claims.** LLM-oriented documentation sources (`/llms.txt` and
+   variants) are treated as convenient starting points, not unchallenged authorities.
+   Before treating an important claim as settled, the subagent verifies it against the
+   corresponding official source page (human-readable docs, spec, or reference),
+   cross-checking factual claims, version numbers, API signatures, and behavioural
+   statements.
+
+4. **Fetch promising sources.** The subagent does not rely only on search result
+   snippets — it uses `web_fetch` to retrieve the full content of the most promising
+   URLs and reads beyond the excerpt, evaluating each source for relevance, authority,
+   and timeliness.
+
+5. **Cite sources and explain choices.** Every final answer cites every source used
+   (URLs and/or file paths), explains why each kept source was chosen (e.g. official
+   docs, primary source, authoritative reference), briefly explains dropped sources
+   (e.g. outdated, low authority, off-topic), and explicitly lists any remaining open
+   questions or gaps in coverage.
+
 ## Extension tools inside subagents
 
 The sub-session uses the same resource loader as the parent, so it discovers every installed extension. The two types then differ in how tools reach the model:

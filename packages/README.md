@@ -1,6 +1,6 @@
 # Pi Agent Skill Suite — Artifact-First Workflow
 
-Pi port of a nineteen-skill suite (`@earendil-works/pi`), plus five Pi Extension packages. The workflow:
+Pi port of a nineteen-skill suite (`@earendil-works/pi`), plus seven Pi Extension packages. The workflow:
 
 ```
 /grill-with-docs  →  /to-prd  →  /to-issues  →  /resolve-issue  →  /offload-context
@@ -16,7 +16,7 @@ Grill the thinking out against the domain docs, synthesize a PRD, break it into 
 **Architecture** — `improve-codebase-architecture` (+ `LANGUAGE`, `DEEPENING`, `INTERFACE-DESIGN`, `HTML-REPORT`)
 **Setup & utilities** — `setup-context` · `sharpen-context` · `merge-context` · `rebase-context` · `zoom-out` · `handoff` · `write-a-skill` · `caveman` · `teach` (+ 4 format refs)
 
-## The five Extension packages (`packages/<name>/`, TypeScript)
+## The seven Extension packages (`packages/<name>/`, TypeScript)
 
 All are real Pi extensions written against the documented `ExtensionAPI`, loaded via jiti (no build step). `typebox`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-ai` are provided by Pi at runtime. Each Extension package lives in its own directory under `packages/` and is a first-class buildable unit; the shipped config bundle (`pi-config/`) is separate and is not an Extension package.
 
@@ -27,8 +27,13 @@ All are real Pi extensions written against the documented `ExtensionAPI`, loaded
 | `todo` | `todo_write` / `todo_read` | state in tool-result details, reconstructed on `session_start` |
 | `lsp` | `lsp_definition` / `implementation` / `references` / `workspace_symbols` / `document_symbols` / `hover` / `incoming_calls` / `outgoing_calls` / `diagnostics` | dependency-free stdio LSP client; runtime-tested vs a mock server |
 | `statusline` | dumb-zone footer status | uses `ctx.getContextUsage()`, `ctx.model.contextWindow`, `ctx.cwd`, `pi.exec(git)`, `ctx.ui.setStatus` |
+| `web-fetch` | `web_fetch` tool for fetching URLs and extracting Markdown | validates URLs, browser-like UA, timeout, size cap, HTML→Markdown via heuristic extraction, plain-text pass-through, binary rejection |
+| `web-search` | `web_search` tool for researcher sub-agents | Google Custom Search; credentials from env vars or `~/.pi/agent/auth/web-search.json`; query composition with exact phrases, exclusions, site restriction |
+
 
 ### Subagents: explore + researcher + general
+
+See [web-fetch/README.md](./web-fetch/README.md) for the `web_fetch` tool documentation.
 
 Three types by design. `explore` is read-only (`read/grep/find/ls`) for codebase discovery; `researcher` is read-only too, adding `web_search`/`web_fetch` for web/external research grounded against the code (web tools come from separate extensions — degrades gracefully if absent); `general` has all tools and inherits the normal prompt for off-context work like the parallel interface designs. No Plan agent, steering, resume, or custom `.pi/agents`.
 
@@ -70,12 +75,14 @@ pi-extensions/
 ├── pnpm-workspace.yaml       packages/*
 └── packages/
     ├── pi-config/            config bundle (settings.json + skills/) — NOT an Extension package
-    │   ├── settings.json     loads skills + the five Extension packages
+    │   ├── settings.json     loads skills + the seven Extension packages
     │   └── skills/           21 skills (+ reference files)
     ├── subagents/  index.ts agents.ts manager.ts runner.ts
     ├── question/   index.ts
     ├── todo/       index.ts
     ├── lsp/        index.ts tools.ts client.ts servers.json
+    ├── web-search/  index.ts search.ts render.ts
+    ├── web-fetch/   index.ts fetch.ts render.ts
     └── statusline/ index.ts zone.ts
 ```
 
@@ -86,13 +93,14 @@ The extensions follow the suite's own deep-module discipline — narrow interfac
 - **`subagents/manager.ts`** — `AgentManager` is a concurrency-limited scheduler (`launch` / `getResult` / `list`) that owns records, the queue, and lifecycle events. It takes an opaque `exec` thunk, so it knows nothing about cwd/models/Pi and is unit-tested with a fake exec. `index.ts` only wires tools to it.
 - **`statusline/zone.ts`** — the degradation model (`classify` / `bar`) is pure and is the test surface; `index.ts` does only Pi event/UI/git wiring.
 - **`lsp/tools.ts`** — the tool catalog (name, description, param-kind, handler) is data in one place; `index.ts` maps param-kinds to schemas and registers in a loop, so a tool is declared once.
+- **`web-fetch/fetch.ts`** — URL validation, fetch orchestration, HTML→Markdown extraction, and content-type detection; `index.ts` wires the tool; `render.ts` handles TUI.
 
-The pure modules (`zone.ts`, `manager.ts`) and the LSP client are exercised by standalone tests that need no running Pi.
+The pure modules (`zone.ts`, `manager.ts`, `fetch.ts` extraction and conversion functions) and the LSP client are exercised by standalone tests that need no running Pi.
 
 ## Install
 
-Drop `pi-config/skills` into your skills path and point Pi's `settings.json` at the five Extension package dirs (see `pi-config/settings.json`). Extension packages are TypeScript and run as-is under Pi's jiti loader. The language servers used by `lsp` must be on `PATH`.
+Drop `pi-config/skills` into your skills path and point Pi's `settings.json` at the seven Extension package dirs (see `pi-config/settings.json`). Extension packages are TypeScript and run as-is under Pi's jiti loader. The language servers used by `lsp` must be on `PATH`.
 
 ## Verify
 
-One command, one source of truth — `pnpm verify:ext` runs `scripts/audit-extensions.sh`, which checks that the five Extension packages build and typecheck, that no code imports the removed shared support, that reference docs and shipped settings use current paths, and that root scripts, package metadata, and the reference README tell the same Extension package story. Run it after any change to a package or to the layout.
+One command, one source of truth — `pnpm verify:ext` runs `scripts/audit-extensions.sh`, which checks that the seven Extension packages build and typecheck, that no code imports the removed shared support, that reference docs and shipped settings use current paths, and that root scripts, package metadata, and the reference README tell the same Extension package story. Run it after any change to a package or to the layout.
