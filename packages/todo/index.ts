@@ -21,6 +21,32 @@ function textResult(text: string, details?: Record<string, unknown>): AgentToolR
 export type Status = "pending" | "in_progress" | "completed";
 export type Item = { content: string; status: Status };
 
+export type CurrentItemResult =
+  | { currentItem: Item; currentIndex: number; activeCandidates?: undefined }
+  | { currentItem: null; currentIndex: null; activeCandidates?: undefined }
+  | { currentItem: null; currentIndex: null; activeCandidates: { content: string; status: Status; index: number }[] };
+
+/**
+ * Derive the current (in_progress) item from a todo list.
+ *
+ * - Exactly one in_progress → returns that item and its index.
+ * - Zero in_progress → returns null for both currentItem and currentIndex.
+ * - Multiple in_progress → returns null for both and lists active candidates.
+ */
+export function deriveCurrentItem(items: Item[]): CurrentItemResult {
+  const active = items
+    .map((item, i) => ({ content: item.content, status: item.status, index: i }))
+    .filter((item) => item.status === "in_progress");
+
+  if (active.length === 0) {
+    return { currentItem: null, currentIndex: null };
+  }
+  if (active.length === 1) {
+    return { currentItem: { content: active[0].content, status: active[0].status }, currentIndex: active[0].index };
+  }
+  return { currentItem: null, currentIndex: null, activeCandidates: active };
+}
+
 const writeParams = Type.Object({
   todos: Type.Array(
     Type.Object({
@@ -41,6 +67,16 @@ function summary(items: Item[]): string {
 function fmt(items: Item[]): string {
   const mark = { completed: "[x]", in_progress: "[~]", pending: "[ ]" } as const;
   return items.map((t) => `${mark[t.status]} ${t.content}`).join("\n") || "(empty)";
+}
+
+function fmtCurrentLine(current: CurrentItemResult): string {
+  if (current.currentItem) {
+    return `Current: ${current.currentItem.content}`;
+  }
+  if (current.activeCandidates) {
+    return "Current: (multiple: see details)";
+  }
+  return "Current: none";
 }
 
 // ─── Tool presentation ──────────────────────────────────────────────────────
@@ -105,12 +141,29 @@ export function renderTodoResult(
     return new Text(theme.fg(color, `${prefix}${summary}${warning}`), 0, 0);
   }
 
-  // Expanded: full styled checklist
-  const lines = items.map((item) => {
+  // Expanded: current-item line (from structured details) followed by full checklist
+  const details = result.details as Record<string, unknown> | undefined;
+  const currentItem = details?.currentItem as Item | null | undefined;
+  const activeCandidates = details?.activeCandidates as
+    | { content: string; status: string; index: number }[]
+    | undefined;
+
+  const lines: string[] = [];
+
+  if (currentItem) {
+    // Exactly one in_progress — show explicit current item
+    lines.push(theme.fg("accent", `Current: ${currentItem.content}`));
+  } else if (details && !activeCandidates) {
+    // Details exist, no currentItem and no activeCandidates → zero in_progress
+    lines.push(theme.fg("dim", "Current: none"));
+  }
+  // For multiple active (activeCandidates present), no "Current:" line is shown
+
+  items.forEach((item) => {
     const marker = item.status === "completed" ? "✓" : item.status === "in_progress" ? "◐" : " ";
     const color =
       item.status === "completed" ? "success" : item.status === "in_progress" ? "accent" : "dim";
-    return theme.fg(color, `${marker}  ${item.content}`);
+    lines.push(theme.fg(color, `${marker}  ${item.content}`));
   });
 
   if (active > 1) {
@@ -153,11 +206,13 @@ export default function (pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_toolCallId, params) {
       items = (params.todos as Item[]).map((t) => ({ content: t.content, status: t.status }));
+      const current = deriveCurrentItem(items);
       const active = items.filter((t) => t.status === "in_progress").length;
-      const text =
-        `${summary(items)}\n${fmt(items)}` +
-        (active > 1 ? `\n(warning: invalid workflow state — ${active} items in_progress)` : "");
-      return textResult(text, { items: [...items] });
+      let txt = `${summary(items)}\n${fmtCurrentLine(current)}\n${fmt(items)}`;
+      if (active > 1) {
+        txt += `\n(warning: invalid workflow state — ${active} items in_progress)`;
+      }
+      return textResult(txt, { items: [...items], ...current });
     },
   });
 
@@ -169,7 +224,9 @@ export default function (pi: ExtensionAPI) {
     renderCall: (args, theme) => renderTodoCall(args as Record<string, unknown>, theme),
     renderResult: renderTodoResult,
     async execute() {
-      return textResult(`${summary(items)}\n${fmt(items)}`, { items: [...items] });
+      const current = deriveCurrentItem(items);
+      const txt = `${summary(items)}\n${fmtCurrentLine(current)}\n${fmt(items)}`;
+      return textResult(txt, { items: [...items], ...current });
     },
   });
 }
