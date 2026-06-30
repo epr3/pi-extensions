@@ -1,8 +1,8 @@
 {
-  "name": "@epr3/pi-extension-subagents",
+  "name": "@epr3/pi-extension-web-search",
   "version": "0.1.0",
   "private": true,
-  "description": "`Agent` + `get_subagent_result` tools. Types: explore (read-only), researcher (web + read), general (all).",
+  "description": "`web_search` tool for researcher sub-agents via Google Custom Search.",
   "type": "module",
   "main": "./index.ts",
   "exports": {
@@ -10,11 +10,9 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test **/*.test.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.2",
     "@earendil-works/pi-coding-agent": "^0.80.2",
     "@earendil-works/pi-tui": "^0.80.2",
     "typebox": "^1.1.0"

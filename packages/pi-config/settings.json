@@ -1,0 +1,54 @@
+{
+  "//": "Shipped Pi settings for the artifact-first skill suite. Paths are relative to the monorepo root. Install this file by merging the settings you need into ~/.pi/agent/settings.json or dropping a project-level .pi/settings.json override.",
+  "extensions": [
+    "./packages/subagents",
+    "./packages/question",
+    "./packages/todo",
+    "./packages/lsp",
+    "./packages/statusline",
+    "./packages/web-fetch",
+    "./packages/web-search"
+  ],
+  "subagents": {
+    "//": "explore is read-only by allowlist; grant it extra READ-ONLY tools here. This example grants the lsp navigation set. researcher is read-only + web (web_search/web_fetch). general gets every discovered tool automatically; add names to excludeExtraTools to take some away.",
+    "maxConcurrency": 4,
+    "explore": {
+      "defaultModel": "opencode-go/deepseek-v4-flash",
+      "extraTools": [
+        "lsp_definition",
+        "lsp_implementation",
+        "lsp_references",
+        "lsp_workspace_symbols",
+        "lsp_document_symbols",
+        "lsp_hover",
+        "lsp_incoming_calls",
+        "lsp_outgoing_calls",
+        "lsp_diagnostics"
+      ]
+    },
+    "researcher": {
+      "defaultModel": "openai-codex/gpt-5.5",
+      "//": "web_search / web_fetch come from the web-fetch and web-search extension packages loaded above. If they aren't loaded, researcher degrades to the core read-only tools.",
+      "extraTools": []
+    },
+    "general": {
+      "defaultModel": "opencode-go/kimi-k2.7-code",
+      "excludeExtraTools": []
+    }
+  },
+  "statusline": {
+    "//": "Absolute degradation budget: >effectiveLimit tokens = caveman. Thresholds are fractions of the limit. Env EFFECTIVE_LIMIT / Z_* override.",
+    "effectiveLimit": 120000,
+    "thresholds": {
+      "sharp": 0.3333333333,
+      "fading": 0.6666666666,
+      "risky": 1
+    },
+    "meterWidth": 10
+  },
+  "lsp": {
+    "//": "Add or override language servers without touching the Extension package dir; merged over the shipped servers.json.",
+    "servers": {},
+    "diagnosticsDelayMs": 600
+  }
+}
