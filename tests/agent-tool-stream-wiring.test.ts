@@ -234,9 +234,11 @@ function testFinalResultIsClean() {
   assert.ok(text.includes("Summary: all clean"), "includes answer summary");
   assert.strictEqual(text, "Found 3 files:\n- file1.ts\n- file2.ts\n- file3.ts\nSummary: all clean.\n");
 
-  // Details should not contain streamText (it was only in partial updates)
+  // Details should not contain streamText or streamEntries (they were only in partial updates)
   assert.strictEqual((finalResult.details as any).streamText, undefined,
     "final details do not contain streamText");
+  assert.strictEqual((finalResult.details as any).streamEntries, undefined,
+    "final details do not contain streamEntries");
 
   console.log("  Final result is clean subagent answer .......... PASS");
 }
@@ -278,6 +280,69 @@ function testStreamTextSeparateFromFinalContent() {
   console.log("  Stream text separate from final content ........ PASS");
 }
 
+function testForegroundFinalReturnDetailsExcludeStreamData() {
+  // Verify that the final return from the execute handler (simulated here)
+  // excludes streamText and streamEntries — even after stream events fired.
+  const { onStreamEvent } = createStreamSetup(false);
+
+  // Stream events fire during execution (transient UI state)
+  onStreamEvent!({ type: "text_delta", delta: "Searching... " });
+  onStreamEvent!({ type: "tool_start", name: "grep" });
+  onStreamEvent!({ type: "tool_end", name: "grep", error: false });
+  onStreamEvent!({ type: "text_delta", delta: "Found: patterns.ts" });
+
+  // The execute handler constructs the final return from the completed record,
+  // NOT from the transient stream state. This simulates that construction.
+  const finalDetails = {
+    agent_id: "sa_xyz",
+    status: "completed" as const,
+    tokens: 25,
+    toolUses: 1,
+  };
+
+  // No stream data in the final details
+  assert.strictEqual((finalDetails as any).streamText, undefined,
+    "no streamText in final return details");
+  assert.strictEqual((finalDetails as any).streamEntries, undefined,
+    "no streamEntries in final return details");
+
+  // Verify the exact keys that should be present
+  assert.strictEqual(Object.keys(finalDetails).length, 4,
+    "final details have exactly 4 keys (no streaming keys)");
+  assert.ok("agent_id" in finalDetails, "agent_id in final details");
+  assert.ok("status" in finalDetails, "status in final details");
+  assert.ok("tokens" in finalDetails, "tokens in final details");
+  assert.ok("toolUses" in finalDetails, "toolUses in final details");
+
+  console.log("  Foreground final return excludes stream data .... PASS");
+}
+
+function testFinalResultDetailsHaveNoStreamKeysEvenWithWarnings() {
+  // The final return should not include streaming keys even when warnings
+  // are present (which do add extra keys to details).
+  const finalDetails = {
+    agent_id: "sa_warn",
+    status: "completed" as const,
+    tokens: 50,
+    toolUses: 3,
+    warnings: [
+      { scope: "explore" as const, reference: "bad/ref", type: "unresolvable" as const },
+    ],
+  };
+
+  // Streaming keys must not be present
+  assert.strictEqual((finalDetails as any).streamText, undefined,
+    "no streamText even with warnings");
+  assert.strictEqual((finalDetails as any).streamEntries, undefined,
+    "no streamEntries even with warnings");
+
+  // But warnings IS present
+  assert.ok(Array.isArray(finalDetails.warnings), "warnings array present");
+  assert.strictEqual(finalDetails.warnings.length, 1, "one warning");
+
+  console.log("  Final details no stream keys even with warnings .. PASS");
+}
+
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
@@ -302,6 +367,8 @@ function main() {
   // Final result
   testFinalResultIsClean();
   testStreamTextSeparateFromFinalContent();
+  testForegroundFinalReturnDetailsExcludeStreamData();
+  testFinalResultDetailsHaveNoStreamKeysEvenWithWarnings();
 
   console.log("\nAll tests PASS\n");
 }

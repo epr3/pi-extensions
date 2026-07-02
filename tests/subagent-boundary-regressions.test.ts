@@ -334,6 +334,87 @@ async function testWarningsSurfaceAsNotificationsNotResultText() {
 }
 
 // ---------------------------------------------------------------------------
+// Foreground final return shape
+// ---------------------------------------------------------------------------
+
+async function testForegroundFinalReturnTextResultExcludesStreamData() {
+  // Replicates the execute handler's final return construction for a
+  // completed foreground run. The textResult call must NOT include
+  // streamText or streamEntries — those are transient partial-update data.
+  const manager = new AgentManager({ maxConcurrency: 1 });
+  const { record, done } = manager.launch(
+    { type: "explore", description: "fg final shape", background: false },
+    async () => ({ result: "Analysis complete.", tokens: 15, toolUses: 2 }),
+  );
+  await done;
+
+  // This is the exact textResult(...) construction from index.ts execute handler.
+  const warnings: Array<{ scope: string; reference: string; type: string }> = [];
+  const result = textResult(record.result ?? "(no output)", {
+    agent_id: record.id,
+    status: record.status,
+    tokens: record.tokens,
+    toolUses: record.toolUses,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  });
+
+  // Content must be clean answer
+  assert.strictEqual(result.content.length, 1, "exactly one content item");
+  assert.strictEqual(result.content[0].type, "text");
+  assert.strictEqual(result.content[0].text, "Analysis complete.");
+
+  // Details must not contain streaming fields
+  assert.strictEqual(Object.keys(result.details).length, 4,
+    "details have exactly 4 keys: agent_id, status, tokens, toolUses");
+  assert.strictEqual((result.details as any).streamText, undefined,
+    "no streamText in foreground final return");
+  assert.strictEqual((result.details as any).streamEntries, undefined,
+    "no streamEntries in foreground final return");
+  assert.strictEqual(result.details.agent_id, record.id, "agent_id in details");
+  assert.strictEqual(result.details.status, "completed", "status in details");
+  assert.strictEqual(result.details.tokens, 15, "tokens in details");
+  assert.strictEqual(result.details.toolUses, 2, "toolUses in details");
+
+  console.log("  Foreground final return excludes stream data ...... PASS");
+}
+
+async function testForegroundFinalReturnWithWarningsExcludesStreamData() {
+  // Even when warnings are present, stream data must not leak into the
+  // final return.
+  const manager = new AgentManager({ maxConcurrency: 1 });
+  const { record, done } = manager.launch(
+    { type: "researcher", description: "fg warn shape", background: false },
+    async () => ({ result: "Research done.", tokens: 42, toolUses: 5 }),
+  );
+  await done;
+
+  const warnings = [
+    { scope: "shared" as const, reference: "missing/model", type: "unresolvable" as const },
+  ];
+  const result = textResult(record.result ?? "(no output)", {
+    agent_id: record.id,
+    status: record.status,
+    tokens: record.tokens,
+    toolUses: record.toolUses,
+    warnings,
+  });
+
+  // Content stays clean
+  assert.strictEqual(result.content[0].text, "Research done.");
+
+  // Details have the expected keys (including warnings, excluding stream)
+  assert.strictEqual((result.details as any).streamText, undefined,
+    "no streamText even with warnings");
+  assert.strictEqual((result.details as any).streamEntries, undefined,
+    "no streamEntries even with warnings");
+  assert.ok(Array.isArray(result.details.warnings), "warnings present");
+  assert.strictEqual(result.details.warnings.length, 1, "one warning");
+  assert.strictEqual(result.details.agent_id, record.id, "agent_id present");
+
+  console.log("  Foreground final return with warnings no stream ... PASS");
+}
+
+// ---------------------------------------------------------------------------
 // Read-only + safety boundaries unchanged
 // ---------------------------------------------------------------------------
 
@@ -603,6 +684,9 @@ async function main() {
   await testBackgroundWarningsRoundTripInDetails();
   testWarningsNotDuplicatedIntoStreamContent();
   await testWarningsSurfaceAsNotificationsNotResultText();
+
+  await testForegroundFinalReturnTextResultExcludesStreamData();
+  await testForegroundFinalReturnWithWarningsExcludesStreamData();
 
   testExploreToolsetUnchanged();
   testResearcherToolsetUnchanged();

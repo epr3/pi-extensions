@@ -21,6 +21,10 @@ function textResult(text: string, details?: Record<string, unknown>) {
 
 // ─── Foreground stream rendering ───────────────────────────────────────────
 
+/** Maximum number of stream entries to include in expanded partial rendering.
+ *  Prevents long Subagent runs from producing unbounded tool rows in the TUI. */
+export const EXPANDED_TAIL_LIMIT = 50;
+
 export type StreamEntry =
   | { type: "text"; text: string }
   | { type: "tool_start"; name: string }
@@ -36,9 +40,14 @@ function toolMarker(entry: Extract<StreamEntry, { type: "tool_start" | "tool_end
 }
 
 function formatExpandedStream(entries: StreamEntry[]): string {
+  // Keep only the tail of the stream to avoid unbounded rendering
+  const tail = entries.length > EXPANDED_TAIL_LIMIT
+    ? entries.slice(-EXPANDED_TAIL_LIMIT)
+    : entries;
+
   const lines: string[] = [];
   let textBuffer = "";
-  for (const e of entries) {
+  for (const e of tail) {
     if (e.type === "text") {
       textBuffer += e.text;
       continue;
