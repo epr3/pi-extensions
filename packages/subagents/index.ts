@@ -63,16 +63,14 @@ function formatExpandedStream(entries: StreamEntry[]): string {
 }
 
 function formatCollapsedStream(entries: StreamEntry[]): string {
+  // Show only tool lifecycle markers — no assistant text.
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     if (e.type === "tool_start") return `▶ ${e.name}`;
     if (e.type === "tool_end") return e.error ? `✗ ${e.name}` : `✓ ${e.name}`;
-    if (e.type === "text" && e.text.trim()) {
-      const lastLine = e.text.split("\n").pop() ?? "";
-      return lastLine.length > 60 ? `…${lastLine.slice(-60)}` : lastLine;
-    }
   }
-  return "";
+  // No tool entries yet: compact neutral status instead of assistant prose.
+  return "⟳ running…";
 }
 
 function isTextContent(c: any): c is { type: "text"; text: string } {

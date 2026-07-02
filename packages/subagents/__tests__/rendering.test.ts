@@ -325,22 +325,29 @@ describe("renderAgentResult — partial collapsed", () => {
     expect(text.trim()).toBe("✗ bash");
   });
 
-  it("falls back to latest text when no tool is last", () => {
+  it("ignores trailing text — shows latest tool marker", () => {
     const entries: StreamEntry[] = [
       { type: "tool_start", name: "read" },
       { type: "tool_end", name: "read", error: false },
       { type: "text", text: "Almost done." },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("Almost done.");
+    expect(text.trim()).toBe("✓ read");
   });
 
-  it("truncates long text with ellipsis", () => {
-    const longLine = "a".repeat(80);
-    const entries: StreamEntry[] = [{ type: "text", text: longLine }];
+  it("shows neutral running status when only text entries exist", () => {
+    const entries: StreamEntry[] = [{ type: "text", text: "Thinking..." }];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim().length).toBe(61);
-    expect(text.trim().startsWith("…")).toBe(true);
+    expect(text.trim()).toBe("⟳ running…");
+  });
+
+  it("shows neutral status for multiple text-only entries", () => {
+    const entries: StreamEntry[] = [
+      { type: "text", text: "Let me think about this..." },
+      { type: "text", text: "Still working..." },
+    ];
+    const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
+    expect(text.trim()).toBe("⟳ running…");
   });
 
   it("renders empty text when no entries", () => {
