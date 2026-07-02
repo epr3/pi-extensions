@@ -153,6 +153,57 @@ function testFinalResultRendersCleanAnswer() {
   console.log("  Final result renders clean answer ................. PASS");
 }
 
+function testFinalResultRenderIgnoresStreamEntriesInDetails() {
+  // Even if stream entries accidentally leak into final result details,
+  // the renderer must ignore them — only result.content is used for final.
+  const entries: StreamEntry[] = [
+    { type: "tool_start", name: "bash" },
+    { type: "tool_end", name: "bash", error: true },
+    { type: "text", text: "leaked stream text" },
+  ];
+  const result = {
+    content: [{ type: "text" as const, text: "Clean answer." }],
+    details: {
+      agent_id: "sa_abc",
+      status: "completed" as const,
+      tokens: 10,
+      toolUses: 1,
+      streamEntries: entries,
+      streamText: "▶ bash\n✗ bash\nleaked stream text",
+    },
+  };
+  const text = renderResultText(result, { expanded: false, isPartial: false });
+  assert.ok(text.startsWith("Clean answer."), "final answer rendered first");
+  assert.ok(!text.includes("▶"), "no tool markers despite leaking in details");
+  assert.ok(!text.includes("✗"), "no error markers despite leaking in details");
+  assert.ok(!text.includes("leaked stream"), "no stream text from details");
+  console.log("  Final result ignores stream entries in details ..... PASS");
+}
+
+function testFinalResultNoToolMarkers() {
+  // Final render must never emit tool markers (▶ ✓ ✗) in the output.
+  // Tool markers are stream-UX; the final state shows only the answer.
+  const cases = [
+    { text: "Research complete. Found 3 sources." },
+    { text: "Codebase analysis done." },
+    { text: "No issues found." },
+    { text: "Error: file not found. Checked src/ -- nothing." },
+  ];
+  for (const { text: answer } of cases) {
+    const result = {
+      content: [{ type: "text" as const, text: answer }],
+      details: { agent_id: "sa_x", status: "completed" as const, tokens: 1, toolUses: 0 },
+    };
+    const rendered = renderResultText(result, { expanded: false, isPartial: false });
+    assert.ok(rendered.startsWith(answer),
+      `final rendered starts with clean answer: "${answer}"`);
+    assert.ok(!rendered.includes("▶"), `no start marker in: "${answer}"`);
+    assert.ok(!rendered.includes("✓"), `no success marker in: "${answer}"`);
+    assert.ok(!rendered.includes("✗"), `no error marker in: "${answer}"`);
+  }
+  console.log("  Final result no tool markers ...................... PASS");
+}
+
 function testExpandedStreamInterleavesTextAndTools() {
   const entries: StreamEntry[] = [
     { type: "text", text: "Looking..." },
@@ -166,6 +217,100 @@ function testExpandedStreamInterleavesTextAndTools() {
   assert.ok(text.includes("✓ read"), "tool success marker appears");
   assert.ok(text.includes("Found it."), "later text appears");
   console.log("  Expanded stream interleaves text and tools ........ PASS");
+}
+
+function testExpandedStreamBoundedToTailWithTextBuffer() {
+  // Create entries where text entries straddle the bounding boundary.
+  // The tail should still merge adjacent text entries correctly.
+  // Tools 1-49 (98 entries) push past limit 50; we add 2 more text entries
+  // so the tail consists of 2 text + last X tools = 50 entries. The text
+  // at the tail start should accumulate correctly.
+  const entries: StreamEntry[] = [];
+  for (let i = 1; i <= 49; i++) {
+    entries.push({ type: "tool_start", name: `tool_${i}` });
+    entries.push({ type: "tool_end", name: `tool_${i}`, error: false });
+  }
+  // Now 98 entries. Add 2 text deltas + 2 tool entries = 102 total.
+  // Tail = last 50 entries = text deltas + tool_49 end + tool_50?
+  // Actually: add 2 text entries and then tool_50 + tool_50_end
+  entries.push({ type: "text", text: "Final analysis: " });
+  entries.push({ type: "text", text: "all tests pass." });
+  entries.push({ type: "tool_start", name: "tool_50" });
+  entries.push({ type: "tool_end", name: "tool_50", error: false });
+
+  const text = renderResultText(
+    { content: [], details: { streamEntries: entries } },
+    { expanded: true, isPartial: true },
+  );
+
+  // Early tool should NOT appear
+  assert.ok(!/▶ tool_1(?!\d)/.test(text), "early tool excluded");
+
+  // The tail should contain the combined text from the two text entries
+  assert.ok(text.includes("Final analysis: all tests pass."),
+    "adjacent text entries merged in bounded tail");
+
+  // The last tool should appear after the text
+  assert.ok(/▶ tool_50\b/.test(text), "last tool start in bounded tail");
+  assert.ok(/✓ tool_50\b/.test(text), "last tool end in bounded tail");
+
+  console.log("  Expanded stream bounded tail merges text buffer .. PASS");
+}
+
+function testExpandedStreamFewerThanLimitShowsAll() {
+  // When entries are below the bounding limit, all should be visible
+  const entries: StreamEntry[] = [
+    { type: "tool_start", name: "read" },
+    { type: "tool_end", name: "read", error: false },
+    { type: "tool_start", name: "grep" },
+    { type: "tool_end", name: "grep", error: false },
+    { type: "tool_start", name: "bash" },
+    { type: "tool_end", name: "bash", error: true },
+  ];
+
+  const text = renderResultText(
+    { content: [], details: { streamEntries: entries } },
+    { expanded: true, isPartial: true },
+  );
+
+  assert.ok(/▶ read\b/.test(text), "first tool start appears");
+  assert.ok(/✓ read\b/.test(text), "first tool end appears");
+  assert.ok(/▶ grep\b/.test(text), "middle tool start appears");
+  assert.ok(/✓ grep\b/.test(text), "middle tool end appears");
+  assert.ok(/▶ bash\b/.test(text), "last tool start appears");
+  assert.ok(/✗ bash\b/.test(text), "last tool error appears");
+
+  console.log("  Expanded stream fewer than limit shows all ....... PASS");
+}
+
+function testExpandedStreamBoundedToTail() {
+  // Create enough entries to exceed the bounding limit
+  const entries: StreamEntry[] = [];
+  for (let i = 1; i <= 100; i++) {
+    entries.push({ type: "tool_start", name: `tool_${i}` });
+    entries.push({ type: "tool_end", name: `tool_${i}`, error: false });
+  }
+
+  const text = renderResultText(
+    { content: [], details: { streamEntries: entries } },
+    { expanded: true, isPartial: true },
+  );
+
+  // First tool should NOT appear in bounded output (out of the tail).
+  // Use negative lookahead to avoid matching "tool_10", "tool_100" etc.
+  assert.ok(!/▶ tool_1(?!\d)/.test(text), "tool_1 start excluded from bounded output");
+  assert.ok(!/✓ tool_1(?!\d)/.test(text), "tool_1 end excluded from bounded output");
+
+  // Last tool SHOULD appear in bounded output
+  assert.ok(/▶ tool_100\b/.test(text), "tool_100 start included in bounded output");
+  assert.ok(/✓ tool_100\b/.test(text), "tool_100 end included in bounded output");
+
+  // The number of tool markers should be bounded (fewer than total entries)
+  const markers = (text.match(/[▶✓✗]/g) || []).length;
+  assert.ok(markers > 0, "at least some markers in bounded output");
+  assert.ok(markers < 200, "marker count reduced by bounding");
+
+  console.log("  Expanded stream bounded to tail ................... PASS");
 }
 
 function testExpandedStreamShowsToolError() {
@@ -245,6 +390,31 @@ function testRendererIgnoresUnknownEntryTypes() {
   console.log("  Renderer tolerates unknown entry types ............ PASS");
 }
 
+function testCollapsedEmptyStreamRendersNoPlaceholder() {
+  // No entries at all
+  const noEntries = renderResultText(
+    { content: [], details: {} },
+    { expanded: false, isPartial: true },
+  );
+  assert.strictEqual(noEntries, "", "no streamEntries → empty collapsed text");
+
+  // Explicit empty array
+  const emptyArray = renderResultText(
+    { content: [], details: { streamEntries: [] } },
+    { expanded: false, isPartial: true },
+  );
+  assert.strictEqual(emptyArray, "", "empty streamEntries array → empty collapsed text");
+
+  // Null streamEntries
+  const nullEntries = renderResultText(
+    { content: [], details: { streamEntries: null } },
+    { expanded: false, isPartial: true },
+  );
+  assert.strictEqual(nullEntries, "", "null streamEntries → empty collapsed text");
+
+  console.log("  Collapsed empty stream renders no placeholder .... PASS");
+}
+
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
@@ -261,7 +431,12 @@ function main() {
 
   // Result rendering
   testFinalResultRendersCleanAnswer();
+  testFinalResultRenderIgnoresStreamEntriesInDetails();
+  testFinalResultNoToolMarkers();
   testExpandedStreamInterleavesTextAndTools();
+  testExpandedStreamBoundedToTailWithTextBuffer();
+  testExpandedStreamFewerThanLimitShowsAll();
+  testExpandedStreamBoundedToTail();
   testExpandedStreamShowsToolError();
   testCollapsedStreamShowsLatestToolStart();
   testCollapsedStreamShowsLatestToolEnd();
@@ -269,6 +444,7 @@ function main() {
   testCollapsedStreamFallsBackToLatestText();
   testCollapsedStreamTruncatesLongText();
   testRendererIgnoresUnknownEntryTypes();
+  testCollapsedEmptyStreamRendersNoPlaceholder();
 
   console.log("\nAll tests PASS\n");
 }
