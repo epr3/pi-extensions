@@ -1,4 +1,4 @@
-import type { AgentToolResult, ExtensionAPI, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, Theme, ThemeColor, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -136,7 +136,7 @@ export function renderTodoResult(
     // Collapsed: compact summary with optional current-item line
     const summary = `${done}/${total} done`;
     let text: string;
-    let color: string;
+    let color: ThemeColor;
 
     if (active > 1) {
       // Multiple in_progress — warning state, no current item

@@ -18,17 +18,20 @@
     "typecheck": "pnpm -r exec tsc --noEmit",
     "typecheck:ext": "pnpm --filter \"@epr3/pi-extension-*\" exec tsc --noEmit",
     "test": "pnpm -r test",
+    "coverage": "vitest run --coverage",
     "lint": "oxlint packages/",
     "lint:fix": "oxlint --fix packages/",
     "format": "oxfmt --write packages/",
     "format:check": "oxfmt --check packages/"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
     "oxfmt": "^0.42.0",
     "oxlint": "^1.57.0",
     "tsdown": "^0.16.8",
     "tsx": "^4.22.4",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
   },
   "engines": {
     "node": ">=20"

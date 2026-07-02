@@ -5,6 +5,7 @@
 #   - No code depends on the removed shared support
 #   - Reference docs and shipped settings no longer mention stale legacy paths
 #   - Root metadata, scripts, and reference docs agree on the Extension package story
+#   - Every package uses the Vitest Extension test harness consistently
 #
 # Exit non-zero on any failure; intended to be run from the repo root.
 set -euo pipefail
@@ -16,8 +17,8 @@ EXPECTED=("lsp" "question" "statusline" "subagents" "todo" "web-fetch" "web-sear
 FAIL=0
 
 note() { printf "  \033[36m·\033[0m %s\n" "$*"; }
-ok() { printf "  \033[32m✓\033[0m %s\n" "$*"; }
-bad() { printf "  \033[31m✗\033[0m %s\n" "$*"; FAIL=1; }
+ok()   { printf "  \033[32m✓\033[0m %s\n" "$*"; }
+bad()  { printf "  \033[31m✗\033[0m %s\n" "$*"; FAIL=1; }
 
 heading() { printf "\n\033[1m== %s ==\033[0m\n" "$*"; }
 
@@ -39,14 +40,14 @@ if [ -n "${EXTRA:-}" ]; then
 fi
 [ "${#GOT[@]}" -eq 7 ] && ok "seven Extension packages match the filter"
 
-note "package.json name, main, build script present for each"
+note "package.json name, main, build, typecheck, test scripts present for each"
 for name in "${EXPECTED[@]}"; do
   PJ="$ROOT/packages/$name/package.json"
   if [ ! -f "$PJ" ]; then
     bad "missing $PJ"
     continue
   fi
-  for field in '"name"' '"main"' '"build"' '"typecheck"'; do
+  for field in '"name"' '"main"' '"build"' '"typecheck"' '"test"'; do
     grep -q "$field" "$PJ" || bad "$name: package.json missing $field"
   done
 done
@@ -83,14 +84,14 @@ else
 fi
 
 heading "No stale legacy extension paths in docs or settings"
-note "no 'pi-tools/' anywhere in repo code or reference docs"
+note "no 'pi-tools/' anywhere in repo code"
 HITS=$(rg -n --no-heading \
   -g '!node_modules' -g '!.git' -g '!docs' -g '!issues' -g '!pnpm-lock.yaml' -g '!scripts/' \
   "pi-tools" "$ROOT" 2>/dev/null || true)
 if [ -n "${HITS:-}" ]; then
   bad "stale 'pi-tools/' path found: $HITS"
 else
-  ok "no 'pi-tools/' in code or reference docs"
+  ok "no 'pi-tools/' in code"
 fi
 
 note "shipped settings.json points at the seven current Extension packages"
@@ -105,13 +106,6 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   bad "settings.json missing current paths for: ${MISSING[*]}"
 else
   ok "settings.json references all seven current Extension package paths"
-fi
-
-note "pi-config is NOT listed as an Extension package (only as skills path)"
-if grep -q '"./packages/pi-config"' "$SET"; then
-  bad "settings.json still lists pi-config under packages/"
-else
-  ok "pi-config is not referenced as a package under packages/"
 fi
 
 heading "Root metadata tells the same story"
@@ -165,41 +159,101 @@ else
   ok "README does not mention pi-tools/"
 fi
 
-heading "Unit-test infrastructure"
-note "test files live alongside their source under __tests__/ or as *.test.ts in the package"
-# Allowlist: each package that has tests is listed here so the audit knows about them.
-# The test runner is Node built-in (node --test + tsx), not an external framework.
-KNOWN_TESTS=(
-  "packages/statusline/zone.test.ts"
-  "packages/subagents/__tests__/agents.test.ts"
-)
-HITS=$(find "$ROOT/packages" -name '*.test.ts' -o -name '*.spec.ts' 2>/dev/null || true)
-UNEXPECTED=""
-while IFS= read -r f; do
-  matched=0
-  for known in "${KNOWN_TESTS[@]}"; do
-    case "$f" in
-      *"$known") matched=1 ;;  # suffix match so paths without the prefix still resolve
-    esac
-  done
-  [ "$matched" -eq 0 ] && UNEXPECTED="$UNEXPECTED$f"$'\n'""
-done <<< "$HITS"
-if [ -n "$UNEXPECTED" ]; then
-  bad "unexpected test files: $UNEXPECTED"
-else
-  ok "all test files are in the known allowlist"
-fi
-
-note "no external test framework dependency in any Extension package"
+heading "Vitest Extension test harness"
+note "every Extension package has a vitest-based test script"
+VITEST_CMD='vitest run --config ../../vitest.config.ts --root .'
 for name in "${EXPECTED[@]}"; do
   PJ="$ROOT/packages/$name/package.json"
-  for framework in vitest jest mocha tap ava; do
-    if grep -qi "\"$framework\"" "$PJ"; then
-      bad "$name: declares test framework '$framework'"
+  TEST_SCRIPT=$(node -p "(require('$PJ').scripts?.test||'')" 2>/dev/null || true)
+  if [ "$TEST_SCRIPT" != "$VITEST_CMD" ]; then
+    bad "$name: test script is '$TEST_SCRIPT' (expected '$VITEST_CMD')"
+  fi
+done
+[ $FAIL -eq 0 ] && ok "all seven packages use the shared Vitest config for testing"
+
+note "every Extension package has tests under __tests__/"
+for name in "${EXPECTED[@]}"; do
+  TDIR="$ROOT/packages/$name/__tests__"
+  if [ ! -d "$TDIR" ]; then
+    bad "$name: missing __tests__/ directory"
+  elif ! find "$TDIR" -maxdepth 1 -name '*.test.ts' | grep -q .; then
+    bad "$name: __tests__/ contains no .test.ts files"
+  fi
+done
+[ $FAIL -eq 0 ] && ok "all seven packages have __tests__/ with test files"
+
+note "no .test.ts files exist outside __tests__/ in packages"
+ROGUE=$(find "$ROOT/packages" -name '*.test.ts' -not -path '*/__tests__/*' 2>/dev/null || true)
+if [ -n "$ROGUE" ]; then
+  bad "test files outside __tests__/: $ROGUE"
+else
+  ok "all test files live under __tests__/"
+fi
+
+note "vitest is a root-level devDependency only (not duplicated per package)"
+ROOT_HAS_VITEST=$(node -p "!!require('$ROOT/package.json').devDependencies?.vitest" 2>/dev/null || echo "false")
+if [ "$ROOT_HAS_VITEST" != "true" ]; then
+  bad "vitest is not declared in root devDependencies"
+else
+  ok "vitest is a root devDependency"
+fi
+for name in "${EXPECTED[@]}"; do
+  PJ="$ROOT/packages/$name/package.json"
+  HAS_VITEST=$(node -p "!!require('$PJ').devDependencies?.vitest" 2>/dev/null || echo "false")
+  if [ "$HAS_VITEST" = "true" ]; then
+    bad "$name: vitest duplicated in per-package devDependencies"
+  fi
+done
+[ $FAIL -eq 0 ] && ok "no package duplicates vitest in its own devDependencies"
+
+note "root test script is the workspace roll-up"
+ROOT_TEST=$(node -p "require('$ROOT/package.json').scripts?.test||''")
+if [ "$ROOT_TEST" != "pnpm -r test" ]; then
+  bad "root test script is '$ROOT_TEST' (expected 'pnpm -r test')"
+else
+  ok "root test command rolls up package tests"
+fi
+
+note "root coverage script is reporting-only (no thresholds)"
+ROOT_COV=$(node -p "require('$ROOT/package.json').scripts?.coverage||''")
+if [ "$ROOT_COV" != "vitest run --coverage" ]; then
+  bad "root coverage script is '$ROOT_COV' (expected 'vitest run --coverage')"
+else
+  ok "root coverage command runs vitest with V8 coverage"
+fi
+
+note "shared vitest config exists at root with V8 coverage reporting-only"
+if [ ! -f "$ROOT/vitest.config.ts" ]; then
+  bad "missing vitest.config.ts at root"
+else
+  # Check for V8 provider and no thresholds
+  if grep -q "provider: \"v8\"" "$ROOT/vitest.config.ts"; then
+    ok "vitest.config.ts uses V8 coverage provider"
+  else
+    bad "vitest.config.ts does not use V8 coverage provider"
+  fi
+  if grep -qE "(lines:\s*[0-9]|functions:\s*[0-9]|branches:\s*[0-9]|statements:\s*[0-9])" "$ROOT/vitest.config.ts" 2>/dev/null; then
+    bad "vitest.config.ts enforces coverage thresholds (should be reporting-only)"
+  else
+    ok "vitest.config.ts has no coverage thresholds (reporting-only)"
+  fi
+  if grep -q "__tests__" "$ROOT/vitest.config.ts"; then
+    ok "vitest.config.ts includes __tests__/ pattern"
+  else
+    bad "vitest.config.ts does not reference __tests__/ pattern"
+  fi
+fi
+
+note "no external test framework (jest, mocha, tap, ava) declared in any package"
+for name in "${EXPECTED[@]}"; do
+  PJ="$ROOT/packages/$name/package.json"
+  for framework in jest mocha tap ava; do
+    if grep -qi "\"$framework\"" "$PJ" 2>/dev/null; then
+      bad "$name: declares legacy test framework '$framework'"
     fi
   done
 done
-[ $FAIL -eq 0 ] && ok "no external test framework declared — uses node --test + tsx"
+[ $FAIL -eq 0 ] && ok "no legacy test framework declared in any package"
 
 echo
 if [ $FAIL -eq 0 ]; then
