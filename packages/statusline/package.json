@@ -11,13 +11,12 @@
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test zone.test.ts"
+    "test": "vitest run --config ../../vitest.config.ts --root ."
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.2"
   },
   "devDependencies": {
-    "tsx": "^4.22.4",
     "typescript": "^5.9.3"
   }
 }

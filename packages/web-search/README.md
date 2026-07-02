@@ -114,8 +114,18 @@ packages/web-search/
 
 ## Testing
 
-The pure functions in `search.ts` (`composeQuery`, `normalizeTerm`, `normalizeSite`, `cleanInput`, `shapeApiError`, `formatSearchResults`) are designed for deterministic unit tests with no live web calls. `searchGoogle` accepts an optional `fetchFn` parameter for injecting a mock fetch. Tests live alongside source and use Node's built-in test runner with `tsx`:
+The pure functions in `search.ts` (`composeQuery`, `normalizeTerm`, `normalizeSite`, `cleanInput`, `shapeApiError`, `formatSearchResults`) are designed for deterministic unit tests with no live web calls. `searchGoogle` accepts an optional `fetchFn` parameter for injecting a mock fetch.
+
+Tests live in `packages/web-search/__tests__/` as the package's **Package test suite** and run through the shared Vitest harness — they use the **Vitest test idiom** (`describe` / `it` / `expect`), mock the network boundary with `vi.fn()`, and never require Google Custom Search credentials, environment variables, or live network access. `resolveCredentials` is exercised with explicit env objects.
+
+Run the package's tests locally:
 
 ```bash
-node --import tsx --test packages/web-search/**/*.test.ts
+pnpm --filter @epr3/pi-extension-web-search test
+```
+
+Or run the whole workspace roll-up from the repo root:
+
+```bash
+pnpm test
 ```
