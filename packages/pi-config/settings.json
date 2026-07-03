@@ -7,7 +7,8 @@
     "./packages/lsp",
     "./packages/statusline",
     "./packages/web-fetch",
-    "./packages/web-search"
+    "./packages/web-search",
+    "./packages/model-presets"
   ],
   "subagents": {
     "//": "explore is read-only by allowlist; grant it extra READ-ONLY tools here. This example grants the lsp navigation set. researcher is read-only + web (web_search/web_fetch). general gets every discovered tool automatically; add names to excludeExtraTools to take some away.",
@@ -45,6 +46,37 @@
       "risky": 1
     },
     "meterWidth": 10
+  },
+  "modelPresets": {
+    "//": "Coding preset set: default, fast-codex, coding-fallback, deep-reasoning. See packages/model-presets/ for the catalog parser and activation flow.",
+    "cycle": ["default", "fast-codex", "coding-fallback", "deep-reasoning"],
+    "presets": {
+      "default": {
+        "label": "GPT 5.5 medium",
+        "provider": "openai-codex",
+        "model": "gpt-5.5",
+        "thinkingLevel": "medium",
+        "repairDefault": true
+      },
+      "fast-codex": {
+        "label": "Codex Spark low",
+        "provider": "openai-codex",
+        "model": "gpt-5.3-codex-spark",
+        "thinkingLevel": "low"
+      },
+      "coding-fallback": {
+        "label": "MiniMax M3 high",
+        "provider": "opencode-go",
+        "model": "minimax-m3",
+        "thinkingLevel": "high"
+      },
+      "deep-reasoning": {
+        "label": "DeepSeek V4 Pro high",
+        "provider": "opencode-go",
+        "model": "deepseek-v4-pro",
+        "thinkingLevel": "high"
+      }
+    }
   },
   "lsp": {
     "//": "Add or override language servers without touching the Extension package dir; merged over the shipped servers.json.",

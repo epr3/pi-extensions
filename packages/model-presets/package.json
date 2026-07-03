@@ -1,0 +1,22 @@
+{
+  "name": "@epr3/pi-extension-model-presets",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Atomic model presets: bind provider, model id, and thinking level into one intentional selection, with cycle and repair.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts --root ."
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
