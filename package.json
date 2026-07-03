@@ -7,7 +7,7 @@
   "license": "MIT",
   "packageManager": "pnpm@10.33.0",
   "version": "0.1.0",
-  "description": "Monorepo of seven Pi Extension packages (lsp, question, statusline, subagents, todo, web-fetch, web-search) plus a config bundle.",
+  "description": "Monorepo of eight Pi Extension packages (lsp, question, statusline, subagents, todo, web-fetch, web-search, model-presets) plus a config bundle.",
   "type": "module",
   "scripts": {
     "dev": "pnpm -r --parallel dev",

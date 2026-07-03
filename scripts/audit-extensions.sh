@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Final cleanup audit for the Extension package model.
 # One pass proves:
-#   - The seven Extension packages build and typecheck
+#   - The eight Extension packages build and typecheck
 #   - No code depends on the removed shared support
 #   - Reference docs and shipped settings no longer mention stale legacy paths
 #   - Root metadata, scripts, and reference docs agree on the Extension package story
@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-EXPECTED=("lsp" "question" "statusline" "subagents" "todo" "web-fetch" "web-search")
+EXPECTED=("lsp" "question" "statusline" "subagents" "todo" "web-fetch" "web-search" "model-presets")
 FAIL=0
 
 note() { printf "  \033[36m·\033[0m %s\n" "$*"; }
@@ -23,7 +23,7 @@ bad()  { printf "  \033[31m✗\033[0m %s\n" "$*"; FAIL=1; }
 heading() { printf "\n\033[1m== %s ==\033[0m\n" "$*"; }
 
 heading "Extension package contracts"
-note "filter targets exactly the seven canonical packages"
+note "filter targets exactly the eight canonical packages"
 FILTERED=$(pnpm list -r --filter "@epr3/pi-extension-*" --depth -1 2>/dev/null \
   | grep -oE '@epr3/pi-extension-[-a-z]+' | sort -u)
 GOT=()
@@ -38,7 +38,7 @@ EXTRA=$(printf "%s\n" "$FILTERED" | grep -vF "$(printf '%s\n' "${GOT[@]}")" || t
 if [ -n "${EXTRA:-}" ]; then
   bad "filter matched packages not in canonical list: $EXTRA"
 fi
-[ "${#GOT[@]}" -eq 7 ] && ok "seven Extension packages match the filter"
+[ "${#GOT[@]}" -eq 8 ] && ok "eight Extension packages match the filter"
 
 note "package.json name, main, build, typecheck, test scripts present for each"
 for name in "${EXPECTED[@]}"; do
@@ -55,11 +55,11 @@ done
 
 heading "Package-level build + typecheck"
 note "pnpm build:ext"
-pnpm build:ext >/dev/null 2>&1 && ok "build:ext passes for all seven" \
+pnpm build:ext >/dev/null 2>&1 && ok "build:ext passes for all eight" \
   || bad "build:ext failed"
 
 note "pnpm typecheck:ext"
-pnpm typecheck:ext >/dev/null 2>&1 && ok "typecheck:ext passes for all seven" \
+pnpm typecheck:ext >/dev/null 2>&1 && ok "typecheck:ext passes for all eight" \
   || bad "typecheck:ext failed"
 
 heading "No code imports from removed shared support"
@@ -94,7 +94,7 @@ else
   ok "no 'pi-tools/' in code"
 fi
 
-note "shipped settings.json points at the seven current Extension packages"
+note "shipped settings.json points at the eight current Extension packages"
 SET="$ROOT/packages/pi-config/settings.json"
 MISSING=()
 for name in "${EXPECTED[@]}"; do
@@ -105,11 +105,11 @@ done
 if [ "${#MISSING[@]}" -gt 0 ]; then
   bad "settings.json missing current paths for: ${MISSING[*]}"
 else
-  ok "settings.json references all seven current Extension package paths"
+  ok "settings.json references all eight current Extension package paths"
 fi
 
 heading "Root metadata tells the same story"
-note "root package.json name/description match the seven-package model"
+note "root package.json name/description match the eight-package model"
 DESC=$(node -p "require('$ROOT/package.json').description")
 case "$DESC" in
   *"shared"*) bad "root description still mentions 'shared': $DESC" ;;
@@ -137,7 +137,7 @@ else
   bad "pnpm-workspace.yaml does not list packages/*"
 fi
 
-note "README uses 'Extension package' for runnable packages, lists exactly seven"
+note "README uses 'Extension package' for runnable packages, lists exactly eight"
 README="$ROOT/packages/README.md"
 if ! grep -q "Extension package" "$README"; then
   bad "README does not use 'Extension package' vocabulary"
@@ -147,7 +147,7 @@ fi
 for name in "${EXPECTED[@]}"; do
   grep -q "\\b$name\\b" "$README" || bad "README does not mention $name"
 done
-[ $FAIL -eq 0 ] && ok "README lists all seven Extension packages"
+[ $FAIL -eq 0 ] && ok "README lists all eight Extension packages"
 if grep -q "shared/pi.ts" "$README" || grep -q "shared/\b" "$README"; then
   bad "README still references shared/ as architecture"
 else
@@ -169,7 +169,7 @@ for name in "${EXPECTED[@]}"; do
     bad "$name: test script is '$TEST_SCRIPT' (expected '$VITEST_CMD')"
   fi
 done
-[ $FAIL -eq 0 ] && ok "all seven packages use the shared Vitest config for testing"
+[ $FAIL -eq 0 ] && ok "all eight packages use the shared Vitest config for testing"
 
 note "every Extension package has tests under __tests__/"
 for name in "${EXPECTED[@]}"; do
@@ -180,7 +180,7 @@ for name in "${EXPECTED[@]}"; do
     bad "$name: __tests__/ contains no .test.ts files"
   fi
 done
-[ $FAIL -eq 0 ] && ok "all seven packages have __tests__/ with test files"
+[ $FAIL -eq 0 ] && ok "all eight packages have __tests__/ with test files"
 
 note "no .test.ts files exist outside __tests__/ in packages"
 ROGUE=$(find "$ROOT/packages" -name '*.test.ts' -not -path '*/__tests__/*' 2>/dev/null || true)
