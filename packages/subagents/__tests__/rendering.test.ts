@@ -56,7 +56,7 @@ function makePartialResult(entries: StreamEntry[]) {
 
 describe("renderAgentCall", () => {
   it("shows tool name for all types", () => {
-    for (const type of ["explore", "researcher", "general"] as const) {
+    for (const type of ["explore", "general"] as const) {
       const text = renderedText(type, "Some task");
       expect(text).toContain("Agent");
     }
@@ -65,7 +65,6 @@ describe("renderAgentCall", () => {
   it("shows subagent type", () => {
     const cases: Array<{ type: string; label: string }> = [
       { type: "explore", label: "explore" },
-      { type: "researcher", label: "researcher" },
       { type: "general", label: "general" },
     ];
     for (const { type, label } of cases) {
@@ -83,7 +82,6 @@ describe("renderAgentCall", () => {
   it("renders all types correctly", () => {
     const descriptions = {
       explore: "Read-only codebase discovery",
-      researcher: "Read-only web research (web + read)",
       general: "Scoped read/write work off the main context",
     } as const;
 

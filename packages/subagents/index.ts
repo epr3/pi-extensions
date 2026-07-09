@@ -7,7 +7,7 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { resolveAgentType, exploreToolset, researcherToolset } from "./agents.ts";
+import { resolveAgentType, exploreToolset } from "./agents.ts";
 import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts";
 import { AgentManager, type AgentRecord } from "./manager.ts";
 import { resolveTypeDefaultModel, checkDefaultModelWarnings } from "./model-ref.ts";
@@ -113,7 +113,7 @@ export function renderAgentResult(
  */
 
 export const agentParams = Type.Object({
-  subagent_type: StringEnum(["explore", "general", "researcher"] as const),
+  subagent_type: StringEnum(["explore", "general"] as const),
   prompt: Type.String({ description: "The task for the subagent" }),
   description: Type.String({ description: "Short 3-5 word summary shown in UI" }),
   run_in_background: Type.Optional(
@@ -174,10 +174,7 @@ export default function (pi: ExtensionAPI) {
       extraTools: Array.isArray(raw.explore?.extraTools) ? raw.explore.extraTools : [],
       defaultModel: String(raw.explore?.defaultModel ?? "").trim() || undefined,
     },
-    researcher: {
-      extraTools: Array.isArray(raw.researcher?.extraTools) ? raw.researcher.extraTools : [],
-      defaultModel: String(raw.researcher?.defaultModel ?? "").trim() || undefined,
-    },
+
     defaultModel: String(raw.defaultModel ?? "").trim() || undefined,
     general: {
       excludeExtraTools: Array.isArray(raw.general?.excludeExtraTools)
@@ -187,7 +184,6 @@ export default function (pi: ExtensionAPI) {
     },
   };
   const exploreTools = exploreToolset(cfg.explore.extraTools);
-  const researcherTools = researcherToolset(cfg.researcher.extraTools);
 
   const manager = new AgentManager({
     maxConcurrency: Number(process.env.PI_SUBAGENT_CONCURRENCY) || cfg.maxConcurrency,
@@ -199,14 +195,13 @@ export default function (pi: ExtensionAPI) {
     label: "Subagent",
     description:
       "Launch a Subagent in an isolated session to keep the main context clean. " +
-      "subagent_type='explore' is read-only codebase discovery (read/grep/find/ls); 'researcher' is " +
-      "read-only web research (web_search/web_fetch + read); 'general' has full tools. " +
+      "subagent_type='explore' is read-only codebase discovery (read/grep/find/ls); 'general' has full tools. " +
       "Foreground (default) blocks and returns the result; run_in_background:true returns an id you " +
       "poll with get_subagent_result.",
     promptSnippet:
-      "Run an explore (read-only), researcher (web), or general Subagent in an isolated context",
+      "Run an explore (read-only) or general Subagent in an isolated context",
     promptGuidelines: [
-      "Use subagent_type='explore' to gather codebase context and 'researcher' to gather web/external context without polluting the main context; use 'general' for off-context work that writes.",
+      "Use subagent_type='explore' to gather codebase context and 'general' for off-context work that writes.",
       "For independent delegated tasks of the same subagent type, issue multiple foreground Agent calls in the same assistant turn (same-turn fan-out) — one call per task, each with its own prompt and description. Do not use a batch parameter or aggregate result API; each call returns its own result.",
     ],
     renderCall: renderAgentCall,
@@ -220,7 +215,6 @@ export default function (pi: ExtensionAPI) {
       const model = resolveTypeDefaultModel(
         {
           explore: cfg.explore.defaultModel,
-          researcher: cfg.researcher.defaultModel,
           general: cfg.general.defaultModel,
         },
         type,
@@ -275,11 +269,7 @@ export default function (pi: ExtensionAPI) {
           prompt: params.prompt,
           cwd: ctx.cwd,
           model,
-          ...(type === "explore"
-            ? { tools: exploreTools }
-            : type === "researcher"
-              ? { tools: researcherTools }
-              : {}),
+          ...(type === "explore" ? { tools: exploreTools } : {}),
           excludeExtraTools: cfg.general.excludeExtraTools,
           onStreamEvent,
           abortSignal: background ? undefined : ctx.signal,

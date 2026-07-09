@@ -2,7 +2,7 @@
   "name": "@epr3/pi-extension-web-search",
   "version": "0.1.0",
   "private": true,
-  "description": "`web_search` tool for researcher sub-agents via Google Custom Search.",
+  "description": "`web_search` web discovery tool for parent-agent and general research workflows via Google Custom Search.",
   "type": "module",
   "main": "./index.ts",
   "exports": {

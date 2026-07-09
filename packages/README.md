@@ -22,21 +22,21 @@ All are real Pi extensions written against the documented `ExtensionAPI`, loaded
 
 | Extension package | Adds | Notes |
 |-------------------|------|-------|
-| `subagents` | `Agent` + `get_subagent_result`, types **explore** (read-only; extra tools granted via settings), **researcher** (read-only + `web_search`/`web_fetch` when present), and **general** (all discovered tools) | spawns real isolated sessions via the SDK `createAgentSession`; conventions loosely from `@tintinweb/pi-subagents`, not verbatim |
+| `subagents` | `Agent` + `get_subagent_result`, types **explore** (read-only; extra tools granted via settings) and **general** (all discovered tools) | spawns real isolated sessions via the SDK `createAgentSession`; conventions loosely from `@tintinweb/pi-subagents`, not verbatim |
 | `question` | `question` tool | structured multiple-choice via `ctx.ui.select`; prose fallback in non-interactive modes |
 | `todo` | `todo_write` / `todo_read` | state in tool-result details, reconstructed on `session_start` |
 | `lsp` | `lsp_definition` / `implementation` / `references` / `workspace_symbols` / `document_symbols` / `hover` / `incoming_calls` / `outgoing_calls` / `diagnostics` | dependency-free stdio LSP client; runtime-tested vs a mock server |
 | `statusline` | dumb-zone footer status | uses `ctx.getContextUsage()`, `ctx.model.contextWindow`, `ctx.cwd`, `pi.exec(git)`, `ctx.ui.setStatus` |
 | `web-fetch` | `web_fetch` tool for fetching URLs and extracting Markdown | validates URLs, browser-like UA, timeout, size cap, HTML→Markdown via heuristic extraction, plain-text pass-through, binary rejection |
-| `web-search` | `web_search` tool for researcher sub-agents | Google Custom Search; credentials from env vars or `~/.pi/agent/auth/web-search.json`; query composition with exact phrases, exclusions, site restriction |
+| `web-search` | `web_search` tool for parent-agent web discovery | Google Custom Search; credentials from env vars or `~/.pi/agent/auth/web-search.json`; query composition with exact phrases, exclusions, site restriction |
 | `model-presets` | `/model-preset` command, `Ctrl+Shift+M` cycle, `model_select` repair | atomic model presets binding provider, model id, and thinking level; shipped config includes a Coding preset set (default, fast-codex, coding-fallback, deep-reasoning) |
 
 
-### Subagents: explore + researcher + general
+### Subagents: explore + general
 
 See [web-fetch/README.md](./web-fetch/README.md) for the `web_fetch` tool documentation.
 
-Three types by design. `explore` is read-only (`read/grep/find/ls`) for codebase discovery; `researcher` is read-only too, adding `web_search`/`web_fetch` for web/external research grounded against the code (web tools come from separate extensions — degrades gracefully if absent); `general` has all tools and inherits the normal prompt for off-context work like the parallel interface designs. No Plan agent, steering, resume, or custom `.pi/agents`.
+Two types by design. `explore` is read-only (`read/grep/find/ls`) for codebase discovery; `general` has all tools and inherits the normal prompt for off-context work that may write, such as parallel interface designs. **External web research** is not a Subagent type: the parent Pi coding agent uses web Extension tools such as `web_search` and `web_fetch` directly. No Plan agent, steering, resume, or custom `.pi/agents`.
 
 ### Status line: real Pi APIs
 

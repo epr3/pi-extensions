@@ -1,9 +1,7 @@
-// Three agent types: a read-only `explore` agent for codebase discovery, a
-// read-only `researcher` agent for web research (web tools + read, no write),
-// and a `general` agent for off-context work that may write. Conventions (the
-// Agent tool surface, subagent_type) are loosely modeled on @tintinweb/pi-subagents
-// and the researcher role on amosblomqvist/pi-subagents; not followed verbatim —
-// only what this suite needs.
+// Two agent types: a read-only `explore` agent for codebase discovery and a
+// `general` agent for off-context work that may write. External web research
+// is a parent-agent workflow using web Extension tools directly, not a built-in
+// Subagent type.
 //
 // Tool access is configuration, not code:
 // - `general` passes no allowlist — every built-in and every discovered
@@ -14,7 +12,7 @@
 //   the PI_SUBAGENT_EXPLORE_TOOLS env var. Never grant anything that can
 //   write or execute; that's what `general` is for.
 
-export type AgentType = "explore" | "general" | "researcher";
+export type AgentType = "explore" | "general";
 
 /** Read-only built-ins — the floor of the explore toolset. */
 export const CORE_READ_TOOLS = ["read", "grep", "find", "ls"];
@@ -29,18 +27,6 @@ export function exploreToolset(extraTools: string[], env: NodeJS.ProcessEnv = pr
     .map((s) => s.trim())
     .filter(Boolean);
   return [...new Set([...CORE_READ_TOOLS, ...extraTools, ...envExtra])];
-}
-
-/** Web tools the researcher needs; supplied by separate Pi extensions (web-search/web-fetch). */
-export const RESEARCH_TOOLS = ["web_search", "web_fetch"];
-
-/** The researcher allowlist: core read + web + configured grants + env extras, deduped. */
-export function researcherToolset(extraTools: string[], env: NodeJS.ProcessEnv = process.env): string[] {
-  const envExtra = (env.PI_SUBAGENT_RESEARCHER_TOOLS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return [...new Set([...CORE_READ_TOOLS, ...RESEARCH_TOOLS, ...extraTools, ...envExtra])];
 }
 
 export interface AgentDef {
@@ -64,40 +50,6 @@ export const AGENTS: Record<AgentType, AgentDef> = {
       "not attempt to spawn further sub-agents.",
     description: "Read-only codebase discovery",
   },
-  researcher: {
-    readOnly: true,
-    systemPrompt:
-      "You are a read-only research sub-agent. Investigate the assigned question using your web tools " +
-      "(web_search, web_fetch) and your read-only local tools (read, grep, find, ls). Use the web for " +
-      "current, authoritative information; use the local read tools to ground findings against this " +
-      "codebase when the question touches it. You cannot edit, write, or run commands. Do not attempt " +
-      "to spawn further sub-agents.\n\n" +
-      "## Research workflow\n\n" +
-      "1. **Break the research into facets.** Decompose the main question into 2-4 searchable angles " +
-      "or facets. Search each one independently to cover different perspectives rather than relying " +
-      "on a single query. Vary your search terms across facets.\n\n" +
-      "2. **Prefer official and primary sources.** Prioritize official documentation, primary-source " +
-      "pages, and authoritative references over blog posts, forums, or secondary summaries. When " +
-      "researching a library, API, framework, or documentation-heavy topic, check the canonical " +
-      "/llms.txt on its official documentation host first — it may provide documentation structured " +
-      "for LLM consumption. Also look for llms-full.txt or llms-all.txt variants, which may contain " +
-      "more complete bundled documentation.\n\n" +
-      "3. **Verify important claims.** Treat LLM-oriented documentation sources (/llms.txt and " +
-      "variants) as convenient starting points, not unchallenged authorities. Before treating an " +
-      "important claim as settled, verify it against the corresponding official source page (the " +
-      "human-readable docs, spec, or reference). Cross-check factual claims, version numbers, API " +
-      "signatures, and behavioural statements against the official pages.\n\n" +
-      "4. **Fetch promising sources.** Do not rely only on search result snippets. Use web_fetch to " +
-      "retrieve the full content of the most promising URLs so you can read beyond the excerpt. " +
-      "Evaluate each source for relevance, authority, and timeliness.\n\n" +
-      "5. **Cite your sources and explain your choices.** In the final answer, cite every source " +
-      "you used (URLs and/or file paths). Explain why you kept each source (e.g. official docs, " +
-      "primary source, authoritative reference). Where you considered but dropped a source, briefly " +
-      "explain why (e.g. outdated, low authority, off-topic). If the research leaves open questions " +
-      "or gaps in coverage, list them explicitly.\n\n" +
-      "Keep raw quoted material short — paraphrase and summarize rather than pasting large blocks.",
-    description: "Read-only web research (web + read)",
-  },
   general: {
     readOnly: false,
     systemPrompt: undefined, // inherits the normal system prompt for the cwd
@@ -108,6 +60,5 @@ export const AGENTS: Record<AgentType, AgentDef> = {
 export function resolveAgentType(requested: string): AgentType {
   const s = String(requested).toLowerCase();
   if (s.startsWith("expl")) return "explore";
-  if (s.startsWith("rese")) return "researcher";
   return "general";
 }

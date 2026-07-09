@@ -152,11 +152,11 @@ describe("resolveDefaultModel", () => {
 describe("resolveTypeDefaultModel", () => {
   const registry = fakeRegistry([anthropicModel, openaiModel]);
   const find = (p: string, m: string) => registry.find(p, m);
-  const none = { explore: undefined, researcher: undefined, general: undefined };
+  const none = { explore: undefined, general: undefined };
 
   it("type-specific override wins over shared default", () => {
     const r = resolveTypeDefaultModel(
-      { explore: "openai/gpt-4o", researcher: undefined, general: undefined },
+      { explore: "openai/gpt-4o", general: undefined },
       "explore",
       "anthropic/claude-sonnet-4-20250514",
       find,
@@ -167,8 +167,8 @@ describe("resolveTypeDefaultModel", () => {
 
   it("type without override falls back to shared default", () => {
     const r = resolveTypeDefaultModel(
-      { explore: "openai/gpt-4o", researcher: undefined, general: undefined },
-      "researcher",
+      { explore: "openai/gpt-4o", general: undefined },
+      "general",
       "anthropic/claude-sonnet-4-20250514",
       find,
       anthropicModel,
@@ -181,20 +181,9 @@ describe("resolveTypeDefaultModel", () => {
       .toBe(anthropicModel);
   });
 
-  it("researcher-specific override resolves", () => {
-    const r = resolveTypeDefaultModel(
-      { explore: "openai/gpt-4o", researcher: "anthropic/claude-sonnet-4-20250514", general: undefined },
-      "researcher",
-      undefined,
-      find,
-      anthropicModel,
-    );
-    expect(r).toBe(anthropicModel);
-  });
-
   it("unresolvable type override → fall through to shared default", () => {
     const r = resolveTypeDefaultModel(
-      { explore: "faux/unknown", researcher: undefined, general: undefined },
+      { explore: "faux/unknown", general: undefined },
       "explore",
       "openai/gpt-4o",
       find,
@@ -205,7 +194,7 @@ describe("resolveTypeDefaultModel", () => {
 
   it("invalid type override syntax → fall through to shared default", () => {
     const r = resolveTypeDefaultModel(
-      { explore: "no-slash-here", researcher: undefined, general: undefined },
+      { explore: "no-slash-here", general: undefined },
       "explore",
       "openai/gpt-4o",
       find,
@@ -216,7 +205,7 @@ describe("resolveTypeDefaultModel", () => {
 
   it("empty type override string → fall through to shared default", () => {
     const r = resolveTypeDefaultModel(
-      { explore: "", researcher: undefined, general: undefined },
+      { explore: "", general: undefined },
       "explore",
       "openai/gpt-4o",
       find,
@@ -236,7 +225,7 @@ describe("resolveTypeDefaultModel", () => {
 
   it("type override applies only to its own type", () => {
     const r = resolveTypeDefaultModel(
-      { explore: "openai/gpt-4o", researcher: undefined, general: undefined },
+      { explore: "openai/gpt-4o", general: undefined },
       "general",
       undefined,
       find,
@@ -318,7 +307,7 @@ describe("type-specific wiring seam", () => {
 
     let capturedModel: Model<any> | undefined;
     const model = resolveTypeDefaultModel(
-      { explore: "openai/gpt-4o", researcher: undefined, general: undefined },
+      { explore: "openai/gpt-4o", general: undefined },
       "explore",
       "anthropic/claude-sonnet-4-20250514",
       find,
@@ -342,14 +331,14 @@ describe("type-specific wiring seam", () => {
 
     let capturedModel: Model<any> | undefined;
     const model = resolveTypeDefaultModel(
-      { explore: "openai/gpt-4o", researcher: undefined, general: undefined },
-      "researcher",
+      { explore: "openai/gpt-4o", general: undefined },
+      "general",
       "anthropic/claude-sonnet-4-20250514",
       find,
       anthropicModel,
     );
     const { done } = manager.launch(
-      { type: "researcher", description: "test" },
+      { type: "general", description: "test" },
       async () => {
         capturedModel = model;
         return { result: "ok", tokens: 0, toolUses: 0 };
@@ -366,7 +355,7 @@ describe("type-specific wiring seam", () => {
 
     let capturedModel: Model<any> | undefined;
     const model = resolveTypeDefaultModel(
-      { explore: undefined, researcher: undefined, general: undefined },
+      { explore: undefined, general: undefined },
       "general",
       undefined,
       find,
@@ -389,7 +378,7 @@ describe("type-specific wiring seam", () => {
     const find = (p: string, m: string) => registry.find(p, m);
 
     const _model = resolveTypeDefaultModel(
-      { explore: "openai/gpt-4o", researcher: undefined, general: undefined },
+      { explore: "openai/gpt-4o", general: undefined },
       "explore",
       "anthropic/claude-sonnet-4-20250514",
       find,
@@ -486,9 +475,9 @@ describe("checkDefaultModelWarnings", () => {
   });
 
   it("type applies only to its own scope in warnings", () => {
-    const w = checkDefaultModelWarnings("faux/unknown", undefined, find, "researcher");
+    const w = checkDefaultModelWarnings("faux/unknown", undefined, find, "explore");
     expect(w).toHaveLength(1);
-    expect(w[0].scope).toBe("researcher");
+    expect(w[0].scope).toBe("explore");
   });
 });
 

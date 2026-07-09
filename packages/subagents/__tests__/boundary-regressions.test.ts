@@ -6,7 +6,6 @@ import {
   CORE_READ_TOOLS,
   SAFETY_EXCLUDES,
   exploreToolset,
-  researcherToolset,
 } from "../agents.ts";
 import type { StreamEvent, StreamCallback } from "../runner.ts";
 import type { StreamEntry } from "../index.ts";
@@ -117,7 +116,7 @@ describe("background behavior", () => {
   it("retrieved through result tool", async () => {
     const manager = new AgentManager({ maxConcurrency: 1 });
     const { record, done } = manager.launch(
-      { type: "researcher", description: "bg poll", background: true },
+      { type: "general", description: "bg poll", background: true },
       async () => ({ result: "polled result", tokens: 12, toolUses: 2 }),
     );
 
@@ -319,7 +318,7 @@ describe("foreground final return shape", () => {
   it("excludes stream data even with warnings", async () => {
     const manager = new AgentManager({ maxConcurrency: 1 });
     const { record, done } = manager.launch(
-      { type: "researcher", description: "fg warn shape", background: false },
+      { type: "explore", description: "fg warn shape", background: false },
       async () => ({ result: "Research done.", tokens: 42, toolUses: 5 }),
     );
     await done;
@@ -354,11 +353,6 @@ describe("read-only and safety boundaries", () => {
     expect(exploreToolset(["read"])).toEqual(CORE_READ_TOOLS);
   });
 
-  it("researcher toolset unchanged", () => {
-    const expected = [...new Set([...CORE_READ_TOOLS, "web_search", "web_fetch"])];
-    expect(researcherToolset([])).toEqual(expected);
-  });
-
   it("safety excludes unchanged", () => {
     expect(SAFETY_EXCLUDES).toEqual(["Agent", "get_subagent_result", "question"]);
     expect(SAFETY_EXCLUDES).toContain("Agent");
@@ -375,7 +369,6 @@ describe("read-only and safety boundaries", () => {
 
   it("read-only agent boundaries unchanged", () => {
     expect(typeof exploreToolset).toBe("function");
-    expect(typeof researcherToolset).toBe("function");
   });
 });
 
@@ -500,7 +493,7 @@ describe("foreground concurrency cap", () => {
       () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveA = resolve)),
     );
     const b = manager.launch(
-      { type: "researcher", description: "fg-indep-b", background: false },
+      { type: "explore", description: "fg-indep-b", background: false },
       () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveB = resolve)),
     );
 
