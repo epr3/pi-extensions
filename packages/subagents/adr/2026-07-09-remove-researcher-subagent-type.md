@@ -1,0 +1,5 @@
+# Remove the Researcher Subagent Type
+
+We will remove `researcher` as a built-in **Subagent type** rather than aliasing or merely disabling it: `Agent` should fail fast on `subagent_type: "researcher"`, stale `subagents.researcher` examples should be removed, and repo-owned docs/config references should be updated in the same change. External web research is now a parent-agent workflow using web Extension tools directly, not a read-only web Subagent profile; this trades backward compatibility and delegated read-only web isolation for a smaller Subagents Extension API and a clearer separation between delegated local work and web-tool research.
+
+Supersedes the subagents portion of `docs/adr/2026-06-30-web-tool-boundaries.md`, which treated the Researcher Subagent type as the web-tool grant point.
