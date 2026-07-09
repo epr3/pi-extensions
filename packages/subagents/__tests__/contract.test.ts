@@ -70,7 +70,7 @@ describe("result params", () => {
 // ---------------------------------------------------------------------------
 
 describe("subagent_type enum", () => {
-  it("has exactly 3 values: explore, general, researcher", () => {
+  it("has exactly 2 values: explore, general", () => {
     const st = agentParams.properties.subagent_type;
     const values: string[] = [];
     if ((st as any).enum) {
@@ -78,10 +78,10 @@ describe("subagent_type enum", () => {
     } else if ((st as any).oneOf) {
       for (const s of (st as any).oneOf) values.push(s.const ?? s.enum?.[0]);
     }
-    expect(values).toHaveLength(3);
+    expect(values).toHaveLength(2);
     expect(values).toContain("explore");
     expect(values).toContain("general");
-    expect(values).toContain("researcher");
+    expect(values).not.toContain("researcher");
   });
 });
 

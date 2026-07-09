@@ -11,7 +11,7 @@
     "./packages/model-presets"
   ],
   "subagents": {
-    "//": "explore is read-only by allowlist; grant it extra READ-ONLY tools here. This example grants the lsp navigation set. researcher is read-only + web (web_search/web_fetch). general gets every discovered tool automatically; add names to excludeExtraTools to take some away.",
+    "//": "explore is read-only by allowlist; grant it extra READ-ONLY tools here. This example grants the lsp navigation set. general gets every discovered tool automatically; add names to excludeExtraTools to take some away.",
     "maxConcurrency": 4,
     "explore": {
       "defaultModel": "opencode-go/deepseek-v4-flash",
@@ -27,11 +27,7 @@
         "lsp_diagnostics"
       ]
     },
-    "researcher": {
-      "defaultModel": "openai-codex/gpt-5.5",
-      "//": "web_search / web_fetch come from the web-fetch and web-search extension packages loaded above. If they aren't loaded, researcher degrades to the core read-only tools.",
-      "extraTools": []
-    },
+
     "general": {
       "defaultModel": "opencode-go/kimi-k2.7-code",
       "excludeExtraTools": []

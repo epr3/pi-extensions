@@ -6,7 +6,6 @@ import {
   searchGoogle,
   formatSearchResults,
   cleanInput,
-  CredentialsError,
 } from "./search.ts";
 import type { SearchResponseDetails, SearchResult } from "./search.ts";
 import { renderWebSearchCall, renderWebSearchResult } from "./render.ts";

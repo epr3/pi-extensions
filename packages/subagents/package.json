@@ -2,7 +2,7 @@
   "name": "@epr3/pi-extension-subagents",
   "version": "0.1.0",
   "private": true,
-  "description": "`Agent` + `get_subagent_result` tools. Types: explore (read-only), researcher (web + read), general (all).",
+  "description": "`Agent` + `get_subagent_result` tools. Types: explore (read-only), general (scoped read/write).",
   "type": "module",
   "main": "./index.ts",
   "exports": {

@@ -1,6 +1,6 @@
-# web_search — Google Custom Search for researcher sub-agents (Pi extension, TypeScript)
+# web_search — Google Custom Search for research workflows (Pi extension, TypeScript)
 
-Adds a `web_search` tool that lets researcher Subagents discover external sources through structured Google Custom Search queries. Accepts a base query, exact phrase inclusions, excluded terms, optional site restriction, and optional result count. Credentials resolve from environment variables first, then from `~/.pi/agent/auth/web-search.json`.
+Adds a `web_search` tool for web discovery in parent-agent and general research workflows through structured Google Custom Search queries. Accepts a base query, exact phrase inclusions, excluded terms, optional site restriction, and optional result count. Credentials resolve from environment variables first, then from `~/.pi/agent/auth/web-search.json`.
 
 ```
 web_search({ query: "pi coding agent", site: "github.com", count: 3 })
