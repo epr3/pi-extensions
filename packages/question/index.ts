@@ -1,6 +1,8 @@
-import type { ExtensionAPI, AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, AgentToolResult, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { renderQuestionCall, renderQuestionResult, type QuestionResultDetails } from "./render.ts";
+import { BoundedQuestionDialog, boundedEditorTitle, DONE_DISPLAY } from "./dialog.ts";
+import type { SelectItem } from "@earendil-works/pi-tui";
 
 function textResult(text: string, details: QuestionResultDetails): AgentToolResult<QuestionResultDetails> {
   return { content: [{ type: "text" as const, text }], details };
@@ -37,7 +39,6 @@ type Option = { label: string; description?: string; recommended?: boolean };
 
 const FREE_TEXT_LABEL = "Type your answer";
 const FREE_TEXT_DISPLAY = `✎ ${FREE_TEXT_LABEL} — Write a custom response`;
-const DONE_DISPLAY = "✓ Done";
 
 function uniqueDisplay(base: string, used: readonly string[]): string {
   let out = base;
@@ -51,6 +52,40 @@ function ordered(options: Option[]): Option[] {
 
 function display(o: Option): string {
   return `${o.label}${o.recommended ? "  (recommended)" : ""}${o.description ? ` — ${o.description}` : ""}`;
+}
+
+/**
+ * Show a BoundedQuestionDialog interactively, returning the selected display
+ * string when the user confirms, or undefined when they cancel.
+ *
+ * Renders as a TUI widget and forwards terminal input until a choice is made.
+ */
+async function showBoundedDialog(
+  ctx: ExtensionUIContext,
+  dialog: BoundedQuestionDialog,
+): Promise<string | undefined> {
+  return new Promise<string | undefined>((resolve) => {
+    const unsubInput = ctx.onTerminalInput((keyData) => {
+      dialog.handleInput(keyData);
+      return { consume: true };
+    });
+
+    const cleanup = () => {
+      unsubInput();
+      ctx.setWidget("bounded-question-dialog", undefined);
+    };
+
+    dialog.onSelect = (item: SelectItem) => {
+      cleanup();
+      resolve(item.value);
+    };
+    dialog.onCancel = () => {
+      cleanup();
+      resolve(undefined);
+    };
+
+    ctx.setWidget("bounded-question-dialog", () => dialog);
+  });
 }
 
 export default function (pi: ExtensionAPI) {
@@ -90,8 +125,9 @@ export default function (pi: ExtensionAPI) {
       }
 
       const title = params.header ? `${params.header}: ${params.question}` : params.question;
+      const boundedTitle = boundedEditorTitle(params.header, params.question);
       const collectFreeText = async (): Promise<string | undefined> =>
-        (await ctx.ui.editor(`${title}: ${FREE_TEXT_LABEL}`, ""))?.trim() || undefined;
+        (await ctx.ui.editor(`${boundedTitle}: ${FREE_TEXT_LABEL}`, ""))?.trim() || undefined;
 
       // Map selections back by index, not by re-parsing display strings —
       // labels may legitimately contain "—" or "(recommended)".
@@ -101,21 +137,30 @@ export default function (pi: ExtensionAPI) {
         const chosen: Option[] = [];
         let freeText: string | undefined;
         for (;;) {
-          const remaining = optionDisplays.filter((_, i) => !chosen.includes(options[i]!));
-          const selections = freeText
-            ? [...remaining, DONE_DISPLAY]
-            : [...remaining, freeTextDisplay, DONE_DISPLAY];
-          const sel = await ctx.ui.select(
-            `${title}${chosen.length ? `  [chosen: ${chosen.map((o) => o.label).join(", ")}]` : ""}`,
-            selections,
-          );
+          const boundedDialog = new BoundedQuestionDialog({
+            title,
+            options,
+            freeTextLabel: FREE_TEXT_LABEL,
+            freeTextDisplay,
+            multiSelect: true,
+            chosenLabels: chosen.map((o) => o.label),
+            hasFreeText: !!freeText,
+          });
+          const sel = await showBoundedDialog(ctx.ui, boundedDialog);
           if (sel === undefined || sel === DONE_DISPLAY) break;
           if (sel === freeTextDisplay) {
             freeText = await collectFreeText();
             continue;
           }
           const opt = byDisplay(sel);
-          if (opt && !chosen.includes(opt)) chosen.push(opt);
+          if (opt) {
+            const idx = chosen.indexOf(opt);
+            if (idx >= 0) {
+              chosen.splice(idx, 1); // deselect
+            } else {
+              chosen.push(opt); // select
+            }
+          }
         }
         const labels = chosen.map((o) => o.label);
         const hasFreeText = !!freeText;
@@ -133,7 +178,13 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
-      const sel = await ctx.ui.select(title, [...optionDisplays, freeTextDisplay]);
+      const boundedDialog = new BoundedQuestionDialog({
+        title,
+        options,
+        freeTextLabel: FREE_TEXT_LABEL,
+        freeTextDisplay,
+      });
+      const sel = await showBoundedDialog(ctx.ui, boundedDialog);
       if (sel === freeTextDisplay) {
         const freeText = await collectFreeText();
         const hasText = !!freeText;
