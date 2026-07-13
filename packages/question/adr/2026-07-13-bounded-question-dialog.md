@@ -1,0 +1,3 @@
+# Question owns bounded interactive rendering
+
+The **Question Extension package** should replace direct `ctx.ui.select` usage for interactive **Structured question** prompts with a package-owned **Bounded question dialog** when prompt text and answers can exceed the terminal **Display budget**. This keeps every preset answer and the **Free prose answer** selectable through scrolling while capping displayed prompts, multi-select chosen summaries, and editor titles; it rejects both a Pi-core-only fix and simple string shortening because this package owns the structured-question contract and needs deterministic package tests around bounded line count and width.
