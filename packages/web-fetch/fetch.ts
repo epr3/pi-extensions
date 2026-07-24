@@ -117,7 +117,10 @@ export function validateUrl(raw: string): URL {
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new WebFetchError(trimmed, `Unsupported protocol "${parsed.protocol}" — only http and https are allowed`);
+    throw new WebFetchError(
+      trimmed,
+      `Unsupported protocol "${parsed.protocol}" — only http and https are allowed`,
+    );
   }
 
   // Require a real hostname
@@ -182,7 +185,8 @@ export function isTextContentType(contentType: string): boolean {
   if (contentType.startsWith("text/")) return true;
   if (contentType === "application/json") return true;
   if (contentType.endsWith("+xml") || contentType === "application/xml") return true;
-  if (contentType === "application/javascript" || contentType === "application/ecmascript") return true;
+  if (contentType === "application/javascript" || contentType === "application/ecmascript")
+    return true;
   return false;
 }
 
@@ -441,9 +445,7 @@ export async function fetchUrl(
         }
         chunks.push(value);
       }
-      const combined = new Uint8Array(
-        chunks.reduce((acc, c) => acc + c.byteLength, 0),
-      );
+      const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
       let offset = 0;
       for (const chunk of chunks) {
         combined.set(chunk, offset);
@@ -461,7 +463,10 @@ export async function fetchUrl(
     }
   } catch (err) {
     if (err instanceof WebFetchError) throw err;
-    throw new WebFetchError(url.toString(), `Failed to read response body: ${(err as Error).message}`);
+    throw new WebFetchError(
+      url.toString(),
+      `Failed to read response body: ${(err as Error).message}`,
+    );
   }
 
   return { response, body };
@@ -612,8 +617,14 @@ function processBlocks(html: string): string {
   result = result.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (_m, c) => `\n## ${processInline(c)}\n`);
   result = result.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, (_m, c) => `\n### ${processInline(c)}\n`);
   result = result.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, (_m, c) => `\n#### ${processInline(c)}\n`);
-  result = result.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, (_m, c) => `\n##### ${processInline(c)}\n`);
-  result = result.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, (_m, c) => `\n###### ${processInline(c)}\n`);
+  result = result.replace(
+    /<h5[^>]*>([\s\S]*?)<\/h5>/gi,
+    (_m, c) => `\n##### ${processInline(c)}\n`,
+  );
+  result = result.replace(
+    /<h6[^>]*>([\s\S]*?)<\/h6>/gi,
+    (_m, c) => `\n###### ${processInline(c)}\n`,
+  );
 
   // Horizontal rules
   result = result.replace(/<hr[^>]*>/gi, "\n---\n");
@@ -621,35 +632,54 @@ function processBlocks(html: string): string {
   // Blockquotes
   result = result.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_m, c) => {
     const inner = processBlocks(c).trim();
-    return `\n${inner.split("\n").map((l: string) => `> ${l}`).join("\n")}\n`;
+    return `\n${inner
+      .split("\n")
+      .map((l: string) => `> ${l}`)
+      .join("\n")}\n`;
   });
 
   // Ordered lists
   result = result.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_m, items) => {
     const lis = items.match(/<li[^>]*>([\s\S]*?)<\/li>/gi) ?? [];
-    return `\n${lis.map((li: string, i: number) => {
-      const inner = li.replace(/<\/?li[^>]*>/gi, "").trim();
-      return `  ${i + 1}. ${processInline(inner)}`;
-    }).join("\n")}\n`;
+    return `\n${lis
+      .map((li: string, i: number) => {
+        const inner = li.replace(/<\/?li[^>]*>/gi, "").trim();
+        return `  ${i + 1}. ${processInline(inner)}`;
+      })
+      .join("\n")}\n`;
   });
 
   // Unordered lists
   result = result.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_m, items) => {
     const lis = items.match(/<li[^>]*>([\s\S]*?)<\/li>/gi) ?? [];
-    return `\n${lis.map((li: string) => {
-      const inner = li.replace(/<\/?li[^>]*>/gi, "").trim();
-      return `  - ${processInline(inner)}`;
-    }).join("\n")}\n`;
+    return `\n${lis
+      .map((li: string) => {
+        const inner = li.replace(/<\/?li[^>]*>/gi, "").trim();
+        return `  - ${processInline(inner)}`;
+      })
+      .join("\n")}\n`;
   });
 
   // Paragraphs
   result = result.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, (_m, c) => `\n${processInline(c)}\n`);
 
   // Divs and other block containers (process recursively)
-  result = result.replace(/<div[^>]*>([\s\S]*?)<\/div>/gi, (_m, c) => `\n${processBlocks(c.trim())}\n`);
-  result = result.replace(/<section[^>]*>([\s\S]*?)<\/section>/gi, (_m, c) => `\n${processBlocks(c.trim())}\n`);
-  result = result.replace(/<article[^>]*>([\s\S]*?)<\/article>/gi, (_m, c) => `\n${processBlocks(c.trim())}\n`);
-  result = result.replace(/<main[^>]*>([\s\S]*?)<\/main>/gi, (_m, c) => `\n${processBlocks(c.trim())}\n`);
+  result = result.replace(
+    /<div[^>]*>([\s\S]*?)<\/div>/gi,
+    (_m, c) => `\n${processBlocks(c.trim())}\n`,
+  );
+  result = result.replace(
+    /<section[^>]*>([\s\S]*?)<\/section>/gi,
+    (_m, c) => `\n${processBlocks(c.trim())}\n`,
+  );
+  result = result.replace(
+    /<article[^>]*>([\s\S]*?)<\/article>/gi,
+    (_m, c) => `\n${processBlocks(c.trim())}\n`,
+  );
+  result = result.replace(
+    /<main[^>]*>([\s\S]*?)<\/main>/gi,
+    (_m, c) => `\n${processBlocks(c.trim())}\n`,
+  );
 
   // Images (may appear without a block wrapper)
   result = result.replace(/<img[^>]*src=["']([^"']*)["'][^>]*>/gi, (_m, src) => {
@@ -682,16 +712,25 @@ function processInline(html: string): string {
   });
 
   // Links
-  result = result.replace(/<a[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, text: string) => {
-    const inner = processInline(text);
-    return inner.trim() ? `[${inner}](${href})` : "";
-  });
+  result = result.replace(
+    /<a[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (_m, href: string, text: string) => {
+      const inner = processInline(text);
+      return inner.trim() ? `[${inner}](${href})` : "";
+    },
+  );
 
   // Bold / Strong
-  result = result.replace(/<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_m, c) => `**${processInline(c)}**`);
+  result = result.replace(
+    /<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi,
+    (_m, c) => `**${processInline(c)}**`,
+  );
 
   // Italic / Emphasis
-  result = result.replace(/<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, (_m, c) => `*${processInline(c)}*`);
+  result = result.replace(
+    /<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/gi,
+    (_m, c) => `*${processInline(c)}*`,
+  );
 
   // Inline code
   result = result.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, c) => `\`${unescapeHtml(c)}\``);

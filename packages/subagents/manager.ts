@@ -117,7 +117,10 @@ export class AgentManager {
       Object.assign(job.record, { ...out, status: "completed" satisfies Status });
       this.onEvent("completed", job.record);
     } catch (e: any) {
-      Object.assign(job.record, { error: e?.message ?? String(e), status: "failed" satisfies Status });
+      Object.assign(job.record, {
+        error: e?.message ?? String(e),
+        status: "failed" satisfies Status,
+      });
       this.onEvent("failed", job.record);
     } finally {
       this.running--;

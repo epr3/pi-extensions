@@ -140,8 +140,9 @@ describe("resolveDefaultModel", () => {
   });
 
   it("resolves valid default even when parent is undefined", () => {
-    expect(resolveDefaultModel("anthropic/claude-sonnet-4-20250514", find, undefined))
-      .toBe(anthropicModel);
+    expect(resolveDefaultModel("anthropic/claude-sonnet-4-20250514", find, undefined)).toBe(
+      anthropicModel,
+    );
   });
 });
 
@@ -177,8 +178,9 @@ describe("resolveTypeDefaultModel", () => {
   });
 
   it("no overrides, no shared default → parent model", () => {
-    expect(resolveTypeDefaultModel(none, "general", undefined, find, anthropicModel))
-      .toBe(anthropicModel);
+    expect(resolveTypeDefaultModel(none, "general", undefined, find, anthropicModel)).toBe(
+      anthropicModel,
+    );
   });
 
   it("unresolvable type override → fall through to shared default", () => {
@@ -215,8 +217,9 @@ describe("resolveTypeDefaultModel", () => {
   });
 
   it("all levels absent → parent model", () => {
-    expect(resolveTypeDefaultModel(none, "explore", undefined, find, anthropicModel))
-      .toBe(anthropicModel);
+    expect(resolveTypeDefaultModel(none, "explore", undefined, find, anthropicModel)).toBe(
+      anthropicModel,
+    );
   });
 
   it("all levels absent, no parent → undefined", () => {
@@ -247,13 +250,10 @@ describe("tool wiring seam", () => {
 
     let capturedModel: Model<any> | undefined;
     const model = resolveDefaultModel("openai/gpt-4o", find, anthropicModel);
-    const { done } = manager.launch(
-      { type: "explore", description: "test" },
-      async () => {
-        capturedModel = model;
-        return { result: "hello", tokens: 0, toolUses: 0 };
-      },
-    );
+    const { done } = manager.launch({ type: "explore", description: "test" }, async () => {
+      capturedModel = model;
+      return { result: "hello", tokens: 0, toolUses: 0 };
+    });
     await done;
     expect(capturedModel).toBe(openaiModel);
   });
@@ -265,13 +265,10 @@ describe("tool wiring seam", () => {
 
     let capturedModel: Model<any> | undefined;
     const model = resolveDefaultModel(undefined, find, anthropicModel);
-    const { done } = manager.launch(
-      { type: "explore", description: "test" },
-      async () => {
-        capturedModel = model;
-        return { result: "hello", tokens: 0, toolUses: 0 };
-      },
-    );
+    const { done } = manager.launch({ type: "explore", description: "test" }, async () => {
+      capturedModel = model;
+      return { result: "hello", tokens: 0, toolUses: 0 };
+    });
     await done;
     expect(capturedModel).toBe(anthropicModel);
   });
@@ -283,13 +280,10 @@ describe("tool wiring seam", () => {
 
     let capturedModel: Model<any> | undefined;
     const model = resolveDefaultModel("faux/unknown", find, anthropicModel);
-    const { done } = manager.launch(
-      { type: "explore", description: "test" },
-      async () => {
-        capturedModel = model;
-        return { result: "hello", tokens: 0, toolUses: 0 };
-      },
-    );
+    const { done } = manager.launch({ type: "explore", description: "test" }, async () => {
+      capturedModel = model;
+      return { result: "hello", tokens: 0, toolUses: 0 };
+    });
     await done;
     expect(capturedModel).toBe(anthropicModel);
   });
@@ -313,13 +307,10 @@ describe("type-specific wiring seam", () => {
       find,
       anthropicModel,
     );
-    const { done } = manager.launch(
-      { type: "explore", description: "test" },
-      async () => {
-        capturedModel = model;
-        return { result: "ok", tokens: 0, toolUses: 0 };
-      },
-    );
+    const { done } = manager.launch({ type: "explore", description: "test" }, async () => {
+      capturedModel = model;
+      return { result: "ok", tokens: 0, toolUses: 0 };
+    });
     await done;
     expect(capturedModel).toBe(openaiModel);
   });
@@ -337,13 +328,10 @@ describe("type-specific wiring seam", () => {
       find,
       anthropicModel,
     );
-    const { done } = manager.launch(
-      { type: "general", description: "test" },
-      async () => {
-        capturedModel = model;
-        return { result: "ok", tokens: 0, toolUses: 0 };
-      },
-    );
+    const { done } = manager.launch({ type: "general", description: "test" }, async () => {
+      capturedModel = model;
+      return { result: "ok", tokens: 0, toolUses: 0 };
+    });
     await done;
     expect(capturedModel).toBe(anthropicModel);
   });
@@ -361,13 +349,10 @@ describe("type-specific wiring seam", () => {
       find,
       anthropicModel,
     );
-    const { done } = manager.launch(
-      { type: "general", description: "test" },
-      async () => {
-        capturedModel = model;
-        return { result: "ok", tokens: 0, toolUses: 0 };
-      },
-    );
+    const { done } = manager.launch({ type: "general", description: "test" }, async () => {
+      capturedModel = model;
+      return { result: "ok", tokens: 0, toolUses: 0 };
+    });
     await done;
     expect(capturedModel).toBe(anthropicModel);
   });
@@ -384,14 +369,11 @@ describe("type-specific wiring seam", () => {
       find,
       anthropicModel,
     );
-    const { done } = manager.launch(
-      { type: "explore", description: "test" },
-      async () => ({
-        result: "ok",
-        tokens: 0,
-        toolUses: 0,
-      }),
-    );
+    const { done } = manager.launch({ type: "explore", description: "test" }, async () => ({
+      result: "ok",
+      tokens: 0,
+      toolUses: 0,
+    }));
     const rec = await done;
     expect(rec.result).toBe("ok");
   });
@@ -494,10 +476,11 @@ describe("warning details in tool result", () => {
     const warnings = checkDefaultModelWarnings("bad-ref", undefined, find, "explore");
     expect(warnings).toHaveLength(1);
 
-    const { done } = manager.launch(
-      { type: "explore", description: "test" },
-      async () => ({ result: "clean output", tokens: 10, toolUses: 2 }),
-    );
+    const { done } = manager.launch({ type: "explore", description: "test" }, async () => ({
+      result: "clean output",
+      tokens: 10,
+      toolUses: 2,
+    }));
     const rec = await done;
     const result = {
       content: [{ type: "text" as const, text: rec.result ?? "" }],

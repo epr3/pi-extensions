@@ -244,13 +244,12 @@ describe("question tool contract", () => {
     const tool = registerQuestion();
     const ENTER = "\r";
     const DOWN = "\x1b[B";
-    const { ctx, sendKey, capturedEditorCalls } = scriptedCtx([
-      { editor: "  custom text  " },
-    ]);
+    const { ctx, sendKey, capturedEditorCalls } = scriptedCtx([{ editor: "  custom text  " }]);
     const resultPromise = tool.execute(
       "tc",
       {
-        question: "A very long question that would exceed any reasonable display budget if used as the editor title without capping",
+        question:
+          "A very long question that would exceed any reasonable display budget if used as the editor title without capping",
         header: "Size",
         options: [{ label: "Yes" }, { label: "No" }],
       },
@@ -279,13 +278,12 @@ describe("question tool contract", () => {
     const tool = registerQuestion();
     const ENTER = "\r";
     const DOWN = "\x1b[B";
-    const { ctx, sendKey, capturedEditorCalls } = scriptedCtx([
-      { editor: "  typed answer  " },
-    ]);
+    const { ctx, sendKey, capturedEditorCalls } = scriptedCtx([{ editor: "  typed answer  " }]);
     const resultPromise = tool.execute(
       "tc",
       {
-        question: "Are you absolutely, positively, without-a-doubt sure that you want to proceed with this action right now, here, today?",
+        question:
+          "Are you absolutely, positively, without-a-doubt sure that you want to proceed with this action right now, here, today?",
         options: [{ label: "Yes" }, { label: "No" }],
       },
       undefined,
@@ -302,7 +300,7 @@ describe("question tool contract", () => {
     expect(capturedEditorCalls).toHaveLength(1);
     const editorTitle = capturedEditorCalls[0]!.title;
     // The title should be a capped version, not the full question
-    expect(editorTitle).not.toContain("today?");  // the full question ends with this
+    expect(editorTitle).not.toContain("today?"); // the full question ends with this
     expect(editorTitle).not.toContain("right now"); // middle section beyond cap
     // The bounded portion (before ': Type your answer') should be ≤ 60 chars
     const suffix = ": Type your answer";
@@ -359,9 +357,7 @@ describe("question tool contract", () => {
     const tool = registerQuestion();
     const ENTER = "\r";
     const DOWN = "\x1b[B";
-    const { ctx, sendKey } = scriptedCtx([
-      { editor: "my own" },
-    ]);
+    const { ctx, sendKey } = scriptedCtx([{ editor: "my own" }]);
     const resultPromise = tool.execute(
       "tc",
       {

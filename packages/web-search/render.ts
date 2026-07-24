@@ -1,4 +1,8 @@
-import type { Theme, AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import type {
+  Theme,
+  AgentToolResult,
+  ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { SearchResponseDetails } from "./search.ts";
@@ -20,9 +24,7 @@ export function renderWebSearchCall(
   }
   if (args.site) parts.push(`site:${args.site}`);
   const summary = parts.length > 0 ? parts.slice(0, 3).join("  ") : "(no query)";
-  const text =
-    theme.fg("toolTitle", theme.bold("Web Search")) +
-    theme.fg("muted", `  ${summary}`);
+  const text = theme.fg("toolTitle", theme.bold("Web Search")) + theme.fg("muted", `  ${summary}`);
   return new Text(text, 0, 0);
 }
 

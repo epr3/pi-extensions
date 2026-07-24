@@ -15,7 +15,7 @@ Output (in the footer — location dim, zone glyph/label/meter/percent in the zo
 checkout-service │ ⎇ feat/login │ ◑ RISKY ██████▌░░░ 65% eff · 130k/200k · 33% nom
 ```
 
-The circle glyph is *remaining* effective headroom — ● sharp, ◕ fading, ◑ risky, ◔ caveman — and the meter is a contiguous whole-cell bar (`█` fill over `░` track), rounded to the nearest whole cell so the boundary stays smooth across terminals. Before the first response it shows `○ awaiting context`.
+The circle glyph is _remaining_ effective headroom — ● sharp, ◕ fading, ◑ risky, ◔ caveman — and the meter is a contiguous whole-cell bar (`█` fill over `░` track), rounded to the nearest whole cell so the boundary stays smooth across terminals. Before the first response it shows `○ awaiting context`.
 
 ## Structure
 
@@ -25,11 +25,11 @@ The degradation model and meter math live in `zone.ts` (pure: `classify` / `mete
 
 The budget is **absolute — and the 120k limit is the caveman boundary itself**, not a pool that zones take percentages of: past 120k tokens you're caveman, full stop, regardless of the model's advertised window (NoLiMa / RULER — the cliff doesn't move with context size). The meter reads exactly full at the cliff. Lower zones split the run-up into thirds; the limit clamps to the nominal window for models smaller than it.
 
-| Zone | tokens (default) | meaning |
-|------|------------------|---------|
-| `sharp` | 0–40k | full reasoning |
-| `fading` | 40–80k | mid-context retrieval slips |
-| `risky` | 80–120k | compact/hand off soon |
-| `caveman` | >120k | past the cliff — `/skill:caveman` or `/skill:handoff` |
+| Zone      | tokens (default) | meaning                                               |
+| --------- | ---------------- | ----------------------------------------------------- |
+| `sharp`   | 0–40k            | full reasoning                                        |
+| `fading`  | 40–80k           | mid-context retrieval slips                           |
+| `risky`   | 80–120k          | compact/hand off soon                                 |
+| `caveman` | >120k            | past the cliff — `/skill:caveman` or `/skill:handoff` |
 
 `caveman` the zone and the `caveman` skill are the same idea: the line says when, the skill is the response. Tune via the `statusline` key in Pi's `settings.json` (`effectiveLimit`, `thresholds`, `meterWidth`) or via env — `EFFECTIVE_LIMIT` (tokens, accepts `120k` / `0.5M` / plain integers), `Z_SHARP`, `Z_FADING`, `Z_RISKY` (fractions of the limit) — with env winning.

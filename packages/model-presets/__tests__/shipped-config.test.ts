@@ -93,12 +93,7 @@ describe("shipped model-presets config bundle", () => {
     const settings = readShippedSettings();
     const catalog = createCatalog(settings.modelPresets as any);
 
-    expect(catalog.cycle).toEqual([
-      "default",
-      "fast-codex",
-      "coding-fallback",
-      "deep-reasoning",
-    ]);
+    expect(catalog.cycle).toEqual(["default", "fast-codex", "coding-fallback", "deep-reasoning"]);
   });
 
   it("resolves cycle with no missing entries", () => {

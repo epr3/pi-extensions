@@ -1,0 +1,3 @@
+# Centralize extension dependencies in an exact pnpm catalog
+
+Extension dependency updates will use a default pnpm **Dependency catalog** in `pnpm-workspace.yaml`, and Extension package manifests will reference shared runtime, library, and workspace tooling dependencies through `catalog:` instead of repeating version ranges. The catalog records an **Exact dependency baseline** at the latest selected versions, and the update is a **Compatibility update**: if new versions require code, config, or test changes, those changes happen in the same slice until build, typecheck, lint, and tests pass. This trades semver-range convenience for explicit monorepo-wide upgrades, fewer repeated package manifest edits, and clearer review of dependency changes.

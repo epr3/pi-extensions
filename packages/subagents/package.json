@@ -14,12 +14,12 @@
     "test": "vitest run --config ../../vitest.config.ts --root ."
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.2",
-    "@earendil-works/pi-coding-agent": "^0.80.2",
-    "@earendil-works/pi-tui": "^0.80.2",
-    "typebox": "^1.1.0"
+    "@earendil-works/pi-ai": "catalog:",
+    "@earendil-works/pi-coding-agent": "catalog:",
+    "@earendil-works/pi-tui": "catalog:",
+    "typebox": "catalog:"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "catalog:"
   }
 }

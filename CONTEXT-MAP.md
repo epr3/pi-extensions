@@ -72,6 +72,15 @@ _Avoid_: Thinking fallback, clamp fix, auto restore.
 **Coding preset set**: Initial **Model preset catalog** example optimized for coding workflows with current default, fast Codex, broad fallback, and deep-reasoning alternatives.
 _Avoid_: Balanced presets, default cycle, model list.
 
+**Dependency catalog**: Default pnpm catalog in `pnpm-workspace.yaml` that centralizes shared **Extension package** runtime, library, and workspace tooling dependency versions.
+_Avoid_: Shared package.json, dependency bump, version list.
+
+**Exact dependency baseline**: Concrete latest version set recorded without semver range operators so dependency upgrades are explicit catalog edits rather than install-time float.
+_Avoid_: Latest deps, pinned lockfile, caret range.
+
+**Compatibility update**: Dependency update slice that includes whatever extension code, config, and test adjustments are needed to keep build, typecheck, lint, and tests passing at the **Exact dependency baseline**.
+_Avoid_: Manifest-only update, deferred migration, blind bump.
+
 ## Flagged ambiguities
 
 - "proper testing framework" was fuzzy; resolved: use **Extension test harness** for the package-owned Vitest test setup.
@@ -90,6 +99,9 @@ _Avoid_: Balanced presets, default cycle, model list.
 - "fix sticky thinking" could mean changing all raw model selections or only preset flows; resolved: **Preset thinking repair** applies only when a raw Pi model selection matches an explicit **Atomic model preset**.
 - **Atomic model presets** could live in a separate JSON file or Pi settings; resolved: use the package-owned **Model preset catalog** in Pi settings.
 - **Model preset catalog** could be a single ordered array or a merge-friendly map; resolved: use a keyed `presets` object plus explicit `cycle` array.
+- Repeated dependency ranges versus centralized shared versions was unresolved; resolved: introduce a **Dependency catalog** for shared **Extension package** dependencies.
+- "latest deps" could mean caret ranges, exact versions, or lockfile-only updates; resolved: use an **Exact dependency baseline**.
+- Dependency updating could mean manifest-only edits or resolving API/tooling fallout; resolved: perform a **Compatibility update** rather than deferring required code/config/test changes.
 - Invalid **Atomic model presets** could fail hard, silently fall back, or warn; resolved: unavailable models notify and leave the current state unchanged, and thinking-level clamp mismatches notify the actual effective level.
 - **Preset thinking repair** for duplicate provider/model presets could use cycle order, reject duplicates, or require intent; resolved: duplicate model matches do not repair unless one matching preset is marked `repairDefault: true`.
 - The first **Atomic model preset** selector could be a custom TUI overlay or a built-in prompt; resolved: use `ctx.ui.select`, notifications, and a compact status indicator first.

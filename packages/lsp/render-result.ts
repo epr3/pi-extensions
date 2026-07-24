@@ -1,4 +1,8 @@
-import type { Theme, AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import type {
+  Theme,
+  AgentToolResult,
+  ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 
@@ -63,15 +67,24 @@ export interface LspNavigationDetails {
 
 function emptyMessage(kind: LspResultKind): string {
   switch (kind) {
-    case "definition": return "no definition found";
-    case "references": return "no references found";
-    case "implementation": return "no implementations found";
-    case "incomingCalls": return "no callers found";
-    case "outgoingCalls": return "no outgoing calls found";
-    case "documentSymbols": return "no symbols";
-    case "workspaceSymbols": return "no symbols found";
-    case "hover": return "no hover info";
-    case "diagnostics": return "no diagnostics";
+    case "definition":
+      return "no definition found";
+    case "references":
+      return "no references found";
+    case "implementation":
+      return "no implementations found";
+    case "incomingCalls":
+      return "no callers found";
+    case "outgoingCalls":
+      return "no outgoing calls found";
+    case "documentSymbols":
+      return "no symbols";
+    case "workspaceSymbols":
+      return "no symbols found";
+    case "hover":
+      return "no hover info";
+    case "diagnostics":
+      return "no diagnostics";
   }
 }
 
@@ -79,12 +92,22 @@ function countLabel(kind: LspResultKind, n: number): string {
   if (n === 0) return emptyMessage(kind);
   let noun: string;
   switch (kind) {
-    case "incomingCalls": noun = "caller"; break;
-    case "outgoingCalls": noun = "call"; break;
+    case "incomingCalls":
+      noun = "caller";
+      break;
+    case "outgoingCalls":
+      noun = "call";
+      break;
     case "documentSymbols":
-    case "workspaceSymbols": noun = "symbol"; break;
-    case "diagnostics": noun = "diagnostic"; break;
-    default: noun = "location"; break;
+    case "workspaceSymbols":
+      noun = "symbol";
+      break;
+    case "diagnostics":
+      noun = "diagnostic";
+      break;
+    default:
+      noun = "location";
+      break;
   }
   return `${n} ${noun}${n !== 1 ? "s" : ""}`;
 }
@@ -102,11 +125,16 @@ function symbolTreeText(symbols: LspSymbolRecord[], depth = 0): string[] {
 /** Format a severity enum name into a compact label. */
 function severityLabel(severity: string): string {
   switch (severity) {
-    case "error": return "err";
-    case "warning": return "warn";
-    case "info": return "info";
-    case "hint": return "hint";
-    default: return severity;
+    case "error":
+      return "err";
+    case "warning":
+      return "warn";
+    case "info":
+      return "info";
+    case "hint":
+      return "hint";
+    default:
+      return severity;
   }
 }
 
@@ -150,8 +178,9 @@ export function renderLspNavigationResult(
       const first = d.locations[0];
       return new Text(
         theme.fg("accent", countLabel(kind, d.locations.length)) +
-        theme.fg("muted", `  ${first.file}:${first.line}:${first.column}`),
-        0, 0,
+          theme.fg("muted", `  ${first.file}:${first.line}:${first.column}`),
+        0,
+        0,
       );
     }
 
@@ -170,8 +199,12 @@ export function renderLspNavigationResult(
       const first = d.calls[0];
       return new Text(
         theme.fg("accent", countLabel(kind, d.calls.length)) +
-        theme.fg("muted", `  ${first.kind} ${first.name}  ${first.file}:${first.line}:${first.column}`),
-        0, 0,
+          theme.fg(
+            "muted",
+            `  ${first.kind} ${first.name}  ${first.file}:${first.line}:${first.column}`,
+          ),
+        0,
+        0,
       );
     }
 
@@ -193,8 +226,9 @@ export function renderLspNavigationResult(
       const first = d.symbols[0];
       return new Text(
         theme.fg("accent", count) +
-        theme.fg("muted", `  ${first.kind} ${first.name}  (line ${first.line})`),
-        0, 0,
+          theme.fg("muted", `  ${first.kind} ${first.name}  (line ${first.line})`),
+        0,
+        0,
       );
     }
 
@@ -212,11 +246,7 @@ export function renderLspNavigationResult(
     if (!options.expanded) {
       // Show first line of hover content in collapsed view
       const firstLine = d.hover.content.split("\n")[0]!;
-      return new Text(
-        theme.fg("accent", "hover") +
-        theme.fg("muted", `  ${firstLine}`),
-        0, 0,
-      );
+      return new Text(theme.fg("accent", "hover") + theme.fg("muted", `  ${firstLine}`), 0, 0);
     }
 
     return new Text(theme.fg("toolOutput", d.hover.content), 0, 0);
@@ -239,16 +269,16 @@ export function renderLspNavigationResult(
       if (rest > 0) parts.push(`${rest} more`);
       return new Text(
         theme.fg("accent", countLabel(kind, d.diagnostics.length)) +
-        (parts.length ? theme.fg("muted", `  ${parts.join(", ")}`) : ""),
-        0, 0,
+          (parts.length ? theme.fg("muted", `  ${parts.join(", ")}`) : ""),
+        0,
+        0,
       );
     }
 
     const lines = d.diagnostics.map((dg) => {
       const sev = severityLabel(dg.severity);
-      const color = dg.severity === "error" ? "error"
-        : dg.severity === "warning" ? "warning"
-        : "muted";
+      const color =
+        dg.severity === "error" ? "error" : dg.severity === "warning" ? "warning" : "muted";
       return theme.fg(color, `${sev} ${dg.file}:${dg.line}:${dg.column}  ${dg.message}`);
     });
     return new Text(lines.join("\n"), 0, 0);

@@ -20,10 +20,7 @@ function renderedText(type: string, description: string): string {
   return component.render(80).join("\n");
 }
 
-function renderResultText(
-  result: any,
-  options: { expanded: boolean; isPartial: boolean },
-): string {
+function renderResultText(result: any, options: { expanded: boolean; isPartial: boolean }): string {
   const component = renderAgentResult(result, options, plainTheme, undefined);
   return component.render(80).join("\n");
 }

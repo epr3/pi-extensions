@@ -18,10 +18,7 @@ import { renderWebFetchCall, renderWebFetchResult } from "./render.ts";
 
 // ─── Dual-result helper ──────────────────────────────────────────────────────
 
-function textResult(
-  text: string,
-  details: WebFetchDetails,
-): AgentToolResult<WebFetchDetails> {
+function textResult(text: string, details: WebFetchDetails): AgentToolResult<WebFetchDetails> {
   return { content: [{ type: "text" as const, text }], details };
 }
 

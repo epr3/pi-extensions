@@ -187,12 +187,19 @@ describe("final result isolation", () => {
     onStreamEvent!({ type: "text_delta", delta: "Summary: all clean.\n" });
 
     const finalResult = {
-      content: [{ type: "text" as const, text: "Found 3 files:\n- file1.ts\n- file2.ts\n- file3.ts\nSummary: all clean.\n" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Found 3 files:\n- file1.ts\n- file2.ts\n- file3.ts\nSummary: all clean.\n",
+        },
+      ],
       details: { agent_id: "sa_abc", status: "completed", tokens: 100, toolUses: 2 },
     };
 
     expect(finalResult.content[0].type).toBe("text");
-    expect(finalResult.content[0].text).toBe("Found 3 files:\n- file1.ts\n- file2.ts\n- file3.ts\nSummary: all clean.\n");
+    expect(finalResult.content[0].text).toBe(
+      "Found 3 files:\n- file1.ts\n- file2.ts\n- file3.ts\nSummary: all clean.\n",
+    );
     expect((finalResult.details as any).streamText).toBeUndefined();
     expect((finalResult.details as any).streamEntries).toBeUndefined();
   });

@@ -1,7 +1,7 @@
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Allowed thinking levels that Pi supports. */
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /** Raw preset as it appears in settings input. */
 export interface PresetInput {

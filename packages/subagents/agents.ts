@@ -21,7 +21,10 @@ export const CORE_READ_TOOLS = ["read", "grep", "find", "ls"];
 export const SAFETY_EXCLUDES = ["Agent", "get_subagent_result", "question"];
 
 /** The explore allowlist: core + configured grants + env extras, deduped. */
-export function exploreToolset(extraTools: string[], env: NodeJS.ProcessEnv = process.env): string[] {
+export function exploreToolset(
+  extraTools: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   const envExtra = (env.PI_SUBAGENT_EXPLORE_TOOLS ?? "")
     .split(",")
     .map((s) => s.trim())

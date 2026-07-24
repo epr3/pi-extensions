@@ -22,7 +22,8 @@ describe("Agent param shape", () => {
     const props = agentParams.properties;
     expect(props.subagent_type.type).toBe("string");
     // subagent_type is an enum/oneOf
-    const hasEnum = Array.isArray((props.subagent_type as any).oneOf) ||
+    const hasEnum =
+      Array.isArray((props.subagent_type as any).oneOf) ||
       Array.isArray((props.subagent_type as any).enum);
     expect(hasEnum).toBe(true);
     expect(props.prompt.type).toBe("string");
@@ -32,8 +33,19 @@ describe("Agent param shape", () => {
 
   it("has no batch or aggregate params", () => {
     const props = agentParams.properties;
-    const forbidden = ["tasks", "batch", "batch_size", "groupId", "group_id", "results",
-      "aggregate", "calls", "parallel", "items", "prompts"];
+    const forbidden = [
+      "tasks",
+      "batch",
+      "batch_size",
+      "groupId",
+      "group_id",
+      "results",
+      "aggregate",
+      "calls",
+      "parallel",
+      "items",
+      "prompts",
+    ];
     for (const key of forbidden) {
       expect(props).not.toHaveProperty(key);
     }

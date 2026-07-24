@@ -8,7 +8,13 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { BoundedQuestionDialog, boundedEditorTitle, boundedSelectionSummary, DONE_DISPLAY, type DialogOption } from "../dialog.ts";
+import {
+  BoundedQuestionDialog,
+  boundedEditorTitle,
+  boundedSelectionSummary,
+  DONE_DISPLAY,
+  type DialogOption,
+} from "../dialog.ts";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -86,12 +92,7 @@ describe("BoundedQuestionDialog bounded line count", () => {
     // 4 options + free text = 5 items, header=1, sep=1, list=5 → total=7
     const d = makeDialog({
       title: "Pick one?",
-      options: [
-        { label: "A" },
-        { label: "B" },
-        { label: "C" },
-        { label: "D" },
-      ],
+      options: [{ label: "A" }, { label: "B" }, { label: "C" }, { label: "D" }],
       maxLines: 5,
     });
     const lines = d.render(80);
@@ -101,7 +102,8 @@ describe("BoundedQuestionDialog bounded line count", () => {
   it("fits a long multi-line header within maxLines", () => {
     // Long title that wraps to 3 lines + separator(1) + list items = total
     const d = makeDialog({
-      title: "Are you absolutely, positively, without-a-doubt sure that you want to proceed with this action right now?",
+      title:
+        "Are you absolutely, positively, without-a-doubt sure that you want to proceed with this action right now?",
       maxLines: 8,
       maxWidth: 40,
       maxHeaderLines: 3,
@@ -142,8 +144,16 @@ describe("BoundedQuestionDialog line width bounding", () => {
     // does not cause visible flicker.  We verify lines stay ≤ maxWidth + 1.
     const d = makeDialog({
       options: [
-        { label: "A", description: "This is an extremely long description that should be wrapped or truncated to fit within the requested dialog width without overflowing" },
-        { label: "B", description: "Another very lengthy description that should also stay within the width bound" },
+        {
+          label: "A",
+          description:
+            "This is an extremely long description that should be wrapped or truncated to fit within the requested dialog width without overflowing",
+        },
+        {
+          label: "B",
+          description:
+            "Another very lengthy description that should also stay within the width bound",
+        },
       ],
       maxLines: 8,
       maxWidth: 80,
@@ -223,10 +233,7 @@ describe("BoundedQuestionDialog option completeness", () => {
 
   it("shows description text for options that have one", () => {
     const d = makeDialog({
-      options: [
-        { label: "Opt", description: "Has a description" },
-        { label: "NoDesc" },
-      ],
+      options: [{ label: "Opt", description: "Has a description" }, { label: "NoDesc" }],
     });
     const lines = d.render(80);
     const output = lines.join(" ");
@@ -237,10 +244,7 @@ describe("BoundedQuestionDialog option completeness", () => {
 describe("BoundedQuestionDialog recommended option", () => {
   it("marks the recommended option with (recommended) visible text", () => {
     const d = makeDialog({
-      options: [
-        { label: "First", recommended: true },
-        { label: "Second" },
-      ],
+      options: [{ label: "First", recommended: true }, { label: "Second" }],
     });
     const lines = d.render(80);
     const output = lines.join(" ");
@@ -253,11 +257,7 @@ describe("BoundedQuestionDialog recommended option", () => {
 
   it("does not mark non-recommended options", () => {
     const d = makeDialog({
-      options: [
-        { label: "One" },
-        { label: "Two" },
-        { label: "Three" },
-      ],
+      options: [{ label: "One" }, { label: "Two" }, { label: "Three" }],
     });
     const lines = d.render(80);
     const output = lines.join(" ");
@@ -275,10 +275,7 @@ describe("BoundedQuestionDialog interaction", () => {
 
   it("fires onSelect with the first option when enter is pressed (default selection)", () => {
     const d = makeDialog({
-      options: [
-        { label: "Choice A" },
-        { label: "Choice B" },
-      ],
+      options: [{ label: "Choice A" }, { label: "Choice B" }],
     });
     const onSelect = vi.fn();
     d.onSelect = onSelect;
@@ -292,10 +289,7 @@ describe("BoundedQuestionDialog interaction", () => {
 
   it("fires onSelect with the navigated-to option after moving down", () => {
     const d = makeDialog({
-      options: [
-        { label: "First" },
-        { label: "Second" },
-      ],
+      options: [{ label: "First" }, { label: "Second" }],
     });
     const onSelect = vi.fn();
     d.onSelect = onSelect;
@@ -320,11 +314,7 @@ describe("BoundedQuestionDialog interaction", () => {
 
   it("selects the second option after pressing down then enter", () => {
     const d = makeDialog({
-      options: [
-        { label: "Top" },
-        { label: "Middle" },
-        { label: "Bottom" },
-      ],
+      options: [{ label: "Top" }, { label: "Middle" }, { label: "Bottom" }],
     });
     const onSelect = vi.fn();
     d.onSelect = onSelect;
@@ -340,11 +330,7 @@ describe("BoundedQuestionDialog interaction", () => {
 
   it("wraps to the last item when pressing up at the first item", () => {
     const d = makeDialog({
-      options: [
-        { label: "Top" },
-        { label: "Middle" },
-        { label: "Bottom" },
-      ],
+      options: [{ label: "Top" }, { label: "Middle" }, { label: "Bottom" }],
     });
     const onSelect = vi.fn();
     d.onSelect = onSelect;
@@ -363,8 +349,12 @@ describe("BoundedQuestionDialog interaction", () => {
 
 describe("boundedEditorTitle", () => {
   it("returns the header when a header is provided", () => {
-    expect(boundedEditorTitle("Confirm", "A very long question that would otherwise be unbounded in the editor title?"))
-      .toBe("Confirm");
+    expect(
+      boundedEditorTitle(
+        "Confirm",
+        "A very long question that would otherwise be unbounded in the editor title?",
+      ),
+    ).toBe("Confirm");
   });
 
   it("returns the full question when no header and question is short", () => {
@@ -372,7 +362,8 @@ describe("boundedEditorTitle", () => {
   });
 
   it("caps a long question to 60 chars with ellipsis when no header", () => {
-    const longQ = "Are you absolutely, positively, without-a-doubt sure that you want to proceed with this action right now, here, today?";
+    const longQ =
+      "Are you absolutely, positively, without-a-doubt sure that you want to proceed with this action right now, here, today?";
     const result = boundedEditorTitle(undefined, longQ);
     // Must be shorter than the original
     expect(result.length).toBeLessThan(longQ.length);
@@ -427,10 +418,7 @@ describe("BoundedQuestionDialog selection value matches existing contract", () =
 
   it("returns the free-prose display string when free-text option is selected", () => {
     const d = makeDialog({
-      options: [
-        { label: "Alpha" },
-        { label: "Beta" },
-      ],
+      options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "My answer",
       freeTextDisplay: "✎ My answer — Custom text",
     });
@@ -454,10 +442,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("shows checkmark (✓) for selected options", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "Alpha" },
-        { label: "Beta" },
-      ],
+      options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "Type your answer",
       freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
@@ -472,10 +457,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("shows circle (○) when nothing is selected", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "Alpha" },
-        { label: "Beta" },
-      ],
+      options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "Type your answer",
       freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
@@ -490,10 +472,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("includes the Done completion button", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "Alpha" },
-        { label: "Beta" },
-      ],
+      options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "Type your answer",
       freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
@@ -507,10 +486,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("hides the free-text option when hasFreeText is true", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "Alpha" },
-        { label: "Beta" },
-      ],
+      options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "Type your answer",
       freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
@@ -528,11 +504,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("shows bounded selection summary when labels are chosen", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "Alpha" },
-        { label: "Beta" },
-        { label: "Gamma" },
-      ],
+      options: [{ label: "Alpha" }, { label: "Beta" }, { label: "Gamma" }],
       freeTextLabel: "Type your answer",
       freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
@@ -549,11 +521,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("keeps the summary bounded within maxWidth", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick",
-      options: [
-        { label: "Alpha" },
-        { label: "Beta" },
-        { label: "Gamma" },
-      ],
+      options: [{ label: "Alpha" }, { label: "Beta" }, { label: "Gamma" }],
       freeTextLabel: "Type your answer",
       freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
@@ -569,11 +537,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("includes all preset options alongside the Done button", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "Alpha" },
-        { label: "Beta" },
-        { label: "Gamma" },
-      ],
+      options: [{ label: "Alpha" }, { label: "Beta" }, { label: "Gamma" }],
       freeTextLabel: "Type your answer",
       freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
@@ -590,10 +554,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("preserves recommended marking in multi-select items", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "First", recommended: true },
-        { label: "Second" },
-      ],
+      options: [{ label: "First", recommended: true }, { label: "Second" }],
       freeTextLabel: "Type your answer",
       freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
@@ -608,12 +569,7 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
   it("respects the maxLines budget", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick",
-      options: [
-        { label: "A" },
-        { label: "B" },
-        { label: "C" },
-        { label: "D" },
-      ],
+      options: [{ label: "A" }, { label: "B" }, { label: "C" }, { label: "D" }],
       freeTextLabel: "Type",
       freeTextDisplay: "✎ Type — Custom",
       multiSelect: true,
@@ -634,10 +590,7 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
   it("fires onSelect with the preset option value when selected", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "A", description: "First option" },
-        { label: "B" },
-      ],
+      options: [{ label: "A", description: "First option" }, { label: "B" }],
       freeTextLabel: "Type",
       freeTextDisplay: "✎ Type — Custom",
       multiSelect: true,
@@ -656,10 +609,7 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
   it("fires onSelect with DONE_DISPLAY when Done is pressed", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "A" },
-        { label: "B" },
-      ],
+      options: [{ label: "A" }, { label: "B" }],
       freeTextLabel: "Type",
       freeTextDisplay: "✎ Type — Custom",
       multiSelect: true,
@@ -683,10 +633,7 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
   it("fires onSelect with freeTextDisplay when free text is selected", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "A" },
-        { label: "B" },
-      ],
+      options: [{ label: "A" }, { label: "B" }],
       freeTextLabel: "My answer",
       freeTextDisplay: "✎ My answer — Custom",
       multiSelect: true,
@@ -709,10 +656,7 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
   it("fires onCancel when escape is pressed", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
-      options: [
-        { label: "A" },
-        { label: "B" },
-      ],
+      options: [{ label: "A" }, { label: "B" }],
       freeTextLabel: "Type",
       freeTextDisplay: "✎ Type — Custom",
       multiSelect: true,
@@ -755,14 +699,9 @@ describe("boundedSelectionSummary", () => {
   });
 
   it("falls back to count-only when even the prefix barely fits", () => {
-    const result = boundedSelectionSummary(
-      ["VeryLongLabelThatTakesUpSpace"],
-      10,
-    );
+    const result = boundedSelectionSummary(["VeryLongLabelThatTakesUpSpace"], 10);
     // The prefix "[1 selected]" is 12 chars wide, so at width 10
     // it should still produce something bounded
     expect(visibleWidth(result)).toBeLessThanOrEqual(10);
   });
 });
-
-

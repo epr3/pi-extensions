@@ -72,10 +72,7 @@ export const DONE_DISPLAY = "✓ Done";
  * header (short by design) or a capped question prefix so the editor path
  * cannot reintroduce unbounded prompt rendering.
  */
-export function boundedEditorTitle(
-  header: string | undefined,
-  question: string,
-): string {
+export function boundedEditorTitle(header: string | undefined, question: string): string {
   if (header) return header;
   if (question.length <= MAX_EDITOR_TITLE_CHARS) return question;
   return question.slice(0, MAX_EDITOR_TITLE_CHARS - 1) + TRUNCATION_SUFFIX;
@@ -109,10 +106,7 @@ function optionDisplay(o: DialogOption): string {
  * `[2 selected: Alpha, Be…]` — never exceeds `maxWidth`.
  * Returns empty string when nothing is chosen.
  */
-export function boundedSelectionSummary(
-  chosenLabels: string[],
-  maxWidth: number,
-): string {
+export function boundedSelectionSummary(chosenLabels: string[], maxWidth: number): string {
   if (chosenLabels.length === 0) return "";
   const count = chosenLabels.length;
 
@@ -168,10 +162,7 @@ function presetSelectItem(o: DialogOption): SelectItem {
 }
 
 /** Build the free-prose SelectItem. */
-function freeTextSelectItem(
-  freeTextLabel: string,
-  freeTextDisplay: string,
-): SelectItem {
+function freeTextSelectItem(freeTextLabel: string, freeTextDisplay: string): SelectItem {
   return {
     value: freeTextDisplay,
     label: `✎ ${freeTextLabel} — Write a custom response`,
@@ -305,11 +296,7 @@ export class BoundedQuestionDialog implements Component {
     const headerLines = this.computeHeaderLines();
     const listBudget = Math.max(1, this.maxLines - headerLines.length);
 
-    this.selectList = new SelectList(
-      items,
-      listBudget,
-      plainSelectListTheme(),
-    );
+    this.selectList = new SelectList(items, listBudget, plainSelectListTheme());
   }
 
   // ── Component interface ────────────────────────────────────────────
@@ -347,20 +334,14 @@ export class BoundedQuestionDialog implements Component {
         const capped = wrapped.slice(0, this.maxHeaderLines);
         const lastIdx = capped.length - 1;
         capped[lastIdx] =
-          truncateToWidth(
-            capped[lastIdx]!,
-            Math.max(1, this.maxWidth - 1),
-          ) + TRUNCATION_SUFFIX;
+          truncateToWidth(capped[lastIdx]!, Math.max(1, this.maxWidth - 1)) + TRUNCATION_SUFFIX;
         lines.push(...capped);
       }
     }
 
     // Multi-select: bounded selection summary line
     if (this.multiSelect && this.chosenLabels.length > 0) {
-      const summary = boundedSelectionSummary(
-        this.chosenLabels as string[],
-        this.maxWidth,
-      );
+      const summary = boundedSelectionSummary(this.chosenLabels as string[], this.maxWidth);
       if (summary) lines.push(summary);
     }
 

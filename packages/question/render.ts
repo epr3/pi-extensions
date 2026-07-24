@@ -1,4 +1,8 @@
-import type { Theme, AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import type {
+  Theme,
+  AgentToolResult,
+  ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 
@@ -34,8 +38,7 @@ export function renderQuestionCall(
 ): Text {
   const label = args.header ? `${args.header}: ` : "";
   const text =
-    theme.fg("toolTitle", theme.bold("Question")) +
-    theme.fg("muted", `  ${label}${args.question}`);
+    theme.fg("toolTitle", theme.bold("Question")) + theme.fg("muted", `  ${label}${args.question}`);
   return new Text(text, 0, 0);
 }
 

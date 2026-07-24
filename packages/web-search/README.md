@@ -49,10 +49,7 @@ Add the absolute path to `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "extensions": [
-    "...existing paths...",
-    "/path/to/pi-extensions/main/packages/web-search"
-  ]
+  "extensions": ["...existing paths...", "/path/to/pi-extensions/main/packages/web-search"]
 }
 ```
 
@@ -70,29 +67,29 @@ You should see search results with numbered titles, URLs, and snippets.
 
 ### Tool parameters
 
-| Parameter      | Type       | Required | Default | Description                                     |
-|----------------|------------|----------|---------|-------------------------------------------------|
-| `query`        | string     | yes      | —       | The base search query                           |
-| `exactPhrases` | string[]   | no       | []      | Exact phrases to quote in the query             |
-| `excludeTerms` | string[]   | no       | []      | Terms to exclude from results                   |
-| `site`         | string     | no       | —       | Restrict search to a site/domain                |
-| `count`        | integer    | no       | 5       | Number of results (1-10)                        |
+| Parameter      | Type     | Required | Default | Description                         |
+| -------------- | -------- | -------- | ------- | ----------------------------------- |
+| `query`        | string   | yes      | —       | The base search query               |
+| `exactPhrases` | string[] | no       | []      | Exact phrases to quote in the query |
+| `excludeTerms` | string[] | no       | []      | Terms to exclude from results       |
+| `site`         | string   | no       | —       | Restrict search to a site/domain    |
+| `count`        | integer  | no       | 5       | Number of results (1-10)            |
 
 ### Examples
 
 ```typescript
 // Simple search
-web_search({ query: "typescript design patterns" })
+web_search({ query: "typescript design patterns" });
 
 // Search with exact phrase
-web_search({ query: "pi agent", exactPhrases: ["ExtensionAPI"], count: 3 })
+web_search({ query: "pi agent", exactPhrases: ["ExtensionAPI"], count: 3 });
 
 // Search with exclusions and site restriction
 web_search({
   query: "web search",
   excludeTerms: ["google", "api"],
-  site: "github.com"
-})
+  site: "github.com",
+});
 ```
 
 ## Architecture

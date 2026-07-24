@@ -1,4 +1,8 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { createCatalog, resolveCycle, resolvePreset, findRepairTarget } from "./catalog.ts";
 import { activatePreset } from "./activate.ts";
 import type { ModelPresetCatalog } from "./catalog.ts";

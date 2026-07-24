@@ -42,7 +42,8 @@ export class LspClient {
     this.proc.stdout.on("data", (c: Buffer) => this.onData(c));
     this.proc.stderr.on("data", () => {});
     this.proc.on("exit", (code) => {
-      for (const { reject } of this.pending.values()) reject(new Error(`language server exited (${code})`));
+      for (const { reject } of this.pending.values())
+        reject(new Error(`language server exited (${code})`));
       this.pending.clear();
       this.proc = null;
     });
@@ -96,7 +97,10 @@ export class LspClient {
   }
 
   definition(uri: string, line: number, character: number) {
-    return this.request("textDocument/definition", { textDocument: { uri }, position: { line, character } });
+    return this.request("textDocument/definition", {
+      textDocument: { uri },
+      position: { line, character },
+    });
   }
   references(uri: string, line: number, character: number, includeDeclaration = true) {
     return this.request("textDocument/references", {
@@ -106,19 +110,28 @@ export class LspClient {
     });
   }
   hover(uri: string, line: number, character: number) {
-    return this.request("textDocument/hover", { textDocument: { uri }, position: { line, character } });
+    return this.request("textDocument/hover", {
+      textDocument: { uri },
+      position: { line, character },
+    });
   }
   documentSymbols(uri: string) {
     return this.request("textDocument/documentSymbol", { textDocument: { uri } });
   }
   implementation(uri: string, line: number, character: number) {
-    return this.request("textDocument/implementation", { textDocument: { uri }, position: { line, character } });
+    return this.request("textDocument/implementation", {
+      textDocument: { uri },
+      position: { line, character },
+    });
   }
   workspaceSymbols(query: string) {
     return this.request("workspace/symbol", { query });
   }
   prepareCallHierarchy(uri: string, line: number, character: number) {
-    return this.request("textDocument/prepareCallHierarchy", { textDocument: { uri }, position: { line, character } });
+    return this.request("textDocument/prepareCallHierarchy", {
+      textDocument: { uri },
+      position: { line, character },
+    });
   }
   incomingCalls(item: unknown) {
     return this.request("callHierarchy/incomingCalls", { item });

@@ -1,8 +1,7 @@
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
@@ -141,8 +140,7 @@ export async function runSubagent(opts: {
 }): Promise<RunResult> {
   const def = AGENTS[opts.type];
 
-  const authStorage = AuthStorage.create();
-  const modelRegistry = ModelRegistry.create(authStorage);
+  const modelRuntime = await ModelRuntime.create();
 
   const loader = new DefaultResourceLoader({
     cwd: opts.cwd,
@@ -161,8 +159,7 @@ export async function runSubagent(opts: {
       // spawn sub-agents. Also drop `question` — a sub-agent has no user to ask.
       excludeTools: [...SAFETY_EXCLUDES, ...(opts.excludeExtraTools ?? [])],
       sessionManager: SessionManager.inMemory(opts.cwd),
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       resourceLoader: loader,
     });
 
