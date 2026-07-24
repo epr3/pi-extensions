@@ -98,7 +98,17 @@ export default async function (pi: ExtensionAPI) {
   const getManager = () => getManagerFor(currentCwd);
 
   for (const spec of lspToolSpecs(getManager, { diagnosticsDelayMs })) {
-    const hasRenderResult = ["lsp_definition", "lsp_references", "lsp_implementation", "lsp_incoming_calls", "lsp_outgoing_calls", "lsp_document_symbols", "lsp_workspace_symbols", "lsp_hover", "lsp_diagnostics"].includes(spec.name);
+    const hasRenderResult = [
+      "lsp_definition",
+      "lsp_references",
+      "lsp_implementation",
+      "lsp_incoming_calls",
+      "lsp_outgoing_calls",
+      "lsp_document_symbols",
+      "lsp_workspace_symbols",
+      "lsp_hover",
+      "lsp_diagnostics",
+    ].includes(spec.name);
 
     pi.registerTool({
       name: spec.name,

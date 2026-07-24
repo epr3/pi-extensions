@@ -1,10 +1,17 @@
-import type { ExtensionAPI, AgentToolResult, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  AgentToolResult,
+  ExtensionUIContext,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { renderQuestionCall, renderQuestionResult, type QuestionResultDetails } from "./render.ts";
 import { BoundedQuestionDialog, boundedEditorTitle, DONE_DISPLAY } from "./dialog.ts";
 import type { SelectItem } from "@earendil-works/pi-tui";
 
-function textResult(text: string, details: QuestionResultDetails): AgentToolResult<QuestionResultDetails> {
+function textResult(
+  text: string,
+  details: QuestionResultDetails,
+): AgentToolResult<QuestionResultDetails> {
   return { content: [{ type: "text" as const, text }], details };
 }
 
@@ -165,7 +172,10 @@ export default function (pi: ExtensionAPI) {
         const labels = chosen.map((o) => o.label);
         const hasFreeText = !!freeText;
         return textResult(
-          [`Selected: ${labels.join(", ") || "(none)"}`, hasFreeText ? `Free text: ${freeText}` : ""]
+          [
+            `Selected: ${labels.join(", ") || "(none)"}`,
+            hasFreeText ? `Free text: ${freeText}` : "",
+          ]
             .filter(Boolean)
             .join("\n"),
           {
@@ -173,7 +183,12 @@ export default function (pi: ExtensionAPI) {
             freeTextLabel: FREE_TEXT_LABEL,
             selectedLabels: labels,
             ...(hasFreeText ? { freeText } : {}),
-            interaction: labels.length > 0 ? ("preset" as const) : hasFreeText ? ("freeProse" as const) : ("none" as const),
+            interaction:
+              labels.length > 0
+                ? ("preset" as const)
+                : hasFreeText
+                  ? ("freeProse" as const)
+                  : ("none" as const),
           },
         );
       }
@@ -188,28 +203,22 @@ export default function (pi: ExtensionAPI) {
       if (sel === freeTextDisplay) {
         const freeText = await collectFreeText();
         const hasText = !!freeText;
-        return textResult(
-          hasText ? `Free text: ${freeText}` : "No selection",
-          {
-            options,
-            freeTextLabel: FREE_TEXT_LABEL,
-            selectedLabels: [] as string[],
-            freeText: hasText ? freeText : undefined,
-            interaction: hasText ? ("freeProse" as const) : ("none" as const),
-          },
-        );
+        return textResult(hasText ? `Free text: ${freeText}` : "No selection", {
+          options,
+          freeTextLabel: FREE_TEXT_LABEL,
+          selectedLabels: [] as string[],
+          freeText: hasText ? freeText : undefined,
+          interaction: hasText ? ("freeProse" as const) : ("none" as const),
+        });
       }
       const selected = sel === undefined ? undefined : byDisplay(sel)?.label;
       const hasSelection = !!selected;
-      return textResult(
-        hasSelection ? `Selected: ${selected}` : "No selection",
-        {
-          options,
-          freeTextLabel: FREE_TEXT_LABEL,
-          selectedLabels: hasSelection ? [selected!] : ([] as string[]),
-          interaction: hasSelection ? ("preset" as const) : ("none" as const),
-        },
-      );
+      return textResult(hasSelection ? `Selected: ${selected}` : "No selection", {
+        options,
+        freeTextLabel: FREE_TEXT_LABEL,
+        selectedLabels: hasSelection ? [selected!] : ([] as string[]),
+        interaction: hasSelection ? ("preset" as const) : ("none" as const),
+      });
     },
   });
 }

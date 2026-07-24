@@ -12,7 +12,6 @@ The tool catalog (names, descriptions, param-kinds, handlers) is a single data a
 
 ## Using them well
 
-
 When the `lsp_*` tools are available, prefer them over grep/find/read for code navigation — they answer from the compiler's understanding of the code, not text matching:
 
 - `lsp_definition` — jump to a symbol's declaration; `lsp_implementation` for the concrete code behind an interface or abstract member

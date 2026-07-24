@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { runSubagentSession, type StreamEvent, type StreamCallback, type SubagentSession } from "../runner.ts";
+import {
+  runSubagentSession,
+  type StreamEvent,
+  type StreamCallback,
+  type SubagentSession,
+} from "../runner.ts";
 import { AgentManager } from "../manager.ts";
 import type { StreamEntry } from "../index.ts";
 
@@ -105,14 +110,25 @@ describe("runner abort behavior", () => {
     });
 
     // Emit events before abort
-    session.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Before" } });
+    session.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "Before" },
+    });
     session.emit({ type: "tool_execution_start", toolName: "read", toolCallId: "c1", args: {} });
 
     controller.abort();
 
     // Events after abort should be ignored
-    session.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "After" } });
-    session.emit({ type: "tool_execution_end", toolName: "read", toolCallId: "c1", isError: false });
+    session.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "After" },
+    });
+    session.emit({
+      type: "tool_execution_end",
+      toolName: "read",
+      toolCallId: "c1",
+      isError: false,
+    });
 
     await expect(promise).rejects.toThrow(/Subagent aborted/);
 
@@ -188,7 +204,7 @@ function createForegroundStreamSetup(signal: AbortSignal) {
     content: Array<{ type: "text"; text: string }>;
     details: Record<string, unknown>;
   }> = [];
-  const onUpdate = (result: typeof updates[0]) => {
+  const onUpdate = (result: (typeof updates)[0]) => {
     updates.push(result);
   };
 
@@ -275,11 +291,9 @@ describe("manager abort behavior", () => {
             reject(new Error("Subagent aborted"));
             return;
           }
-          controller.signal.addEventListener(
-            "abort",
-            () => reject(new Error("Subagent aborted")),
-            { once: true },
-          );
+          controller.signal.addEventListener("abort", () => reject(new Error("Subagent aborted")), {
+            once: true,
+          });
         }),
     );
 

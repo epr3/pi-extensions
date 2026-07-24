@@ -224,7 +224,8 @@ describe("model-presets extension wiring", () => {
 
   it("warns when no presets configured", async () => {
     const { api, state } = makeFakePi();
-    extension(api); // no catalog = empty
+    const emptyCatalog = createCatalog({ cycle: [], presets: {} });
+    extension(api, emptyCatalog);
     const shortcut = state.shortcuts.find((s) => s.shortcut === "ctrl+shift+m")!;
 
     const warnings: string[] = [];

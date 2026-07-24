@@ -24,9 +24,7 @@ export function formatLspCallSummary(kind: ParamKind, args: LspArgs): string {
 export function renderLspCall(label: string, kind: ParamKind) {
   return (args: Record<string, unknown>, theme: Theme, _ctx: unknown): Text => {
     const summary = formatLspCallSummary(kind, args as unknown as LspArgs);
-    const text =
-      theme.fg("toolTitle", theme.bold(label)) +
-      theme.fg("muted", `  ${summary}`);
+    const text = theme.fg("toolTitle", theme.bold(label)) + theme.fg("muted", `  ${summary}`);
     return new Text(text, 0, 0);
   };
 }

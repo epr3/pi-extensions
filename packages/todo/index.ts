@@ -1,10 +1,19 @@
-import type { AgentToolResult, ExtensionAPI, Theme, ThemeColor, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+  Theme,
+  ThemeColor,
+  ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 
-function textResult(text: string, details?: Record<string, unknown>): AgentToolResult<Record<string, unknown>> {
+function textResult(
+  text: string,
+  details?: Record<string, unknown>,
+): AgentToolResult<Record<string, unknown>> {
   return { content: [{ type: "text" as const, text }], details: details ?? {} };
 }
 
@@ -24,7 +33,11 @@ export type Item = { content: string; status: Status };
 export type CurrentItemResult =
   | { currentItem: Item; currentIndex: number; activeCandidates?: undefined }
   | { currentItem: null; currentIndex: null; activeCandidates?: undefined }
-  | { currentItem: null; currentIndex: null; activeCandidates: { content: string; status: Status; index: number }[] };
+  | {
+      currentItem: null;
+      currentIndex: null;
+      activeCandidates: { content: string; status: Status; index: number }[];
+    };
 
 /**
  * Derive the current (in_progress) item from a todo list.
@@ -42,7 +55,10 @@ export function deriveCurrentItem(items: Item[]): CurrentItemResult {
     return { currentItem: null, currentIndex: null };
   }
   if (active.length === 1) {
-    return { currentItem: { content: active[0].content, status: active[0].status }, currentIndex: active[0].index };
+    return {
+      currentItem: { content: active[0].content, status: active[0].status },
+      currentIndex: active[0].index,
+    };
   }
   return { currentItem: null, currentIndex: null, activeCandidates: active };
 }
@@ -86,21 +102,18 @@ function fmtCurrentLine(current: CurrentItemResult): string {
  * todo_write shows item count and active/done summary;
  * todo_read shows "read-only".
  */
-export function renderTodoCall(
-  args: Record<string, unknown>,
-  theme: Theme,
-): Text {
+export function renderTodoCall(args: Record<string, unknown>, theme: Theme): Text {
   const isWrite = "todos" in args;
   const items = (isWrite ? (args.todos as Item[]) : []) ?? [];
   const done = items.filter((i) => i.status === "completed").length;
   const active = items.filter((i) => i.status === "in_progress").length;
   const part = isWrite
     ? `${items.length} item${items.length !== 1 ? "s" : ""}` +
-      (done || active ? ` (${done ? `${done} done` : ""}${done && active ? ", " : ""}${active ? `${active} active` : ""})` : "")
+      (done || active
+        ? ` (${done ? `${done} done` : ""}${done && active ? ", " : ""}${active ? `${active} active` : ""})`
+        : "")
     : "read-only";
-  const text =
-    theme.fg("toolTitle", theme.bold("Todo")) +
-    theme.fg("muted", `  ${part}`);
+  const text = theme.fg("toolTitle", theme.bold("Todo")) + theme.fg("muted", `  ${part}`);
   return new Text(text, 0, 0);
 }
 

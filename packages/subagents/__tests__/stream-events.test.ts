@@ -131,7 +131,12 @@ describe("StreamEvent mapping", () => {
     const handle = createEventHandler();
 
     handle(
-      { type: "tool_execution_start", toolName: "read", toolCallId: "call1", args: { path: "test.ts" } },
+      {
+        type: "tool_execution_start",
+        toolName: "read",
+        toolCallId: "call1",
+        args: { path: "test.ts" },
+      },
       cb,
     );
 
@@ -182,7 +187,12 @@ describe("StreamEvent mapping", () => {
     const handle = createEventHandler();
 
     const tu1 = handle(
-      { type: "tool_execution_start", toolName: "read", toolCallId: "call1", args: { path: "test.ts" } },
+      {
+        type: "tool_execution_start",
+        toolName: "read",
+        toolCallId: "call1",
+        args: { path: "test.ts" },
+      },
       undefined,
     );
     expect(tu1).toBe(0);
@@ -200,7 +210,12 @@ describe("StreamEvent mapping", () => {
     const handle = createEventHandler();
 
     const tu1 = handle(
-      { type: "tool_execution_start", toolName: "read", toolCallId: "call1", args: { path: "a.ts" } },
+      {
+        type: "tool_execution_start",
+        toolName: "read",
+        toolCallId: "call1",
+        args: { path: "a.ts" },
+      },
       cb,
     );
     expect(tu1).toBe(0);
@@ -230,10 +245,7 @@ describe("StreamEvent mapping", () => {
     expect(received).toHaveLength(0);
 
     // undefined delta also ignored
-    handle(
-      { type: "message_update", assistantMessageEvent: { type: "text_delta" } as any },
-      cb,
-    );
+    handle({ type: "message_update", assistantMessageEvent: { type: "text_delta" } as any }, cb);
     expect(received).toHaveLength(0);
   });
 });

@@ -1,5 +1,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { classify, meter, configFromEnv, ZONE_COLOR, ZONE_DEFAULTS, formatStatusSegments, AWAITING_CONTEXT_TEXT } from "./zone.ts";
+import {
+  classify,
+  meter,
+  configFromEnv,
+  ZONE_COLOR,
+  ZONE_DEFAULTS,
+  formatStatusSegments,
+  AWAITING_CONTEXT_TEXT,
+} from "./zone.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -18,7 +26,6 @@ import path from "node:path";
  * The circle glyph shows *remaining* effective headroom (● → ◕ → ◑ → ◔); the
  * meter is a contiguous whole-cell bar over a dim track.
  */
-
 
 // Settings: this extension reads its own top-level "statusline" key from Pi's
 // settings files (global then project; project wins), inline and self-contained
@@ -40,10 +47,14 @@ function settingsKey(): Record<string, any> {
 
 const raw = settingsKey();
 const config = configFromEnv(process.env, {
-  effectiveLimit: Number(raw.effectiveLimit) > 0 ? Number(raw.effectiveLimit) : ZONE_DEFAULTS.effectiveLimit,
+  effectiveLimit:
+    Number(raw.effectiveLimit) > 0 ? Number(raw.effectiveLimit) : ZONE_DEFAULTS.effectiveLimit,
   thresholds: { ...ZONE_DEFAULTS.thresholds, ...raw.thresholds },
 });
-const meterWidth = Math.max(4, Math.floor(Number(raw.meterWidth) > 0 ? Number(raw.meterWidth) : 10));
+const meterWidth = Math.max(
+  4,
+  Math.floor(Number(raw.meterWidth) > 0 ? Number(raw.meterWidth) : 10),
+);
 
 function basename(p: string | undefined): string {
   if (!p) return "";

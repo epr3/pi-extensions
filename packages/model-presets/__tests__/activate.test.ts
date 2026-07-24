@@ -144,7 +144,9 @@ describe("activatePreset", () => {
       setModel: async () => true,
       setThinkingLevel: () => {},
       getThinkingLevel: () => "low",
-      setStatus: (_key, text) => { statusText = text; },
+      setStatus: (_key, text) => {
+        statusText = text;
+      },
     });
 
     expect(result.success).toBe(true);

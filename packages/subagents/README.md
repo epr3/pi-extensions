@@ -4,10 +4,10 @@ Adds two subagent types for context hygiene. The `Agent` tool surface follows th
 
 ## Agent types
 
-| Type | Tools | Read-only | Use |
-|------|-------|-----------|-----|
-| `explore` | read, grep, find, ls by default; **extra read-only tools are granted in settings** (the shipped `settings.json` grants the `lsp_*` set) | yes | codebase discovery — the suite's default for context-gathering |
-| `general` | everything discovered: all built-ins **and all installed extension tools** (lsp, todo, …), minus the exclusions below | no | off-context work that writes (e.g. parallel interface designs) |
+| Type      | Tools                                                                                                                                   | Read-only | Use                                                            |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------- | -------------------------------------------------------------- |
+| `explore` | read, grep, find, ls by default; **extra read-only tools are granted in settings** (the shipped `settings.json` grants the `lsp_*` set) | yes       | codebase discovery — the suite's default for context-gathering |
+| `general` | everything discovered: all built-ins **and all installed extension tools** (lsp, todo, …), minus the exclusions below                   | no        | off-context work that writes (e.g. parallel interface designs) |
 
 No `Plan` agent, no steering, no resume, no custom `.pi/agents` — deliberately omitted. **External web research** is also deliberately outside this package: the parent Pi coding agent uses web Extension tools such as `web_search` and `web_fetch` directly, not through a built-in Subagent type.
 
@@ -44,8 +44,8 @@ results in normal conversation context.
 // Running the subagents in the foreground — same subagent_type, each call
 // returns its own record. The concurrency cap is shared between foreground
 // and background runs.
-Agent({ subagent_type: "explore", prompt: "Search A", description: "Search A" })
-Agent({ subagent_type: "explore", prompt: "Search B", description: "Search B" })
+Agent({ subagent_type: "explore", prompt: "Search A", description: "Search A" });
+Agent({ subagent_type: "explore", prompt: "Search B", description: "Search B" });
 ```
 
 ### What it is not
@@ -80,8 +80,8 @@ own type-specific override:
 // ~/.pi/agent/settings.json or .pi/settings.json
 {
   "subagents": {
-    "defaultModel": "anthropic/claude-sonnet-4-20250514"
-  }
+    "defaultModel": "anthropic/claude-sonnet-4-20250514",
+  },
 }
 ```
 
@@ -97,12 +97,12 @@ the shared default for that type only:
     "defaultModel": "anthropic/claude-sonnet-4-20250514",
     "explore": {
       "defaultModel": "anthropic/claude-haiku-3-5-20241022",
-      "extraTools": ["lsp_definition", "lsp_references"]
+      "extraTools": ["lsp_definition", "lsp_references"],
     },
     "general": {
-      "defaultModel": "openai/gpt-4o"
-    }
-  }
+      "defaultModel": "openai/gpt-4o",
+    },
+  },
 }
 ```
 

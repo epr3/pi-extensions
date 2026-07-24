@@ -17,10 +17,7 @@ Add the absolute path to `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "extensions": [
-    "...existing paths...",
-    "/path/to/pi-extensions/main/packages/web-fetch"
-  ]
+  "extensions": ["...existing paths...", "/path/to/pi-extensions/main/packages/web-fetch"]
 }
 ```
 
@@ -38,39 +35,39 @@ You should see extracted content as Markdown.
 
 ### Tool parameters
 
-| Parameter | Type   | Required | Description                     |
-|-----------|--------|----------|---------------------------------|
-| `url`     | string | yes      | The URL to fetch and extract    |
+| Parameter | Type   | Required | Description                  |
+| --------- | ------ | -------- | ---------------------------- |
+| `url`     | string | yes      | The URL to fetch and extract |
 
 ### Examples
 
 ```typescript
 // Fetch an article
-web_fetch({ url: "https://en.wikipedia.org/wiki/Markdown" })
+web_fetch({ url: "https://en.wikipedia.org/wiki/Markdown" });
 
 // Fetch a PDF document
-web_fetch({ url: "https://example.com/whitepaper.pdf" })
+web_fetch({ url: "https://example.com/whitepaper.pdf" });
 
 // Fetch plain-text content
-web_fetch({ url: "https://example.com/robots.txt" })
+web_fetch({ url: "https://example.com/robots.txt" });
 ```
 
 ## Behavior
 
-| Scenario | Result |
-|----------|--------|
-| Valid HTML page | Extracted article content as Markdown, with title and source |
+| Scenario                                             | Result                                                                      |
+| ---------------------------------------------------- | --------------------------------------------------------------------------- |
+| Valid HTML page                                      | Extracted article content as Markdown, with title and source                |
 | PDF document (application/pdf or URL ending in .pdf) | Text extracted from PDF, with page count; truncated at 50 pages with notice |
-| PDF exceeding 10MB | Error with byte counts |
-| PDF with no extractable text (compressed/scanned) | Clear error suggesting the file may need OCR |
-| JavaScript-heavy HTML page (short extraction) | Automatic Jina Reader fallback for better markdown |
-| Plain text file | Content passes through with source URL |
-| Invalid URL | Clear error message |
-| HTTP error (4xx/5xx) | Error with status code |
-| Binary content type (images, audio, video, archives) | Error with content-type explanation; PDFs are handled, not rejected |
-| Response exceeds size cap | Error with byte counts |
-| Request timeout (30s normal, 15s fallback) | Timeout error |
-| Redirects | Followed automatically |
+| PDF exceeding 10MB                                   | Error with byte counts                                                      |
+| PDF with no extractable text (compressed/scanned)    | Clear error suggesting the file may need OCR                                |
+| JavaScript-heavy HTML page (short extraction)        | Automatic Jina Reader fallback for better markdown                          |
+| Plain text file                                      | Content passes through with source URL                                      |
+| Invalid URL                                          | Clear error message                                                         |
+| HTTP error (4xx/5xx)                                 | Error with status code                                                      |
+| Binary content type (images, audio, video, archives) | Error with content-type explanation; PDFs are handled, not rejected         |
+| Response exceeds size cap                            | Error with byte counts                                                      |
+| Request timeout (30s normal, 15s fallback)           | Timeout error                                                               |
+| Redirects                                            | Followed automatically                                                      |
 
 ## PDF extraction
 

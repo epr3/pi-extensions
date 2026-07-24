@@ -41,9 +41,7 @@ function toolMarker(entry: Extract<StreamEntry, { type: "tool_start" | "tool_end
 
 function formatExpandedStream(entries: StreamEntry[]): string {
   // Keep only the tail of the stream to avoid unbounded rendering
-  const tail = entries.length > EXPANDED_TAIL_LIMIT
-    ? entries.slice(-EXPANDED_TAIL_LIMIT)
-    : entries;
+  const tail = entries.length > EXPANDED_TAIL_LIMIT ? entries.slice(-EXPANDED_TAIL_LIMIT) : entries;
 
   const lines: string[] = [];
   let textBuffer = "";
@@ -198,8 +196,7 @@ export default function (pi: ExtensionAPI) {
       "subagent_type='explore' is read-only codebase discovery (read/grep/find/ls); 'general' has full tools. " +
       "Foreground (default) blocks and returns the result; run_in_background:true returns an id you " +
       "poll with get_subagent_result.",
-    promptSnippet:
-      "Run an explore (read-only) or general Subagent in an isolated context",
+    promptSnippet: "Run an explore (read-only) or general Subagent in an isolated context",
     promptGuidelines: [
       "Use subagent_type='explore' to gather codebase context and 'general' for off-context work that writes.",
       "For independent delegated tasks of the same subagent type, issue multiple foreground Agent calls in the same assistant turn (same-turn fan-out) — one call per task, each with its own prompt and description. Do not use a batch parameter or aggregate result API; each call returns its own result.",

@@ -2,11 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { Model } from "@earendil-works/pi-ai";
 import { AgentManager, type AgentRecord } from "../manager.ts";
 import { checkDefaultModelWarnings } from "../model-ref.ts";
-import {
-  CORE_READ_TOOLS,
-  SAFETY_EXCLUDES,
-  exploreToolset,
-} from "../agents.ts";
+import { CORE_READ_TOOLS, SAFETY_EXCLUDES, exploreToolset } from "../agents.ts";
 import type { StreamEvent, StreamCallback } from "../runner.ts";
 import type { StreamEntry } from "../index.ts";
 
@@ -46,7 +42,7 @@ function createStreamSetup(background: boolean, signal?: AbortSignal) {
     content: Array<{ type: "text"; text: string }>;
     details: Record<string, unknown>;
   }> = [];
-  const onUpdate = (result: typeof updates[0]) => updates.push(result);
+  const onUpdate = (result: (typeof updates)[0]) => updates.push(result);
 
   const streamEntries: StreamEntry[] = [];
   const onStreamEvent: StreamCallback | undefined = background
@@ -135,7 +131,10 @@ describe("background behavior", () => {
 
     const { record } = manager.launch(
       { type: "general", description: "bg wait", background: true },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveExec = resolve)),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>(
+          (resolve) => (resolveExec = resolve),
+        ),
     );
 
     expect(record.status).toBe("running");
@@ -414,11 +413,17 @@ describe("scheduler boundaries", () => {
 
     const a = manager.launch(
       { type: "explore", description: "a", background: true },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveA = resolve)),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>(
+          (resolve) => (resolveA = resolve),
+        ),
     );
     const b = manager.launch(
       { type: "explore", description: "b", background: true },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveB = resolve)),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>(
+          (resolve) => (resolveB = resolve),
+        ),
     );
 
     expect(a.record.status).toBe("running");
@@ -463,11 +468,17 @@ describe("foreground concurrency cap", () => {
 
     const a = manager.launch(
       { type: "explore", description: "fg-a", background: false },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveA = resolve)),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>(
+          (resolve) => (resolveA = resolve),
+        ),
     );
     const b = manager.launch(
       { type: "explore", description: "fg-b", background: false },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveB = resolve)),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>(
+          (resolve) => (resolveB = resolve),
+        ),
     );
 
     expect(a.record.status).toBe("running");
@@ -490,11 +501,17 @@ describe("foreground concurrency cap", () => {
 
     const a = manager.launch(
       { type: "explore", description: "fg-indep-a", background: false },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveA = resolve)),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>(
+          (resolve) => (resolveA = resolve),
+        ),
     );
     const b = manager.launch(
       { type: "explore", description: "fg-indep-b", background: false },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveB = resolve)),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>(
+          (resolve) => (resolveB = resolve),
+        ),
     );
 
     expect(a.record.status).toBe("running");
@@ -521,13 +538,17 @@ describe("foreground concurrency cap", () => {
 
     const a = manager.launch(
       { type: "explore", description: "fg-fail-a", background: false },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((_resolve, reject) => {
-        rejectA = reject;
-      }),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>((_resolve, reject) => {
+          rejectA = reject;
+        }),
     );
     const b = manager.launch(
       { type: "explore", description: "fg-fail-b", background: false },
-      () => new Promise<{ result: string; tokens: number; toolUses: number }>((resolve) => (resolveB = resolve)),
+      () =>
+        new Promise<{ result: string; tokens: number; toolUses: number }>(
+          (resolve) => (resolveB = resolve),
+        ),
     );
 
     expect(a.record.status).toBe("running");

@@ -149,7 +149,10 @@ export function lspToolSpecs(
     const { line, character } = toLsp(a.line!, a.column!);
     const items = arr(await client.prepareCallHierarchy(uri, line, character));
     if (!items.length)
-      return { text: "no callable symbol at that position", details: { resultKind: resultKind(direction), calls: [] } };
+      return {
+        text: "no callable symbol at that position",
+        details: { resultKind: resultKind(direction), calls: [] },
+      };
     const calls = arr(
       direction === "incoming"
         ? await client.incomingCalls(items[0])
@@ -197,13 +200,21 @@ export function lspToolSpecs(
           arr(await client.definition(uri, line, character)).map(locLabel),
         );
         if (!out.length) {
-          return { text: "no definition found", details: { resultKind: "definition", locations: [] } };
+          return {
+            text: "no definition found",
+            details: { resultKind: "definition", locations: [] },
+          };
         }
         return {
           text: out.map((o) => `${o.location}  ${o.snippet}`).join("\n"),
           details: {
             resultKind: "definition",
-            locations: out.map((o) => ({ file: o.file, line: o.line, column: o.column, snippet: o.snippet })),
+            locations: out.map((o) => ({
+              file: o.file,
+              line: o.line,
+              column: o.column,
+              snippet: o.snippet,
+            })),
           },
         };
       },
@@ -226,13 +237,21 @@ export function lspToolSpecs(
           ),
         );
         if (!out.length) {
-          return { text: "no references found", details: { resultKind: "references", locations: [] } };
+          return {
+            text: "no references found",
+            details: { resultKind: "references", locations: [] },
+          };
         }
         return {
           text: out.map((o) => `${o.location}  ${o.snippet}`).join("\n"),
           details: {
             resultKind: "references",
-            locations: out.map((o) => ({ file: o.file, line: o.line, column: o.column, snippet: o.snippet })),
+            locations: out.map((o) => ({
+              file: o.file,
+              line: o.line,
+              column: o.column,
+              snippet: o.snippet,
+            })),
           },
         };
       },
@@ -251,7 +270,10 @@ export function lspToolSpecs(
         const { line, character } = toLsp(a.line!, a.column!);
         const res: any = await client.hover(uri, line, character);
         if (!res || !res.contents) {
-          return { text: "no hover info", details: { resultKind: "hover" as const, hover: { found: false } } };
+          return {
+            text: "no hover info",
+            details: { resultKind: "hover" as const, hover: { found: false } },
+          };
         }
         const c = res.contents;
         let content: string;
@@ -263,7 +285,10 @@ export function lspToolSpecs(
           content = c.value ?? "no hover info";
         }
         if (!content || content === "no hover info") {
-          return { text: content, details: { resultKind: "hover" as const, hover: { found: false } } };
+          return {
+            text: content,
+            details: { resultKind: "hover" as const, hover: { found: false } },
+          };
         }
         return {
           text: content,
@@ -284,21 +309,30 @@ export function lspToolSpecs(
         const { client, uri } = await openAt(a);
         const flat: string[] = [];
         const records: Array<{ name: string; kind: string; line: number; children?: any[] }> = [];
-        const walk = (sym: any, depth = 0): { name: string; kind: string; line: number; children?: any[] } | null => {
+        const walk = (
+          sym: any,
+          depth = 0,
+        ): { name: string; kind: string; line: number; children?: any[] } | null => {
           const range = sym.selectionRange ?? sym.range ?? sym.location?.range;
           if (!range) return null;
           const ln = range.start.line + 1;
           const kind = SYMBOL_KINDS[sym.kind] ?? "symbol";
-          flat.push(
-            `${"  ".repeat(depth)}${kind} ${sym.name}  (line ${ln})`,
-          );
-          const children = (sym.children ?? []).map((ch: any) => walk(ch, depth + 1)).filter(Boolean);
+          flat.push(`${"  ".repeat(depth)}${kind} ${sym.name}  (line ${ln})`);
+          const children = (sym.children ?? [])
+            .map((ch: any) => walk(ch, depth + 1))
+            .filter(Boolean);
           const record: any = { name: sym.name, kind, line: ln };
           if (children.length) record.children = children;
           return record;
         };
-        const symbols = arr(await client.documentSymbols(uri)).map((s) => walk(s, 0)).filter(Boolean);
-        if (!symbols.length) return { text: "no symbols", details: { resultKind: "documentSymbols" as const, symbols: [] } };
+        const symbols = arr(await client.documentSymbols(uri))
+          .map((s) => walk(s, 0))
+          .filter(Boolean);
+        if (!symbols.length)
+          return {
+            text: "no symbols",
+            details: { resultKind: "documentSymbols" as const, symbols: [] },
+          };
         return {
           text: flat.join("\n"),
           details: { resultKind: "documentSymbols" as const, symbols },
@@ -323,13 +357,21 @@ export function lspToolSpecs(
           arr(await client.implementation(uri, line, character)).map(locLabel),
         );
         if (!out.length) {
-          return { text: "no implementations found", details: { resultKind: "implementation", locations: [] } };
+          return {
+            text: "no implementations found",
+            details: { resultKind: "implementation", locations: [] },
+          };
         }
         return {
           text: out.map((o) => `${o.location}  ${o.snippet}`).join("\n"),
           details: {
             resultKind: "implementation",
-            locations: out.map((o) => ({ file: o.file, line: o.line, column: o.column, snippet: o.snippet })),
+            locations: out.map((o) => ({
+              file: o.file,
+              line: o.line,
+              column: o.column,
+              snippet: o.snippet,
+            })),
           },
         };
       },
@@ -362,7 +404,11 @@ export function lspToolSpecs(
           }),
         );
         const records = out.map((o) => o.record);
-        if (!records.length) return { text: "no symbols found", details: { resultKind: "workspaceSymbols" as const, symbols: [] } };
+        if (!records.length)
+          return {
+            text: "no symbols found",
+            details: { resultKind: "workspaceSymbols" as const, symbols: [] },
+          };
         return {
           text: out.map((o) => o.text).join("\n"),
           details: { resultKind: "workspaceSymbols" as const, symbols: records },
@@ -407,7 +453,11 @@ export function lspToolSpecs(
         const { client, uri } = await openAt(a);
         await new Promise((r) => setTimeout(r, diagnosticsDelayMs)); // diagnostics arrive async after didOpen
         const raw = client.getDiagnostics(uri);
-        if (!raw.length) return { text: "no diagnostics", details: { resultKind: "diagnostics" as const, diagnostics: [] } };
+        if (!raw.length)
+          return {
+            text: "no diagnostics",
+            details: { resultKind: "diagnostics" as const, diagnostics: [] },
+          };
         const diags = raw.map((d: any) => ({
           severity: (SEVERITY[d.severity] ?? "info") as "error" | "warning" | "info" | "hint",
           message: d.message,
@@ -417,9 +467,7 @@ export function lspToolSpecs(
         }));
         return {
           text: diags
-            .map(
-              (d: any) => `${d.severity} ${d.file}:${d.line}:${d.column}  ${d.message}`,
-            )
+            .map((d: any) => `${d.severity} ${d.file}:${d.line}:${d.column}  ${d.message}`)
             .join("\n"),
           details: { resultKind: "diagnostics" as const, diagnostics: diags },
         };

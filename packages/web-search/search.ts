@@ -100,19 +100,21 @@ export function cleanInput(s: string): string {
  */
 export class CredentialsError extends Error {
   constructor(authPath: string) {
-    super([
-      "web_search requires Google Custom Search credentials.",
-      "",
-      "Set the following environment variables:",
-      "  GOOGLE_API_KEY  — your Google API key",
-      "  GOOGLE_CSE_ID   — your Custom Search Engine ID",
-      "",
-      "Or create the credentials file:",
-      `  ${authPath}`,
-      '  with JSON: { "apiKey": "...", "cseId": "..." }',
-      "",
-      "See: https://developers.google.com/custom-search/v1/overview",
-    ].join("\n"));
+    super(
+      [
+        "web_search requires Google Custom Search credentials.",
+        "",
+        "Set the following environment variables:",
+        "  GOOGLE_API_KEY  — your Google API key",
+        "  GOOGLE_CSE_ID   — your Custom Search Engine ID",
+        "",
+        "Or create the credentials file:",
+        `  ${authPath}`,
+        '  with JSON: { "apiKey": "...", "cseId": "..." }',
+        "",
+        "See: https://developers.google.com/custom-search/v1/overview",
+      ].join("\n"),
+    );
     this.name = "CredentialsError";
   }
 }
@@ -240,7 +242,10 @@ export function shapeApiError(status: number, body: string): string {
  * Or for empty results:
  *   No results for: <composed query>
  */
-export function formatSearchResults(results: SearchResult[], details: SearchResponseDetails): string {
+export function formatSearchResults(
+  results: SearchResult[],
+  details: SearchResponseDetails,
+): string {
   if (results.length === 0) {
     return `No results for: ${details.composedQuery}`;
   }
