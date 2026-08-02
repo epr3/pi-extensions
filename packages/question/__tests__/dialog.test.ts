@@ -132,16 +132,16 @@ describe("BoundedQuestionDialog line width bounding", () => {
   });
 
   it("renders every line within terminal width when terminal is narrower than maxWidth", () => {
-    const d = makeDialog({ maxWidth: 120 });
-    const lines = d.render(30); // narrow terminal
-    expect(maxLineWidth(lines)).toBeLessThanOrEqual(30);
+    const d = makeDialog({
+      maxWidth: 120,
+      title:
+        "Grammar strictness: How constrained should the Markdown grammar be? I recommend a canonical, documented structure—title, optional link, required description, then named responsibility sections—so authors and tests cross a predictable seam.",
+    });
+    const lines = d.render(106); // narrower than the default display budget
+    expect(maxLineWidth(lines)).toBeLessThanOrEqual(106);
   });
 
-  it("keeps long descriptions within the render width (up to 1-char SelectList overflow)", () => {
-    // SelectList's internal description layout can overflow by 1 character at
-    // certain width boundaries (e.g. when primary column alignment + truncated
-    // description exceeds width by 1).  This is a known SelectList quirk and
-    // does not cause visible flicker.  We verify lines stay ≤ maxWidth + 1.
+  it("keeps long descriptions within the render width", () => {
     const d = makeDialog({
       options: [
         {
@@ -159,7 +159,7 @@ describe("BoundedQuestionDialog line width bounding", () => {
       maxWidth: 80,
     });
     const lines = d.render(80);
-    expect(maxLineWidth(lines)).toBeLessThanOrEqual(81);
+    expect(maxLineWidth(lines)).toBeLessThanOrEqual(80);
   });
 });
 

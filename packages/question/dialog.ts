@@ -293,7 +293,7 @@ export class BoundedQuestionDialog implements Component {
       : buildSingleSelectItems(opts.options, opts.freeTextLabel, opts.freeTextDisplay);
 
     // Reserve lines for the header — remaining lines go to the list.
-    const headerLines = this.computeHeaderLines();
+    const headerLines = this.computeHeaderLines(this.maxWidth);
     const listBudget = Math.max(1, this.maxLines - headerLines.length);
 
     this.selectList = new SelectList(items, listBudget, plainSelectListTheme());
@@ -303,12 +303,17 @@ export class BoundedQuestionDialog implements Component {
 
   render(width: number): string[] {
     const renderWidth = Math.min(width, this.maxWidth);
-    const headerLines = this.computeHeaderLines();
+    const headerLines = this.computeHeaderLines(renderWidth);
     const listLines = this.selectList.render(renderWidth);
 
     const separator = headerLines.length > 0 && listLines.length > 0 ? [""] : [];
-    const allLines = [...headerLines, ...separator, ...listLines];
-    return allLines.slice(0, this.maxLines);
+    const allLines = [...headerLines, ...separator, ...listLines].slice(0, this.maxLines);
+
+    // SelectList may exceed its supplied width by one character; enforce the
+    // Component contract on every line before returning it to Pi.
+    return allLines.map((line) =>
+      visibleWidth(line) > renderWidth ? truncateToWidth(line, renderWidth) : line,
+    );
   }
 
   handleInput(keyData: string): void {
@@ -322,26 +327,25 @@ export class BoundedQuestionDialog implements Component {
   // ── Implementation ─────────────────────────────────────────────────
 
   /** Compute the bounded header lines (capped + truncated). */
-  private computeHeaderLines(): string[] {
+  private computeHeaderLines(width: number): string[] {
     const lines: string[] = [];
 
     // Title (wrapped + capped to maxHeaderLines)
     if (this.title) {
-      const wrapped = wrapTextWithAnsi(this.title, this.maxWidth);
+      const wrapped = wrapTextWithAnsi(this.title, width);
       if (wrapped.length <= this.maxHeaderLines) {
         lines.push(...wrapped);
       } else {
         const capped = wrapped.slice(0, this.maxHeaderLines);
         const lastIdx = capped.length - 1;
-        capped[lastIdx] =
-          truncateToWidth(capped[lastIdx]!, Math.max(1, this.maxWidth - 1)) + TRUNCATION_SUFFIX;
+        capped[lastIdx] = truncateToWidth(capped[lastIdx]!, width, TRUNCATION_SUFFIX);
         lines.push(...capped);
       }
     }
 
     // Multi-select: bounded selection summary line
     if (this.multiSelect && this.chosenLabels.length > 0) {
-      const summary = boundedSelectionSummary(this.chosenLabels as string[], this.maxWidth);
+      const summary = boundedSelectionSummary(this.chosenLabels as string[], width);
       if (summary) lines.push(summary);
     }
 
