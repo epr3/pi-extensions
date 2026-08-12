@@ -1,0 +1,3 @@
+# Preserve preset-option labels through scrolling
+
+The **Bounded question dialog** keeps its **Display budget** while wrapping every preset option into a **Scrollable option label** rather than truncating it. Up/Down scrolls the selected label until its boundary before moving to the adjacent option, and multi-select uses a count-only summary; this replaces the prior answer-label truncation policy so users can read every preset answer without an unbounded dialog.

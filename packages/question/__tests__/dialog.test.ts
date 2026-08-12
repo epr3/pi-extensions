@@ -518,6 +518,37 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
     expect(output).toContain("✓ Beta");
   });
 
+  it("reports a count-only summary with no shortened label preview", () => {
+    const d = new BoundedQuestionDialog({
+      title: "Pick any",
+      options: [
+        { label: "A very long option label that must never appear as a shortened preview" },
+        { label: "Beta" },
+        { label: "Gamma" },
+      ],
+      freeTextLabel: "Type your answer",
+      freeTextDisplay: "✎ Type your answer — Write a custom response",
+      multiSelect: true,
+      chosenLabels: [
+        "A very long option label that must never appear as a shortened preview",
+        "Beta",
+      ],
+      maxWidth: 40,
+    });
+    const lines = d.render(80);
+    const output = lines.join("\n");
+    // The summary reports only the selected count.
+    const summary = lines.find((l) => l.includes("selected"));
+    expect(summary).toBe("[2 selected]");
+    // No label preview anywhere: no "selected:" prefix and no ellipsis (the
+    // option rows keep full wrapped labels, so ellipsis would betray a preview).
+    expect(output).not.toContain("selected:");
+    expect(output).not.toMatch(/…/);
+    // Full labels are still readable in the option rows.
+    expect(output).toContain("✓ A very long option label");
+    expect(output).toContain("✓ Beta");
+  });
+
   it("keeps the summary bounded within maxWidth", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick",
@@ -678,30 +709,25 @@ describe("boundedSelectionSummary", () => {
     expect(boundedSelectionSummary([], 80)).toBe("");
   });
 
-  it("shows count when labels are chosen", () => {
-    const result = boundedSelectionSummary(["A"], 80);
-    expect(result).toContain("1 selected");
+  it("reports only the selected count with no label preview", () => {
+    expect(boundedSelectionSummary(["A"], 80)).toBe("[1 selected]");
+    expect(boundedSelectionSummary(["Alpha", "Beta"], 80)).toBe("[2 selected]");
   });
 
-  it("includes label preview when it fits", () => {
-    const result = boundedSelectionSummary(["Alpha", "Beta"], 80);
-    expect(result).toContain("Alpha");
-    expect(result).toContain("Beta");
-  });
-
-  it("caps long label preview with ellipsis when it exceeds maxWidth", () => {
+  it("never emits a shortened label preview or ellipsis, however long the labels", () => {
     const result = boundedSelectionSummary(
-      ["ExtremelyLongOptionNameThatShouldBeTruncated", "AnotherLongOption"],
+      ["ExtremelyLongOptionNameThatShouldNeverBePreviewed", "AnotherLongOption"],
       30,
     );
-    expect(result).toMatch(/…/);
+    expect(result).toBe("[2 selected]");
+    expect(result).not.toContain("ExtremelyLong");
+    expect(result).not.toMatch(/…/);
     expect(visibleWidth(result)).toBeLessThanOrEqual(30);
   });
 
-  it("falls back to count-only when even the prefix barely fits", () => {
-    const result = boundedSelectionSummary(["VeryLongLabelThatTakesUpSpace"], 10);
-    // The prefix "[1 selected]" is 12 chars wide, so at width 10
-    // it should still produce something bounded
+  it("collapses to a bare count when the summary does not fit", () => {
+    const result = boundedSelectionSummary(["A", "B"], 10);
+    expect(result).toBe("[2]");
     expect(visibleWidth(result)).toBeLessThanOrEqual(10);
   });
 });
