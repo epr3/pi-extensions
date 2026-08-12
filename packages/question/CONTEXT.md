@@ -22,8 +22,11 @@ _Avoid_: CLI mode, headless error.
 **Display budget**: The terminal-space limit a **Structured question** must fit by bounding prompt and option rendering instead of expanding past the visible UI.
 _Avoid_: Available display, screen size, terminal height.
 
-**Bounded question dialog**: Interactive **Structured question** renderer that keeps long question text, selected-answer summaries, and answers within a **Display budget** by satisfying a bounded render invariant, capping prompt and summary display, and keeping answers selectable through scrolling.
+**Bounded question dialog**: Interactive **Structured question** renderer that keeps long question text and selected-answer summaries within a **Display budget** while showing every preset-option label in full through wrapping and selection-aware scrolling.
 _Avoid_: Custom select, better picker, overflow fix.
+
+**Scrollable option label**: A wrapped preset-option label whose lines scroll with Up/Down until its boundary, where navigation continues to the adjacent option.
+_Avoid_: Truncated answer, expanded option.
 
 ## Relationships
 
@@ -33,9 +36,9 @@ _Avoid_: Custom select, better picker, overflow fix.
 - **Non-interactive fallback** preserves the **Structured question** as text.
 - **Bounded question dialog** presents a **Structured question** within a **Display budget**.
 - **Bounded question dialog** is verified by tests that bound rendered line count and line width for oversized **Structured question** inputs.
-- **Bounded question dialog** may truncate displayed question text, but it must preserve every preset answer and the **Free prose answer** as selectable choices.
+- **Bounded question dialog** may truncate displayed question text, but it renders every **Scrollable option label** in full and keeps every preset answer and the **Free prose answer** selectable.
 - **Free prose answer** collection uses a short bounded title derived from the **Structured question** rather than the full prompt text.
-- Multi-select **Structured question** rendering uses a bounded selected-answer summary instead of appending all chosen labels to the dialog title.
+- Multi-select **Structured question** rendering uses a count-only selected-answer summary instead of appending selected labels to the dialog title.
 
 ## Example dialogue
 
@@ -51,4 +54,5 @@ _Avoid_: Custom select, better picker, overflow fix.
 - Long prompt overflow could be handled by scrolling all content, truncating all content, or keeping answers accessible; resolved: cap displayed prompt text and keep answers selectable through scrolling.
 - Free-prose collection could reuse the full prompt as editor title; resolved: use a short bounded title so choosing **Free prose answer** cannot reintroduce the same display overflow.
 - Flicker could be accepted only by manual repro, terminal snapshots, or component invariants; resolved: first prove the **Bounded question dialog** with tests that bound rendered line count and line width.
-- Multi-select chosen labels could remain unbounded in the title, be hidden, or be summarized; resolved: show a bounded count/preview summary so chosen long labels cannot exceed the **Display budget**.
+- Multi-select chosen labels could remain unbounded in the title, be hidden, or be summarized; resolved: show a count-only summary so no selected label is partially displayed and long labels cannot exceed the **Display budget**.
+- Long preset answers could be truncated, shown in an unbounded dialog, or wrapped within the **Display budget**; resolved: use **Scrollable option label** rendering, with Up/Down scrolling label lines before moving to the adjacent option at its boundary.

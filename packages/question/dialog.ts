@@ -4,19 +4,14 @@
  * built-in unbounded picker.
  *
  * Renders a capped/truncated header (the question text) followed by a
- * SelectList of preset options + the Free prose answer.
+ * wrapped, scrollable list of preset options + the Free prose answer.
  *
  * Implements the pi-tui Component interface so it can be rendered as a widget
  * in the interactive TUI.  For deterministic tests, call render(width) directly
  * and simulate user actions via handleInput().
  */
 
-import {
-  SelectList,
-  type SelectItem,
-  type SelectListTheme,
-  type Component,
-} from "@earendil-works/pi-tui";
+import { type SelectItem, type Component, getKeybindings } from "@earendil-works/pi-tui";
 import { truncateToWidth, wrapTextWithAnsi, visibleWidth } from "@earendil-works/pi-tui";
 
 // ── Public types ───────────────────────────────────────────────────────
@@ -78,17 +73,97 @@ export function boundedEditorTitle(header: string | undefined, question: string)
   return question.slice(0, MAX_EDITOR_TITLE_CHARS - 1) + TRUNCATION_SUFFIX;
 }
 
-// ── Theme ──────────────────────────────────────────────────────────────
+// ── Wrapped list ───────────────────────────────────────────────────────
 
-/** Plain SelectList theme used by default (no ANSI styling). */
-function plainSelectListTheme(): SelectListTheme {
-  return {
-    selectedPrefix: (t) => `> ${t}`,
-    selectedText: (t) => t,
-    description: (t) => (t ? ` — ${t}` : ""),
-    scrollInfo: (t) => `  (${t})`,
-    noMatch: (t) => `  ${t}`,
-  };
+const LIST_PREFIX_WIDTH = 2;
+const LIST_SELECTED_PREFIX = "→ ";
+const LIST_UNSELECTED_PREFIX = "  ";
+
+/**
+ * Scrollable option label list: renders every item as a wrapped label and
+ * treats all items' wrapped lines as one continuous column. The focused line
+ * moves one line per Up/Down press, so a long selected label scrolls until
+ * its boundary; the selected item changes only when the focused line crosses
+ * an item boundary. At the column ends, Up/Down wraps to the other end.
+ */
+class WrappedSelectList implements Component {
+  private items: SelectItem[];
+  private maxVisible: number;
+  /** Virtual-column index of the focused line. */
+  private viewportTop = 0;
+  /** Line counts computed at the most recent render width. */
+  private lastLineCounts: number[] | undefined;
+
+  onSelect?: (item: SelectItem) => void;
+  onCancel?: () => void;
+
+  constructor(items: SelectItem[], maxVisible: number) {
+    this.items = items;
+    this.maxVisible = Math.max(1, maxVisible);
+  }
+
+  invalidate(): void {
+    // No cached state to invalidate.
+  }
+
+  render(width: number): string[] {
+    const wrapWidth = Math.max(1, width - LIST_PREFIX_WIDTH);
+    const wrapped = this.items.map((item) => {
+      const text = item.description ? `${item.label} — ${item.description}` : item.label;
+      return wrapTextWithAnsi(text, wrapWidth);
+    });
+    const lineCounts = wrapped.map((lines) => lines.length);
+    this.lastLineCounts = lineCounts;
+    const total = lineCounts.reduce((sum, n) => sum + n, 0);
+    if (total === 0) return [];
+
+    // Width may change between renders; keep the focus inside the column.
+    this.viewportTop = Math.min(this.viewportTop, total - 1);
+    const windowStart = Math.min(this.viewportTop, Math.max(0, total - this.maxVisible));
+
+    const out: string[] = [];
+    let lineIndex = 0;
+    for (let i = 0; i < this.items.length; i++) {
+      for (const line of wrapped[i]!) {
+        if (lineIndex >= windowStart && lineIndex < windowStart + this.maxVisible) {
+          const prefix =
+            lineIndex === this.viewportTop ? LIST_SELECTED_PREFIX : LIST_UNSELECTED_PREFIX;
+          out.push(prefix + line);
+        }
+        lineIndex++;
+      }
+    }
+    return out;
+  }
+
+  handleInput(keyData: string): void {
+    const kb = getKeybindings();
+    // Before the first render, fall back to one line per item (item navigation).
+    const lineCounts = this.lastLineCounts ?? this.items.map(() => 1);
+    const total = lineCounts.reduce((sum, n) => sum + n, 0);
+    if (total === 0) return;
+
+    if (kb.matches(keyData, "tui.select.up")) {
+      this.viewportTop = (this.viewportTop - 1 + total) % total;
+    } else if (kb.matches(keyData, "tui.select.down")) {
+      this.viewportTop = (this.viewportTop + 1) % total;
+    } else if (kb.matches(keyData, "tui.select.confirm")) {
+      const item = this.focusedItem(lineCounts);
+      if (item && this.onSelect) this.onSelect(item);
+    } else if (kb.matches(keyData, "tui.select.cancel")) {
+      if (this.onCancel) this.onCancel();
+    }
+  }
+
+  /** The item that owns the focused line. */
+  private focusedItem(lineCounts: number[]): SelectItem | null {
+    let line = 0;
+    for (let i = 0; i < this.items.length; i++) {
+      line += lineCounts[i]!;
+      if (this.viewportTop < line) return this.items[i]!;
+    }
+    return this.items[this.items.length - 1] ?? null;
+  }
 }
 
 // ── SelectItem helpers ─────────────────────────────────────────────────
@@ -102,53 +177,16 @@ function optionDisplay(o: DialogOption): string {
 }
 
 /**
- * Build a bounded selection summary for multi-select mode, e.g.
- * `[2 selected: Alpha, Be…]` — never exceeds `maxWidth`.
+ * Build a bounded count-only selection summary for multi-select mode, e.g.
+ * `[2 selected]` — never lists (or truncates) chosen labels, since the option
+ * viewport is where selected labels stay readable in full. Collapses to a
+ * bare `[N]` when even the count form exceeds `maxWidth`.
  * Returns empty string when nothing is chosen.
  */
 export function boundedSelectionSummary(chosenLabels: string[], maxWidth: number): string {
   if (chosenLabels.length === 0) return "";
-  const count = chosenLabels.length;
-
-  // Fallback for very narrow widths: just show the count.
-  const countOnly = `[${count}]`;
-  if (visibleWidth(countOnly) > maxWidth) return countOnly;
-
-  // Try full format: "[N selected: label1, label2]"
-  const fullPreview = `[${count} selected: ${chosenLabels.join(", ")}]`;
-  if (visibleWidth(fullPreview) <= maxWidth) return fullPreview;
-
-  // Need to cap the preview.
-  const leftPart = `[${count} selected: `;
-  const suffix = ", …]";
-  const leftWidth = visibleWidth(leftPart);
-  const suffixWidth = visibleWidth(suffix);
-  const available = maxWidth - leftWidth - suffixWidth;
-
-  // If there's no room for any label preview, fall back to count-only.
-  if (available <= 0) return countOnly;
-
-  let preview = "";
-  for (const label of chosenLabels) {
-    const separator = preview ? ", " : "";
-    const candidate = preview + separator + label;
-    if (visibleWidth(candidate) <= available) {
-      preview = candidate;
-    } else {
-      // Truncate this label to fit the remaining space.
-      const sepWidth = visibleWidth(separator);
-      const remaining = available - sepWidth;
-      if (remaining >= 2) {
-        // Use empty ellipsis since we add TRUNCATION_SUFFIX ourselves.
-        const truncated =
-          truncateToWidth(label, Math.max(1, remaining - 1), "") + TRUNCATION_SUFFIX;
-        preview = preview + separator + truncated;
-      }
-      break;
-    }
-  }
-
-  return `${leftPart}${preview}${suffix}`;
+  const countOnly = `[${chosenLabels.length} selected]`;
+  return visibleWidth(countOnly) <= maxWidth ? countOnly : `[${chosenLabels.length}]`;
 }
 
 /** Build a SelectItem for one preset option. */
@@ -239,7 +277,7 @@ function multiSelectItems(
  * d.handleInput("enter");       // confirm current selection
  * ```
  *
- * The dialog delegates onSelect / onCancel to the inner SelectList, so
+ * The dialog delegates onSelect / onCancel to the inner list, so
  * consumers set callbacks directly on the dialog instance.
  */
 export class BoundedQuestionDialog implements Component {
@@ -269,7 +307,7 @@ export class BoundedQuestionDialog implements Component {
   readonly chosenLabels: readonly string[];
   readonly hasFreeText: boolean;
 
-  private selectList: SelectList;
+  private selectList: WrappedSelectList;
   private title: string;
 
   constructor(opts: BoundedQuestionDialogOptions) {
@@ -292,11 +330,15 @@ export class BoundedQuestionDialog implements Component {
         )
       : buildSingleSelectItems(opts.options, opts.freeTextLabel, opts.freeTextDisplay);
 
-    // Reserve lines for the header — remaining lines go to the list.
+    // Reserve lines for the header and the separator — remaining lines go to
+    // the list viewport. Counting the separator avoids slicing the viewport's
+    // last row off the display, which would make a tall final label (e.g. the
+    // free-prose choice) unreadable in full.
     const headerLines = this.computeHeaderLines(this.maxWidth);
-    const listBudget = Math.max(1, this.maxLines - headerLines.length);
+    const separatorBudget = headerLines.length > 0 ? 1 : 0;
+    const listBudget = Math.max(1, this.maxLines - headerLines.length - separatorBudget);
 
-    this.selectList = new SelectList(items, listBudget, plainSelectListTheme());
+    this.selectList = new WrappedSelectList(items, listBudget);
   }
 
   // ── Component interface ────────────────────────────────────────────
@@ -309,8 +351,8 @@ export class BoundedQuestionDialog implements Component {
     const separator = headerLines.length > 0 && listLines.length > 0 ? [""] : [];
     const allLines = [...headerLines, ...separator, ...listLines].slice(0, this.maxLines);
 
-    // SelectList may exceed its supplied width by one character; enforce the
-    // Component contract on every line before returning it to Pi.
+    // Safety net: enforce the Component contract (max line width) on every
+    // line before returning it to Pi.
     return allLines.map((line) =>
       visibleWidth(line) > renderWidth ? truncateToWidth(line, renderWidth) : line,
     );
