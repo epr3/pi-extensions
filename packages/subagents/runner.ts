@@ -1,3 +1,4 @@
+/* oxlint-disable preserve-caught-error */
 import {
   createAgentSession,
   DefaultResourceLoader,

@@ -359,16 +359,7 @@ describe("type-specific wiring seam", () => {
 
   it("result text unchanged regardless of model", async () => {
     const manager = new AgentManager({ maxConcurrency: 1 });
-    const registry = fakeRegistry([anthropicModel, openaiModel]);
-    const find = (p: string, m: string) => registry.find(p, m);
 
-    const _model = resolveTypeDefaultModel(
-      { explore: "openai/gpt-4o", general: undefined },
-      "explore",
-      "anthropic/claude-sonnet-4-20250514",
-      find,
-      anthropicModel,
-    );
     const { done } = manager.launch({ type: "explore", description: "test" }, async () => ({
       result: "ok",
       tokens: 0,

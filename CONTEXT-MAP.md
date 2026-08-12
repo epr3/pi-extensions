@@ -78,6 +78,9 @@ _Avoid_: Shared package.json, dependency bump, version list.
 **Exact dependency baseline**: Concrete latest version set recorded without semver range operators so dependency upgrades are explicit catalog edits rather than install-time float.
 _Avoid_: Latest deps, pinned lockfile, caret range.
 
+**Node support floor**: The oldest Node.js release the Extension package workspace declares compatible, aligned with its Pi runtime baseline.
+_Avoid_: Node version, runtime version, engine range.
+
 **Compatibility update**: Dependency update slice that includes whatever extension code, config, and test adjustments are needed to keep build, typecheck, lint, and tests passing at the **Exact dependency baseline**.
 _Avoid_: Manifest-only update, deferred migration, blind bump.
 
