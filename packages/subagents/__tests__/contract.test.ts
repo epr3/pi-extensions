@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { agentParams, resultParams } from "../index.ts";
 import { SAFETY_EXCLUDES } from "../agents.ts";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const testDir = path.dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Agent parameter shape — one-run-only contract
@@ -14,7 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 describe("Agent param shape", () => {
   it("has exactly 4 keys: subagent_type, prompt, description, run_in_background", () => {
     const props = agentParams.properties;
-    const keys = Object.keys(props).sort();
+    const keys = Object.keys(props).toSorted();
     expect(keys).toEqual(["description", "prompt", "run_in_background", "subagent_type"]);
   });
 
@@ -53,7 +53,7 @@ describe("Agent param shape", () => {
 
   it("has correct required fields", () => {
     const required = (agentParams.required ?? []) as string[];
-    expect([...required].sort()).toEqual(["description", "prompt", "subagent_type"]);
+    expect([...required].toSorted()).toEqual(["description", "prompt", "subagent_type"]);
     expect(required).not.toContain("run_in_background");
   });
 });
@@ -65,7 +65,7 @@ describe("Agent param shape", () => {
 describe("result params", () => {
   it("has agent_id and wait with correct types", () => {
     const props = resultParams.properties;
-    expect(Object.keys(props).sort()).toEqual(["agent_id", "wait"]);
+    expect(Object.keys(props).toSorted()).toEqual(["agent_id", "wait"]);
     expect(props.agent_id.type).toBe("string");
     expect(props.wait.type).toBe("boolean");
   });
@@ -118,7 +118,7 @@ describe("SAFETY_EXCLUDES", () => {
 // ---------------------------------------------------------------------------
 
 describe("prompt guidelines", () => {
-  const indexPath = path.resolve(__dirname, "../index.ts");
+  const indexPath = path.resolve(testDir, "../index.ts");
 
   it("describe same-turn fan-out as multiple Agent calls", () => {
     const source = readFileSync(indexPath, "utf-8");
@@ -146,7 +146,7 @@ describe("prompt guidelines", () => {
 // ---------------------------------------------------------------------------
 
 describe("README", () => {
-  const readmePath = path.resolve(__dirname, "../README.md");
+  const readmePath = path.resolve(testDir, "../README.md");
 
   it("states the Agent is not a batch API", () => {
     const readme = readFileSync(readmePath, "utf-8");

@@ -59,6 +59,10 @@ const toLsp = (line: number, col: number) => ({
 });
 const arr = (x: any): any[] => (x == null ? [] : Array.isArray(x) ? x : [x]);
 
+function resultKind(d: "incoming" | "outgoing"): "incomingCalls" | "outgoingCalls" {
+  return d === "incoming" ? "incomingCalls" : "outgoingCalls";
+}
+
 async function locLabel(loc: any): Promise<{
   location: string;
   snippet: string;
@@ -138,9 +142,6 @@ export function lspToolSpecs(
     return { client, uri };
   };
 
-  const resultKind = (d: "incoming" | "outgoing") =>
-    d === "incoming" ? ("incomingCalls" as const) : ("outgoingCalls" as const);
-
   const callHierarchy = async (
     a: LspArgs,
     direction: "incoming" | "outgoing",
@@ -165,14 +166,19 @@ export function lspToolSpecs(
     const out = await Promise.all(
       calls.map(async (c: any) => {
         const item = c.from ?? c.to;
-        const { location, file, line, column } = await locLabel({
+        const {
+          location,
+          file,
+          line: itemLine,
+          column,
+        } = await locLabel({
           uri: item.uri,
           range: item.selectionRange ?? item.range,
         });
         const kind = SYMBOL_KINDS[item.kind] ?? "symbol";
         return {
           text: `${kind} ${item.name}  ${location}`,
-          record: { kind, name: item.name, file, line, column },
+          record: { kind, name: item.name, file, line: itemLine, column },
         };
       }),
     );
@@ -308,7 +314,6 @@ export function lspToolSpecs(
       async run(a) {
         const { client, uri } = await openAt(a);
         const flat: string[] = [];
-        const records: Array<{ name: string; kind: string; line: number; children?: any[] }> = [];
         const walk = (
           sym: any,
           depth = 0,

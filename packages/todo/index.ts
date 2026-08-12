@@ -147,27 +147,27 @@ export function renderTodoResult(
 
   if (!options.expanded) {
     // Collapsed: compact summary with optional current-item line
-    const summary = `${done}/${total} done`;
+    const summaryText = `${done}/${total} done`;
     let text: string;
     let color: ThemeColor;
 
     if (active > 1) {
       // Multiple in_progress — warning state, no current item
-      text = `⚠ ${summary}, ${active} in_progress`;
+      text = `⚠ ${summaryText}, ${active} in_progress`;
       color = "warning";
     } else if (done === total) {
       // All done — success, no current item
-      text = `✓ ${summary}`;
+      text = `✓ ${summaryText}`;
       color = "success";
     } else if (active === 1) {
       // Single in_progress — show current item from structured details
       const d = result.details as Record<string, unknown> | undefined;
       const currentItem = d?.currentItem as Item | null | undefined;
-      text = currentItem ? `${summary} · Current: ${currentItem.content}` : summary;
+      text = currentItem ? `${summaryText} · Current: ${currentItem.content}` : summaryText;
       color = "accent";
     } else {
       // No in_progress items, not all done (mixed completed + pending)
-      text = summary;
+      text = summaryText;
       color = "accent";
     }
 

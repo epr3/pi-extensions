@@ -14,8 +14,8 @@ import type { StreamEntry } from "../index.ts";
 
 function createFakeSession() {
   let handler: ((event: any) => void) | undefined;
-  let resolvePrompt: () => void = () => {};
-  let rejectPrompt: (err: any) => void = () => {};
+  let resolvePrompt: () => void;
+  let rejectPrompt: (err: any) => void;
   let promptPromise: Promise<void>;
   let aborted = false;
   let disposed = false;
@@ -310,7 +310,7 @@ describe("manager abort behavior", () => {
   it("background run ignores parent abort signal", async () => {
     const manager = new AgentManager({ maxConcurrency: 1 });
     const controller = new AbortController();
-    let resolveExec: () => void = () => {};
+    let resolveExec: () => void;
 
     const { record, done } = manager.launch(
       { type: "explore", description: "background abort test", background: true },

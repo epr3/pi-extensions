@@ -127,7 +127,7 @@ describe("background behavior", () => {
 
   it("polling waits for completion", async () => {
     const manager = new AgentManager({ maxConcurrency: 1 });
-    let resolveExec: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+    let resolveExec: (out: { result: string; tokens: number; toolUses: number }) => void;
 
     const { record } = manager.launch(
       { type: "general", description: "bg wait", background: true },
@@ -408,8 +408,8 @@ describe("scheduler boundaries", () => {
 
   it("queue honors concurrency", async () => {
     const manager = new AgentManager({ maxConcurrency: 1 });
-    let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
-    let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+    let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void;
+    let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void;
 
     const a = manager.launch(
       { type: "explore", description: "a", background: true },
@@ -463,8 +463,8 @@ describe("scheduler boundaries", () => {
 describe("foreground concurrency cap", () => {
   it("obeys concurrency cap", async () => {
     const manager = new AgentManager({ maxConcurrency: 1 });
-    let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
-    let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+    let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void;
+    let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void;
 
     const a = manager.launch(
       { type: "explore", description: "fg-a", background: false },
@@ -496,8 +496,8 @@ describe("foreground concurrency cap", () => {
 
   it("runs complete independently under cap", async () => {
     const manager = new AgentManager({ maxConcurrency: 2 });
-    let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
-    let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+    let resolveA: (out: { result: string; tokens: number; toolUses: number }) => void;
+    let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void;
 
     const a = manager.launch(
       { type: "explore", description: "fg-indep-a", background: false },
@@ -533,8 +533,8 @@ describe("foreground concurrency cap", () => {
 
   it("failure does not block siblings", async () => {
     const manager = new AgentManager({ maxConcurrency: 1 });
-    let rejectA: (err: Error) => void = () => {};
-    let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void = () => {};
+    let rejectA: (err: Error) => void;
+    let resolveB: (out: { result: string; tokens: number; toolUses: number }) => void;
 
     const a = manager.launch(
       { type: "explore", description: "fg-fail-a", background: false },

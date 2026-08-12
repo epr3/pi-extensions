@@ -3,14 +3,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createCatalog, resolvePreset, resolveCycle } from "../catalog.ts";
 
-const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const testDir = path.dirname(new URL(import.meta.url).pathname);
 
 /**
  * Resolve the shipped repo-level settings.json from the test file location.
  * Test file:   packages/model-presets/__tests__/shipped-config.test.ts
  * Settings:    packages/pi-config/settings.json
  */
-const SETTINGS_PATH = path.resolve(__dirname, "../../pi-config/settings.json");
+const SETTINGS_PATH = path.resolve(testDir, "../../pi-config/settings.json");
 
 function readShippedSettings(): Record<string, unknown> {
   return JSON.parse(readFileSync(SETTINGS_PATH, "utf8")) as Record<string, unknown>;

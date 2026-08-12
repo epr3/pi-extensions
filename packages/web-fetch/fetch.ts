@@ -482,7 +482,7 @@ export async function fetchUrl(
  */
 export function extractHtmlContent(
   html: string,
-  url: string,
+  _url: string,
 ): { title: string; content: string; extractionWarning?: string } {
   const title = extractTitle(html);
   const bodyHtml = extractMainContent(html);
