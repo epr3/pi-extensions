@@ -1,19 +1,24 @@
 /**
  * Scrollable option label tests — deterministic rendering and interaction for
- * wrapped, selection-aware scrolling of preset-answer labels (ticket 0001).
+ * wrapped, item-navigated preset-answer labels (ticket 0001).
+ *
+ * The Bounded question dialog navigates selectable answer items with
+ * Up/Down — one item per press, regardless of wrapped label height — and
+ * reveals an oversized Scrollable option label through explicit PageUp/PageDown
+ * paging that never changes focus.
  *
  * Acceptance criteria covered:
  * - long preset + free-prose labels readable in full (wrapping, no ellipsis)
- * - Up/Down scrolls within the selected label; selection moves only at
- *   the label's top/bottom boundary
+ * - Up/Down moves the focus exactly one item per press incl. wraparound
+ * - PageUp/PageDown reveals every line of an oversized label without changing
+ *   focus or selecting an answer; revisiting an item starts at its first line
  * - short labels keep one-step navigation incl. wraparound
  * - every rendered state respects the Display budget (maxLines, maxWidth)
- * - label taller than the available list viewport stays fully reachable
  *
  * Line arithmetic: with title "Pick one?" (1 header row), a separator row, and
  * maxLines 6, the list viewport renders 4 rows. LONG_LABEL wraps to rows
  * 0..4, then "Beta" (row 5), then the free-prose label (rows 6..10); total
- * 11 virtual rows.
+ * 11 wrapped rows.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -23,6 +28,8 @@ import { BoundedQuestionDialog, DONE_DISPLAY, type DialogOption } from "../dialo
 const ENTER = "\r";
 const UP = "\x1b[A";
 const DOWN = "\x1b[B";
+const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
 
 /** Wraps to exactly 5 rows at maxWidth 30 (wrap width 28); last row "single word in full ZZZEND". */
 const LONG_LABEL =
@@ -91,9 +98,9 @@ describe("scrollable option labels — readability", () => {
   });
 });
 
-describe("scrollable option labels — scrolling within the selected label", () => {
-  // Header(1) + separator(1) + list viewport(5) fits maxLines 6; the budget
-  // slice renders 4 list rows. LONG_LABEL rows 0..4 → last row initially hidden.
+describe("scrollable option labels — item navigation", () => {
+  // Header(1) + separator(1) + maxLines 6 → 4-row list viewport.
+  // LONG_LABEL rows 0..4 → last row initially hidden behind the viewport.
   function longFirstDialog(): BoundedQuestionDialog {
     return makeDialog({
       options: [{ label: LONG_LABEL }, { label: "Beta" }],
@@ -103,7 +110,77 @@ describe("scrollable option labels — scrolling within the selected label", () 
     });
   }
 
-  it("Down reveals following lines of the selected long label", () => {
+  it("Down moves to the next item in one press, whatever the label height", () => {
+    const d = longFirstDialog();
+    renderOnce(d);
+    const onSelect = vi.fn();
+    d.onSelect = onSelect;
+
+    const initial = d.render(80).join("\n");
+    expect(initial).toContain("Alpha this option has an"); // row 0
+    expect(initial).not.toContain("Beta"); // next item hidden
+
+    d.handleInput(DOWN); // one press crosses the whole 5-row label
+    const afterOne = d.render(80).join("\n");
+    expect(afterOne).toContain("Beta");
+    expect(afterOne).not.toContain("Alpha this option has an");
+
+    d.handleInput(ENTER);
+    expect(onSelect.mock.calls[0]![0].value).toContain("Beta");
+  });
+
+  it("Up moves back to the previous item in one press", () => {
+    const d = longFirstDialog();
+    renderOnce(d);
+    const onSelect = vi.fn();
+    d.onSelect = onSelect;
+
+    d.handleInput(DOWN); // focus Beta
+    d.handleInput(UP); // back to LONG — viewport restarts at row 0
+
+    expect(d.render(80).join("\n")).toContain("Alpha this option has an");
+    d.handleInput(ENTER);
+    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
+  });
+
+  it("reaches the last free-prose item and wraps back to the first in one press each", () => {
+    // items: LONG(5 rows), Beta(1), free-prose(5) — rows 0..10.
+    const d = makeDialog({
+      options: [{ label: LONG_LABEL }, { label: "Beta" }],
+      freeTextLabel: LONG_FREE_TEXT_LABEL,
+      maxWidth: 30,
+      maxLines: 6,
+    });
+    renderOnce(d);
+    const onSelect = vi.fn();
+    d.onSelect = onSelect;
+
+    d.handleInput(DOWN); // Beta
+    d.handleInput(DOWN); // free prose — still one press despite 5 wrapped rows
+    d.handleInput(ENTER);
+    expect(onSelect.mock.calls[0]![0].value).toContain("✎");
+
+    d.handleInput(DOWN); // wraps to the first item
+    d.handleInput(ENTER);
+    expect(onSelect.mock.calls[1]![0].value).toContain("Alpha");
+
+    d.handleInput(UP); // wraps back to free prose
+    d.handleInput(ENTER);
+    expect(onSelect.mock.calls[2]![0].value).toContain("✎");
+  });
+});
+
+describe("scrollable option labels — explicit label paging", () => {
+  function longFirstDialog(): BoundedQuestionDialog {
+    return makeDialog({
+      options: [{ label: LONG_LABEL }, { label: "Beta" }],
+      freeTextLabel: LONG_FREE_TEXT_LABEL,
+      maxWidth: 30,
+      maxLines: 6,
+    });
+  }
+
+  it("PageDown reveals the focused long label's hidden rows", () => {
     const d = longFirstDialog();
     renderOnce(d);
 
@@ -111,121 +188,33 @@ describe("scrollable option labels — scrolling within the selected label", () 
     expect(initial).toContain("Alpha this option has an"); // row 0
     expect(initial).toContain("that wraps onto many lines"); // row 2
     expect(initial).not.toContain("single word in full ZZZEND"); // row 4 hidden
-    expect(initial).not.toContain("Beta"); // next option hidden
+    expect(initial).not.toContain("Beta"); // next item still hidden
 
-    d.handleInput(DOWN);
-    const afterOne = d.render(80).join("\n");
-    expect(afterOne).toContain("extremely long answer label"); // row 1
-    expect(afterOne).toContain("so the reader can see every"); // row 3
-    expect(afterOne).toContain("single word in full ZZZEND"); // row 4 now visible
-    expect(afterOne).not.toContain("Alpha this option has an"); // row 0 scrolled off
-    expect(afterOne).not.toContain("Beta"); // still inside the label
+    d.handleInput(PAGE_DOWN);
+    const paged = d.render(80).join("\n");
+    expect(paged).toContain("single word in full ZZZEND"); // row 4 now visible
+    expect(paged).not.toContain("Beta"); // still inside the focused label
 
-    d.handleInput(DOWN);
-    const afterTwo = d.render(80).join("\n");
-    expect(afterTwo).toContain("single word in full ZZZEND"); // still readable
+    // Focus and selection stay on LONG throughout.
+    const onSelect = vi.fn();
+    d.onSelect = onSelect;
+    d.handleInput(ENTER);
+    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
   });
 
-  it("Up reveals preceding lines of the selected long label", () => {
+  it("PageUp reveals preceding rows of the focused long label", () => {
     const d = longFirstDialog();
     renderOnce(d);
-    d.handleInput(DOWN);
-    d.handleInput(DOWN); // viewportTop 2 → rows 2..4 + Beta visible
+    d.handleInput(PAGE_DOWN); // rows 1..4 visible
 
-    d.handleInput(UP); // viewportTop 1 → rows 1..4 visible
+    d.handleInput(PAGE_UP); // rows 0..3 visible again
     const out = d.render(80).join("\n");
-    expect(out).toContain("extremely long answer label"); // row 1 visible again
-    expect(out).not.toContain("Alpha this option has an"); // row 0 hidden again
+    expect(out).toContain("Alpha this option has an");
+    expect(out).not.toContain("single word in full ZZZEND");
   });
 
-  it("keeps selection on the long label while scrolling within it", () => {
-    const d = longFirstDialog();
-    renderOnce(d);
-    const onSelect = vi.fn();
-    d.onSelect = onSelect;
-
-    d.handleInput(DOWN);
-    d.handleInput(DOWN); // viewportTop 2 — still inside the label
-    d.handleInput(ENTER);
-
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
-  });
-});
-
-describe("scrollable option labels — boundary navigation", () => {
-  // Same layout: LONG_LABEL rows 0..4, "Beta" row 5, free-prose rows 6..10.
-  // Selection changes only when the focus row crosses a label boundary
-  // (viewportTop 4 → 5 = LONG → Beta).
-  function longFirstDialog(): BoundedQuestionDialog {
-    return makeDialog({
-      options: [{ label: LONG_LABEL }, { label: "Beta" }],
-      freeTextLabel: LONG_FREE_TEXT_LABEL,
-      maxWidth: 30,
-      maxLines: 6,
-    });
-  }
-
-  it("moves to the next option only at the selected label's bottom boundary", () => {
-    const d = longFirstDialog();
-    renderOnce(d);
-    const onSelect = vi.fn();
-    d.onSelect = onSelect;
-
-    for (let i = 0; i < 4; i++) d.handleInput(DOWN); // rows 1..4 of LONG
-    d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
-
-    d.handleInput(DOWN); // crosses into Beta's first row
-    d.handleInput(ENTER);
-    expect(onSelect.mock.calls[1]![0].value).toContain("Beta");
-  });
-
-  it("moves back to the previous label only at its top boundary", () => {
-    const d = longFirstDialog();
-    renderOnce(d);
-    const onSelect = vi.fn();
-    d.onSelect = onSelect;
-
-    for (let i = 0; i < 5; i++) d.handleInput(DOWN); // focus Beta
-    d.handleInput(UP); // back into LONG's last row
-    d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
-  });
-
-  it("scrolls the long free-prose choice and selects it at its boundary", () => {
-    // items: Beta(1 row), Gamma(1 row), free-prose(5 rows) → rows 0..6.
-    const d = makeDialog({
-      options: [{ label: "Beta" }, { label: "Gamma" }],
-      freeTextLabel: LONG_FREE_TEXT_LABEL,
-      maxWidth: 30,
-      maxLines: 6,
-    });
-    renderOnce(d);
-
-    const initial = d.render(80).join("\n");
-    expect(initial).toContain("✎ Type a really long free");
-    // Last free-prose row ("response") hidden behind the scroll.
-    expect(normalized(d.render(80))).not.toContain("response");
-
-    d.handleInput(DOWN);
-    d.handleInput(DOWN); // viewportTop 2 — inside the free-prose label
-    expect(normalized(d.render(80))).not.toContain("response");
-
-    d.handleInput(DOWN); // viewportTop 3 — last row now visible
-    expect(normalized(d.render(80))).toContain("custom response");
-
-    const onSelect = vi.fn();
-    d.onSelect = onSelect;
-    d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("✎");
-  });
-});
-
-describe("scrollable option labels — label taller than the viewport", () => {
-  it("pages through a taller-than-viewport label and respects the Display budget", () => {
-    // TALL_LABEL wraps to 10 rows (0..9); the 5-row list viewport must page
-    // through all of them while every rendered state stays within the budget.
+  it("pages through a taller-than-viewport label fully and within the budget", () => {
+    // TALL_LABEL wraps to 10 rows (0..9); the 4-row viewport pages 0→4→6.
     const d = makeDialog({
       options: [{ label: TALL_LABEL }, { label: "Beta" }],
       freeTextLabel: LONG_FREE_TEXT_LABEL,
@@ -234,21 +223,23 @@ describe("scrollable option labels — label taller than the viewport", () => {
     });
     renderOnce(d);
 
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 3; i++) {
       const lines = d.render(80);
       expect(lines.length).toBeLessThanOrEqual(6);
       expect(maxLineWidth(lines)).toBeLessThanOrEqual(28);
-      d.handleInput(DOWN);
+      d.handleInput(PAGE_DOWN);
     }
 
-    // After 9 Down presses the label's last row is reachable.
+    // After 3 PageDown presses the 10-row label's last row is reachable.
     expect(d.render(80).join("\n")).toContain("readable TALLEND");
-    d.handleInput(DOWN); // row 10 → Beta
-
     const onSelect = vi.fn();
     d.onSelect = onSelect;
+    d.handleInput(ENTER); // still the TALL item
+    expect(onSelect.mock.calls[0]![0].value).toContain("Tallest");
+
+    d.handleInput(DOWN); // one press moves on to Beta
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Beta");
+    expect(onSelect.mock.calls[1]![0].value).toContain("Beta");
   });
 });
 
@@ -301,10 +292,10 @@ describe("scrollable option labels — short labels unchanged", () => {
 
 describe("multi-select scrollable option labels", () => {
   /**
-   * Multi-select dialog: LONG_LABEL wraps to 5 rows (0..4), "Beta" is row 5,
-   * the free-prose choice rows 6..10, Done row 11 — 12 virtual rows total.
+   * Multi-select dialog: LONG_LABEL wraps to rows 0..4, "Beta" row 5, the
+   * free-prose choice rows 6..10, Done row 11 — 12 wrapped rows total.
    * Header(1) + separator(1) leaves a 4-row list viewport at maxLines 6, so
-   * the long label's final row (4) starts hidden.
+   * the long label's final row starts hidden.
    */
   function multiDialog(overrides?: {
     chosenLabels?: string[];
@@ -323,7 +314,7 @@ describe("multi-select scrollable option labels", () => {
     });
   }
 
-  it("wraps a long multi-select label with no ellipsis and scrolls it into view", () => {
+  it("pages a long multi-select label into view with no ellipsis", () => {
     const d = multiDialog({ maxWidth: 30, maxLines: 6 });
     renderOnce(d);
 
@@ -331,28 +322,27 @@ describe("multi-select scrollable option labels", () => {
     expect(initial).toContain("○ Alpha this option has an"); // row 0
     expect(initial).toContain("so the reader can see every"); // row 3
     expect(initial).not.toContain("single word in full ZZZEND"); // row 4 hidden
-    expect(initial).not.toContain("Beta"); // next option hidden
+    expect(initial).not.toContain("Beta"); // next item hidden
     expect(initial).not.toMatch(/…/);
 
-    d.handleInput(DOWN);
-    const afterOne = d.render(80).join("\n");
-    expect(afterOne).toContain("single word in full ZZZEND"); // row 4 visible
-    expect(afterOne).not.toContain("Beta"); // still inside the long label
-    expect(afterOne).not.toMatch(/…/);
+    d.handleInput(PAGE_DOWN);
+    const paged = d.render(80).join("\n");
+    expect(paged).toContain("single word in full ZZZEND"); // row 4 visible
+    expect(paged).not.toContain("Beta"); // focus unchanged
+    expect(paged).not.toMatch(/…/);
   });
 
-  it("scrolls within the selected multi-select label and toggles only at its boundary", () => {
+  it("toggles the focused item, then one press reaches the next item", () => {
     const d = multiDialog({ maxWidth: 30, maxLines: 6 });
     renderOnce(d);
     const onSelect = vi.fn();
     d.onSelect = onSelect;
 
-    for (let i = 0; i < 4; i++) d.handleInput(DOWN); // row 4 = long label's last row
-    d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha"); // still the long label
+    d.handleInput(ENTER); // toggle the focused LONG item
+    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
 
-    d.handleInput(DOWN); // crosses into Beta's row (5)
-    d.handleInput(ENTER);
+    d.handleInput(DOWN); // one press crosses the whole wrapped label onto Beta
+    d.handleInput(ENTER); // toggle Beta
     expect(onSelect.mock.calls[1]![0].value).toContain("Beta");
   });
 
@@ -362,40 +352,47 @@ describe("multi-select scrollable option labels", () => {
     const onSelect = vi.fn();
     d.onSelect = onSelect;
 
-    for (let i = 0; i < 6; i++) d.handleInput(DOWN); // row 6 = first free-prose row
+    d.handleInput(DOWN); // Beta
+    d.handleInput(DOWN); // free prose — one press despite its wrapped height
     d.handleInput(ENTER);
     expect(onSelect.mock.calls[0]![0].value).toContain("✎");
   });
 
-  it("reaches the Done completion and wraps around", () => {
+  it("reaches the Done completion and wraps around one press at a time", () => {
     const d = multiDialog({ maxWidth: 30, maxLines: 6 });
     renderOnce(d);
     const onSelect = vi.fn();
     d.onSelect = onSelect;
 
-    for (let i = 0; i < 11; i++) d.handleInput(DOWN); // row 11 = Done
+    d.handleInput(DOWN); // Beta
+    d.handleInput(DOWN); // free prose
+    d.handleInput(DOWN); // Done
     d.handleInput(ENTER);
     expect(onSelect.mock.calls[0]![0].value).toBe(DONE_DISPLAY);
 
-    d.handleInput(DOWN); // wraps back to row 0
+    d.handleInput(DOWN); // wraps back to the long first item
     d.handleInput(ENTER);
     expect(onSelect.mock.calls[1]![0].value).toContain("Alpha");
 
-    d.handleInput(UP); // wraps back to row 11
+    d.handleInput(UP); // wraps back to Done
     d.handleInput(ENTER);
     expect(onSelect.mock.calls[2]![0].value).toBe(DONE_DISPLAY);
   });
 
-  it("keeps every multi-select rendered state within the Display budget while scrolling", () => {
+  it("keeps every multi-select rendered state within the Display budget while navigating and paging", () => {
     const d = multiDialog({ maxWidth: 30, maxLines: 6 });
     renderOnce(d);
+    const keys = [PAGE_DOWN, PAGE_DOWN, PAGE_DOWN, DOWN, DOWN, DOWN, DOWN];
 
-    for (let i = 0; i < 10; i++) {
+    for (const key of keys) {
       const lines = d.render(80);
       expect(lines.length).toBeLessThanOrEqual(6);
       expect(maxLineWidth(lines)).toBeLessThanOrEqual(30);
-      d.handleInput(DOWN);
+      d.handleInput(key);
     }
+    const lines = d.render(80);
+    expect(lines.length).toBeLessThanOrEqual(6);
+    expect(maxLineWidth(lines)).toBeLessThanOrEqual(30);
   });
 
   it("renders checkmark state and count-only summary within the budget when chosen", () => {

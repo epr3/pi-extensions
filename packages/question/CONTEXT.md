@@ -25,8 +25,11 @@ _Avoid_: Available display, screen size, terminal height.
 **Bounded question dialog**: Interactive **Structured question** renderer that keeps long question text and selected-answer summaries within a **Display budget** while showing every preset-option label in full through wrapping and selection-aware scrolling.
 _Avoid_: Custom select, better picker, overflow fix.
 
-**Scrollable option label**: A wrapped preset-option label whose lines scroll with Up/Down until its boundary, where navigation continues to the adjacent option.
+**Scrollable option label**: A wrapped preset-option label whose complete text remains available within the **Display budget**.
 _Avoid_: Truncated answer, expanded option.
+
+**Focused preset option**: The one preset option receiving keyboard navigation and confirmation, distinct from options already chosen in a multi-select **Structured question**.
+_Avoid_: Selected option, current row.
 
 ## Relationships
 

@@ -702,6 +702,67 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
   });
 });
 
+// ── Requested initial focus ────────────────────────────────────────────────
+
+describe("BoundedQuestionDialog requested initial focus", () => {
+  const ENTER = "\r";
+
+  it("starts focused on the requested preset option value and shows its checkbox", () => {
+    const d = new BoundedQuestionDialog({
+      title: "Pick any",
+      options: [{ label: "A" }, { label: "B" }, { label: "C" }],
+      freeTextLabel: "Type your answer",
+      freeTextDisplay: "✎ Type your answer — Write a custom response",
+      multiSelect: true,
+      chosenLabels: ["B"],
+      initialFocusValue: "B",
+    });
+    const lines = d.render(80).join("\n");
+    // The focus prefix sits on B and its checkbox reflects the chosen state.
+    expect(lines).toContain("→ ✓ B");
+
+    const onSelect = vi.fn();
+    d.onSelect = onSelect;
+    d.handleInput(ENTER);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0]![0].value).toBe("B");
+  });
+
+  it("falls back to the first item when the requested focus value is unknown", () => {
+    const d = new BoundedQuestionDialog({
+      title: "Pick any",
+      options: [{ label: "A" }, { label: "B" }],
+      freeTextLabel: "Type",
+      freeTextDisplay: "✎ Type — Write a custom response",
+      multiSelect: true,
+      chosenLabels: [],
+      initialFocusValue: "No such option",
+    });
+    const onSelect = vi.fn();
+    d.onSelect = onSelect;
+    d.handleInput(ENTER);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0]![0].value).toBe("A");
+  });
+
+  it("can start focused on the Done completion button", () => {
+    const d = new BoundedQuestionDialog({
+      title: "Pick any",
+      options: [{ label: "A" }, { label: "B" }],
+      freeTextLabel: "Type",
+      freeTextDisplay: "✎ Type — Write a custom response",
+      multiSelect: true,
+      chosenLabels: [],
+      initialFocusValue: DONE_DISPLAY,
+    });
+    const onSelect = vi.fn();
+    d.onSelect = onSelect;
+    d.handleInput(ENTER);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0]![0].value).toBe(DONE_DISPLAY);
+  });
+});
+
 // ── boundedSelectionSummary ─────────────────────────────────────────────
 
 describe("boundedSelectionSummary", () => {
