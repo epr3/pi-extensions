@@ -143,6 +143,10 @@ export default function (pi: ExtensionAPI) {
       if (params.multiSelect) {
         const chosen: Option[] = [];
         let freeText: string | undefined;
+        // Value of the item that should start focused when the dialog is
+        // recreated: the just-toggled preset option, or Done after the
+        // free-prose row is removed.
+        let initialFocusValue: string | undefined;
         for (;;) {
           const boundedDialog = new BoundedQuestionDialog({
             title,
@@ -152,11 +156,13 @@ export default function (pi: ExtensionAPI) {
             multiSelect: true,
             chosenLabels: chosen.map((o) => o.label),
             hasFreeText: !!freeText,
+            initialFocusValue,
           });
           const sel = await showBoundedDialog(ctx.ui, boundedDialog);
           if (sel === undefined || sel === DONE_DISPLAY) break;
           if (sel === freeTextDisplay) {
             freeText = await collectFreeText();
+            initialFocusValue = DONE_DISPLAY;
             continue;
           }
           const opt = byDisplay(sel);
@@ -167,6 +173,9 @@ export default function (pi: ExtensionAPI) {
             } else {
               chosen.push(opt); // select
             }
+            initialFocusValue = sel;
+          } else {
+            initialFocusValue = undefined;
           }
         }
         const labels = chosen.map((o) => o.label);

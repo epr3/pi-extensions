@@ -47,6 +47,12 @@ export interface BoundedQuestionDialogOptions {
   chosenLabels?: string[];
   /** Whether free text has already been used (hides the free-text option). */
   hasFreeText?: boolean;
+  /**
+   * Value of the item that starts focused on the next render (searched in
+   * `SelectItem.value`); defaults to the first item. Lets a redrawn
+   * multi-select dialog keep the user's place after a toggle.
+   */
+  initialFocusValue?: string;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -80,26 +86,34 @@ const LIST_SELECTED_PREFIX = "→ ";
 const LIST_UNSELECTED_PREFIX = "  ";
 
 /**
- * Scrollable option label list: renders every item as a wrapped label and
- * treats all items' wrapped lines as one continuous column. The focused line
- * moves one line per Up/Down press, so a long selected label scrolls until
- * its boundary; the selected item changes only when the focused line crosses
- * an item boundary. At the column ends, Up/Down wraps to the other end.
+ * Selectable answer list: renders every item as a wrapped label and navigates
+ * by item, not by wrapped row. Up/Down moves the focused item exactly one
+ * press at a time (with wraparound) and resets the newly focused item's label
+ * to its first line; PageUp/PageDown pages only the focused item's wrapped
+ * label so an oversized Scrollable option label stays fully readable without
+ * changing focus.
  */
 class WrappedSelectList implements Component {
   private items: SelectItem[];
   private maxVisible: number;
-  /** Virtual-column index of the focused line. */
-  private viewportTop = 0;
-  /** Line counts computed at the most recent render width. */
-  private lastLineCounts: number[] | undefined;
+  /** Index of the focused item. */
+  private focusIndex = 0;
+  /** Lines scrolled past at the top of the focused item's wrapped label. */
+  private readingOffset = 0;
+  /** Wrapped lines computed at the most recent render width. */
+  private lastWrapped: string[][] | undefined;
 
   onSelect?: (item: SelectItem) => void;
   onCancel?: () => void;
 
-  constructor(items: SelectItem[], maxVisible: number) {
+  constructor(items: SelectItem[], maxVisible: number, initialFocusValue?: string) {
     this.items = items;
     this.maxVisible = Math.max(1, maxVisible);
+    const requested =
+      initialFocusValue === undefined
+        ? -1
+        : items.findIndex((item) => item.value === initialFocusValue);
+    this.focusIndex = requested >= 0 ? requested : 0;
   }
 
   invalidate(): void {
@@ -112,22 +126,26 @@ class WrappedSelectList implements Component {
       const text = item.description ? `${item.label} — ${item.description}` : item.label;
       return wrapTextWithAnsi(text, wrapWidth);
     });
+    this.lastWrapped = wrapped;
     const lineCounts = wrapped.map((lines) => lines.length);
-    this.lastLineCounts = lineCounts;
     const total = lineCounts.reduce((sum, n) => sum + n, 0);
     if (total === 0) return [];
 
-    // Width may change between renders; keep the focus inside the column.
-    this.viewportTop = Math.min(this.viewportTop, total - 1);
-    const windowStart = Math.min(this.viewportTop, Math.max(0, total - this.maxVisible));
+    // Width may change between renders; keep the focused label's reading
+    // position inside its own lines.
+    const focusLen = lineCounts[this.focusIndex] ?? 0;
+    this.readingOffset = Math.min(this.readingOffset, Math.max(0, focusLen - this.maxVisible));
+    const focusLineStart = lineCounts.slice(0, this.focusIndex).reduce((sum, n) => sum + n, 0);
+    const focusRow = focusLineStart + this.readingOffset;
+    const windowStart = Math.min(focusRow, Math.max(0, total - this.maxVisible));
 
     const out: string[] = [];
     let lineIndex = 0;
     for (let i = 0; i < this.items.length; i++) {
       for (const line of wrapped[i]!) {
         if (lineIndex >= windowStart && lineIndex < windowStart + this.maxVisible) {
-          const prefix =
-            lineIndex === this.viewportTop ? LIST_SELECTED_PREFIX : LIST_UNSELECTED_PREFIX;
+          // The prefix marks the focused item's first visible label row.
+          const prefix = lineIndex === focusRow ? LIST_SELECTED_PREFIX : LIST_UNSELECTED_PREFIX;
           out.push(prefix + line);
         }
         lineIndex++;
@@ -137,32 +155,28 @@ class WrappedSelectList implements Component {
   }
 
   handleInput(keyData: string): void {
+    if (this.items.length === 0) return;
     const kb = getKeybindings();
-    // Before the first render, fall back to one line per item (item navigation).
-    const lineCounts = this.lastLineCounts ?? this.items.map(() => 1);
-    const total = lineCounts.reduce((sum, n) => sum + n, 0);
-    if (total === 0) return;
 
     if (kb.matches(keyData, "tui.select.up")) {
-      this.viewportTop = (this.viewportTop - 1 + total) % total;
+      this.focusIndex = (this.focusIndex - 1 + this.items.length) % this.items.length;
+      this.readingOffset = 0;
     } else if (kb.matches(keyData, "tui.select.down")) {
-      this.viewportTop = (this.viewportTop + 1) % total;
+      this.focusIndex = (this.focusIndex + 1) % this.items.length;
+      this.readingOffset = 0;
+    } else if (kb.matches(keyData, "tui.select.pageUp")) {
+      this.readingOffset = Math.max(0, this.readingOffset - this.maxVisible);
+    } else if (kb.matches(keyData, "tui.select.pageDown")) {
+      const focusLen = this.lastWrapped?.[this.focusIndex]?.length ?? 1;
+      this.readingOffset = Math.max(
+        0,
+        Math.min(focusLen - this.maxVisible, this.readingOffset + this.maxVisible),
+      );
     } else if (kb.matches(keyData, "tui.select.confirm")) {
-      const item = this.focusedItem(lineCounts);
-      if (item && this.onSelect) this.onSelect(item);
+      if (this.onSelect) this.onSelect(this.items[this.focusIndex]!);
     } else if (kb.matches(keyData, "tui.select.cancel")) {
       if (this.onCancel) this.onCancel();
     }
-  }
-
-  /** The item that owns the focused line. */
-  private focusedItem(lineCounts: number[]): SelectItem | null {
-    let line = 0;
-    for (let i = 0; i < this.items.length; i++) {
-      line += lineCounts[i]!;
-      if (this.viewportTop < line) return this.items[i]!;
-    }
-    return this.items[this.items.length - 1] ?? null;
   }
 }
 
@@ -306,6 +320,7 @@ export class BoundedQuestionDialog implements Component {
   readonly multiSelect: boolean;
   readonly chosenLabels: readonly string[];
   readonly hasFreeText: boolean;
+  readonly initialFocusValue?: string;
 
   private selectList: WrappedSelectList;
   private title: string;
@@ -318,6 +333,7 @@ export class BoundedQuestionDialog implements Component {
     this.multiSelect = opts.multiSelect ?? false;
     this.chosenLabels = opts.chosenLabels ?? [];
     this.hasFreeText = opts.hasFreeText ?? false;
+    this.initialFocusValue = opts.initialFocusValue;
 
     // Build select items based on mode.
     const items: SelectItem[] = this.multiSelect
@@ -338,7 +354,7 @@ export class BoundedQuestionDialog implements Component {
     const separatorBudget = headerLines.length > 0 ? 1 : 0;
     const listBudget = Math.max(1, this.maxLines - headerLines.length - separatorBudget);
 
-    this.selectList = new WrappedSelectList(items, listBudget);
+    this.selectList = new WrappedSelectList(items, listBudget, opts.initialFocusValue);
   }
 
   // ── Component interface ────────────────────────────────────────────

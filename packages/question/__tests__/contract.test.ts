@@ -12,6 +12,7 @@ import type {
   ExtensionUIContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import questionExtension from "../index.ts";
 
 function makeFakeApi(captured: ToolDefinition[]): ExtensionAPI {
@@ -39,15 +40,19 @@ function noUICtx(): ExtensionContext {
  * Also provides no-op onTerminalInput and setWidget for the bounded dialog path.
  * Captured input handlers can be accessed via `sendKey`.
  * Captured editor calls (title + initial) are recorded in `capturedEditorCalls`.
+ * The active bounded dialog's rendered lines are available via `renderWidgetLines`,
+ * so tests can inspect focus and checkbox state after each redraw.
  */
 function scriptedCtx(responses: { select?: string; editor?: string }[]): {
   ctx: ExtensionContext;
   sendKey: (data: string) => void;
   capturedEditorCalls: { title: string; initial: string }[];
+  renderWidgetLines: (width: number) => string[];
 } {
   const queue = [...responses];
   const capturedEditorCalls: { title: string; initial: string }[] = [];
   let inputHandler: ((data: string) => void) | undefined;
+  let widgetRender: (() => Component) | undefined;
   const ui = {
     select: async () => queue.shift()?.select,
     editor: async (title: string, initial: string) => {
@@ -60,12 +65,18 @@ function scriptedCtx(responses: { select?: string; editor?: string }[]): {
         inputHandler = undefined;
       };
     },
-    setWidget: () => {},
+    setWidget: (_id: string, render: (() => Component) | undefined) => {
+      widgetRender = render;
+    },
   } as unknown as ExtensionUIContext;
   return {
     ctx: { hasUI: true, ui } as ExtensionContext,
     sendKey: (data: string) => inputHandler?.(data),
     capturedEditorCalls,
+    renderWidgetLines: (width: number) => {
+      const dialog = widgetRender?.();
+      return dialog ? dialog.render(width) : [];
+    },
   };
 }
 
@@ -333,15 +344,14 @@ describe("question tool contract", () => {
     sendKey(ENTER);
     await new Promise((r) => setTimeout(r, 5));
 
-    // Dialog 2: ✓ A, ○ B, ○ C, ✎ Type..., ✓ Done
+    // Dialog 2: ✓ A, ○ B, ○ C, ✎ Type..., ✓ Done — focus stays on toggled A
     // Select B (navigate down once)
     sendKey(DOWN);
     sendKey(ENTER);
     await new Promise((r) => setTimeout(r, 5));
 
-    // Dialog 3: ✓ A, ✓ B, ○ C, ✎ Type..., ✓ Done
-    // Navigate to Done (4 downs from first item)
-    sendKey(DOWN);
+    // Dialog 3: ✓ A, ✓ B, ○ C, ✎ Type..., ✓ Done — focus stays on toggled B
+    // Navigate to Done (B is index 1, need 3 downs)
     sendKey(DOWN);
     sendKey(DOWN);
     sendKey(DOWN);
@@ -378,12 +388,13 @@ describe("question tool contract", () => {
     await new Promise((r) => setTimeout(r, 5));
 
     // Tool collected free text via editor ("my own" from queue)
-    // Dialog 2 (hasFreeText=true): ○ A, ○ B, ✓ Done (3 items, cursor at A)
-    // Select A
+    // Dialog 2 (hasFreeText=true): ○ A, ○ B, ✓ Done (3 items) — the free-prose
+    // row is gone, so focus lands on Done; wrap up to A and select it.
+    sendKey(DOWN);
     sendKey(ENTER);
     await new Promise((r) => setTimeout(r, 5));
 
-    // Dialog 3: ✓ A, ○ B, ✓ Done (3 items, cursor at A)
+    // Dialog 3: ✓ A, ○ B, ✓ Done (3 items, cursor stays on toggled A)
     // Navigate to Done (index 2, need 2 downs)
     sendKey(DOWN);
     sendKey(DOWN);
@@ -397,6 +408,92 @@ describe("question tool contract", () => {
     };
     expect(details.interaction).toBe("preset");
     expect(details.selectedLabels).toEqual(["A"]);
+    expect(details.freeText).toBe("my own");
+  });
+
+  it("multi-select redraw keeps focus on the toggled preset option with its updated checkbox", async () => {
+    const tool = registerQuestion();
+    const ENTER = "\r";
+    const DOWN = "\x1b[B";
+    const { ctx, sendKey, renderWidgetLines } = scriptedCtx([]);
+    const resultPromise = tool.execute(
+      "tc",
+      {
+        question: "Pick any",
+        multiSelect: true,
+        options: [{ label: "A" }, { label: "B" }, { label: "C" }],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    // Dialog 1: ○ A, ○ B, ○ C, ✎ Type..., ✓ Done. Move to B and toggle it.
+    sendKey(DOWN);
+    sendKey(ENTER);
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Redraw: the toggled B keeps focus and its checkbox shows the new state.
+    const redrawn = renderWidgetLines(80).join("\n");
+    expect(redrawn).toContain("→ ✓ B");
+    expect(redrawn).toContain("○ A");
+
+    // Proving focus via input: confirming again toggles B back off, not A.
+    sendKey(ENTER);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(renderWidgetLines(80).join("\n")).toContain("→ ○ B");
+
+    // Navigate from B to Done (3 downs) and finish with nothing chosen.
+    sendKey(DOWN);
+    sendKey(DOWN);
+    sendKey(DOWN);
+    sendKey(ENTER);
+
+    const result = await resultPromise;
+    const details = result.details as { interaction: string; selectedLabels: string[] };
+    expect(details.interaction).toBe("none");
+    expect(details.selectedLabels).toEqual([]);
+  });
+
+  it("multi-select redraw lands on Done after a Free prose answer removes its row", async () => {
+    const tool = registerQuestion();
+    const ENTER = "\r";
+    const DOWN = "\x1b[B";
+    const { ctx, sendKey, renderWidgetLines } = scriptedCtx([{ editor: "my own" }]);
+    const resultPromise = tool.execute(
+      "tc",
+      {
+        question: "Pick any",
+        multiSelect: true,
+        options: [{ label: "A" }, { label: "B" }],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    // Dialog 1: ○ A, ○ B, ✎ Type..., ✓ Done. Move to free prose and confirm.
+    sendKey(DOWN);
+    sendKey(DOWN);
+    sendKey(ENTER);
+    await new Promise((r) => setTimeout(r, 5));
+
+    // Redraw: the free-prose row is gone and focus sits on Done.
+    const redrawn = renderWidgetLines(80).join("\n");
+    expect(redrawn).toContain("→ ✓ Done");
+    expect(redrawn).toContain("○ A");
+    expect(redrawn).not.toContain("✎");
+
+    // Confirming finishes the interaction from Done.
+    sendKey(ENTER);
+    const result = await resultPromise;
+    const details = result.details as {
+      interaction: string;
+      selectedLabels: string[];
+      freeText?: string;
+    };
+    expect(details.interaction).toBe("freeProse");
+    expect(details.selectedLabels).toEqual([]);
     expect(details.freeText).toBe("my own");
   });
 });
