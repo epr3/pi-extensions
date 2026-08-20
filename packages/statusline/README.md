@@ -23,13 +23,13 @@ The degradation model and meter math live in `zone.ts` (pure: `classify` / `mete
 
 ## The model
 
-The budget is **absolute — and the 120k limit is the caveman boundary itself**, not a pool that zones take percentages of: past 120k tokens you're caveman, full stop, regardless of the model's advertised window (NoLiMa / RULER — the cliff doesn't move with context size). The meter reads exactly full at the cliff. Lower zones split the run-up into thirds; the limit clamps to the nominal window for models smaller than it.
+The budget is **absolute — the 200k limit is the caveman boundary itself**, not a pool that zones take percentages of: at or over 200k tokens you're caveman, full stop, regardless of the model's advertised window (NoLiMa / RULER — the cliff doesn't move with context size). The meter reads exactly full at the cliff. Lower zones split the run-up into thirds; the limit clamps to the nominal window for models smaller than it.
 
 | Zone      | tokens (default) | meaning                                               |
 | --------- | ---------------- | ----------------------------------------------------- |
-| `sharp`   | 0–40k            | full reasoning                                        |
-| `fading`  | 40–80k           | mid-context retrieval slips                           |
-| `risky`   | 80–120k          | compact/hand off soon                                 |
-| `caveman` | >120k            | past the cliff — `/skill:caveman` or `/skill:handoff` |
+| `sharp`   | 0–66.7k         | full reasoning                                        |
+| `fading`  | 66.7–133.3k     | mid-context retrieval slips                           |
+| `risky`   | 133.3–200k      | compact/hand off soon                                 |
+| `caveman` | ≥200k           | at the cliff — `/skill:caveman` or `/skill:handoff`   |
 
-`caveman` the zone and the `caveman` skill are the same idea: the line says when, the skill is the response. Tune via the `statusline` key in Pi's `settings.json` (`effectiveLimit`, `thresholds`, `meterWidth`) or via env — `EFFECTIVE_LIMIT` (tokens, accepts `120k` / `0.5M` / plain integers), `Z_SHARP`, `Z_FADING`, `Z_RISKY` (fractions of the limit) — with env winning.
+`caveman` the zone and the `caveman` skill are the same idea: the line says when, the skill is the response. Tune via the `statusline` key in Pi's `settings.json` (`effectiveLimit`, `thresholds`, `meterWidth`) or via env — `EFFECTIVE_LIMIT` (tokens, accepts `200k` / `0.5M` / plain integers), `Z_SHARP`, `Z_FADING`, `Z_RISKY` (fractions of the limit) — with env winning.

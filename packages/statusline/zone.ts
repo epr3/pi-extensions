@@ -3,7 +3,7 @@
 // *absolute* budget, not a fraction of the advertised window: NoLiMa / RULER
 // show degradation sets in past a fixed token count regardless of how big the
 // nominal window is. Zones therefore map onto a fixed effective limit
-// (default 120k tokens, clamped to the nominal window for small models), and
+// (default 200k tokens, clamped to the nominal window for small models), and
 // each boundary is a real step down, not a gradient.
 
 export type Zone = "sharp" | "fading" | "risky" | "caveman";
@@ -30,10 +30,11 @@ export const ZONE_COLOR: Record<Zone, "success" | "warning" | "error"> = {
   caveman: "error",
 };
 
-// The limit IS the caveman boundary: >120k tokens = caveman, and the meter
-// reads full exactly at the cliff. Lower zones split the run-up into thirds.
+// The limit IS the caveman boundary: at-or-over the limit (default 200k tokens)
+// is caveman, and the meter reads full exactly at the cliff. Lower zones split
+// the run-up into thirds.
 export const ZONE_DEFAULTS: ZoneConfig = {
-  effectiveLimit: 120_000,
+  effectiveLimit: 200_000,
   thresholds: { sharp: 1 / 3, fading: 2 / 3, risky: 1 },
 };
 
@@ -42,7 +43,7 @@ function num(v: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-/** Token counts accept k/M suffixes: "120k", "0.5M", or plain "120000". */
+/** Token counts accept k/M suffixes: "200k", "0.5M", or plain "200000". */
 function tokens(v: string | undefined, fallback: number): number {
   if (!v) return fallback;
   const m = /^(\d+(?:\.\d+)?)\s*([kKmM]?)$/.exec(v.trim());

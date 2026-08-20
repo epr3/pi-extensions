@@ -39,7 +39,7 @@ Two types by design. `explore` is read-only (`read/grep/find/ls`) for codebase d
 
 ### Status line: real Pi APIs
 
-Not a script — a TypeScript extension. Reads live usage from `ctx.getContextUsage()` and the window from `ctx.model.contextWindow`, computes the zone, and renders into the footer with `ctx.ui.setStatus`. Shows folder + branch. Zones `sharp → fading → risky → caveman` with **caveman at an absolute >120k tokens** (the cliff doesn't move with the advertised window; NoLiMa/RULER), lower zones splitting the run-up into thirds. The `caveman` zone shares its name with the `caveman` skill — the line says when, the skill is the response.
+Not a script — a TypeScript extension. Reads live usage from `ctx.getContextUsage()` and the window from `ctx.model.contextWindow`, computes the zone, and renders into the footer with `ctx.ui.setStatus`. Shows folder + branch. Zones `sharp → fading → risky → caveman` with **caveman at or over an absolute 200k tokens** (the cliff doesn't move with the advertised window; NoLiMa/RULER), lower zones splitting the run-up into thirds. The `caveman` zone shares its name with the `caveman` skill — the line says when, the skill is the response.
 
 ## Global rules (one-time, personal)
 

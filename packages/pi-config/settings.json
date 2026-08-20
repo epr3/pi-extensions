@@ -34,8 +34,8 @@
     }
   },
   "statusline": {
-    "//": "Absolute degradation budget: >effectiveLimit tokens = caveman. Thresholds are fractions of the limit. Env EFFECTIVE_LIMIT / Z_* override.",
-    "effectiveLimit": 120000,
+    "//": "Absolute degradation budget: at-or-over the effective limit = caveman. Thresholds are fractions of the limit. Env EFFECTIVE_LIMIT / Z_* override.",
+    "effectiveLimit": 200000,
     "thresholds": {
       "sharp": 0.3333333333,
       "fading": 0.6666666666,

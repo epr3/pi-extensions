@@ -27,8 +27,8 @@ _Avoid_: Overflow, hard limit, danger zone.
 
 ## Example dialogue
 
-> **Dev:** "The model says 200k, so are we safe at 130k?"
-> **Domain expert:** "No — the **Caveman boundary** is absolute, so the **Dumb zone** is already `caveman`."
+> **Dev:** "The model says 300k, so are we safe at 210k?"
+> **Domain expert:** "No — the **Caveman boundary** is absolute (200k), so the **Dumb zone** is already `caveman`."
 
 ## Flagged ambiguities
 
