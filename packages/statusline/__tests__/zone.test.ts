@@ -11,6 +11,7 @@ import {
   formatStatusSegments,
   AWAITING_CONTEXT_TEXT,
   type Zone,
+  type ZoneConfig,
 } from "../zone.ts";
 
 const PARTIAL_GLYPHS = /[\u258F\u258E\u258D\u258C\u258B\u258A\u2589]/; // ▏▎▍▌▋▊▉
@@ -68,6 +69,44 @@ describe("dumb zone classification", () => {
       expect(classify(used, limit * 2).zone).toBe(expected);
     }
   });
+
+  it("ships a 200k default effective limit with equal-third thresholds", () => {
+    expect(ZONE_DEFAULTS.effectiveLimit).toBe(200_000);
+    expect(ZONE_DEFAULTS.thresholds.sharp).toBeCloseTo(1 / 3, 10);
+    expect(ZONE_DEFAULTS.thresholds.fading).toBeCloseTo(2 / 3, 10);
+    expect(ZONE_DEFAULTS.thresholds.risky).toBe(1);
+  });
+
+  it("classifies the default stops at ~66.7k, ~133.3k, and the 200k limit", () => {
+    const cases: [number, Zone][] = [
+      [66_666, "sharp"],
+      [66_667, "fading"],
+      [133_333, "fading"],
+      [133_334, "risky"],
+      [199_999, "risky"],
+      [200_000, "caveman"],
+      [250_000, "caveman"],
+    ];
+    for (const [used, expected] of cases) {
+      expect(classify(used, 400_000).zone).toBe(expected);
+    }
+  });
+
+  it("enters caveman at exactly the effective limit (inclusive boundary)", () => {
+    expect(classify(200_000, 400_000).zone).toBe("caveman");
+    expect(classify(200_000, 200_000).zone).toBe("caveman"); // window == limit
+    expect(classify(199_999, 400_000).zone).toBe("risky"); // just before stays risky
+  });
+
+  it("clamps the effective limit to smaller nominal windows", () => {
+    expect(classify(32_000, 32_000).zone).toBe("caveman"); // effective = 32k
+    expect(classify(31_999, 32_000).zone).toBe("risky");
+  });
+
+  it("does not move the cliff for larger nominal windows", () => {
+    expect(classify(200_000, 1_000_000).zone).toBe("caveman");
+    expect(classify(199_999, 1_000_000).zone).toBe("risky");
+  });
 });
 
 describe("zone presentation", () => {
@@ -121,6 +160,17 @@ describe("environment-derived config", () => {
   it("handles M-suffix and plain number token limits", () => {
     expect(configFromEnv({ EFFECTIVE_LIMIT: "0.5M" }, ZONE_DEFAULTS).effectiveLimit).toBe(500_000);
     expect(configFromEnv({ EFFECTIVE_LIMIT: "80000" }, ZONE_DEFAULTS).effectiveLimit).toBe(80_000);
+  });
+
+  it("applies an env-derived effective limit to classification", () => {
+    const base: ZoneConfig = {
+      effectiveLimit: 100_000,
+      thresholds: ZONE_DEFAULTS.thresholds,
+    };
+    const c = configFromEnv({ EFFECTIVE_LIMIT: "200k" }, base);
+    expect(c.effectiveLimit).toBe(200_000);
+    expect(classify(150_000, 300_000, c).zone).toBe("risky"); // 75% of 200k
+    expect(classify(200_000, 400_000, c).zone).toBe("caveman");
   });
 });
 
