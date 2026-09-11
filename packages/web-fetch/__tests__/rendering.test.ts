@@ -43,6 +43,8 @@ function makeDetails(overrides: Partial<WebFetchDetails> = {}): WebFetchDetails 
     contentType: "text/html",
     contentLength: 0,
     source: "html",
+    artifactPath: "/tmp/pi-web-fetch/sess-1/run-1/call-1-artifact.md",
+    artifactComplete: true,
     ...overrides,
   };
 }
@@ -57,133 +59,73 @@ function makeResult(content: string, details?: WebFetchDetails): AgentToolResult
 // ─── renderWebFetchCall ────────────────────────────────────────────────────
 
 describe("renderWebFetchCall", () => {
-  it("shows the 'Web Fetch' tool label", () => {
+  it("shows the 'Web Fetch' label and the URL", () => {
     expect(callText({ url: "https://example.com/page" })).toContain("Web Fetch");
-  });
-
-  it("shows the URL in the call row", () => {
     expect(callText({ url: "https://example.com/page" })).toContain("example.com/page");
   });
 
-  it("truncates an overlong URL", () => {
+  it("truncates an overlong URL and falls back to '(no URL)'", () => {
     const longUrl = "https://example.com/" + "a".repeat(100);
-    const text = callText({ url: longUrl });
-    expect(text.length).toBeLessThan(longUrl.length);
-  });
-
-  it("falls back to '(no URL)' when no URL is provided", () => {
+    expect(callText({ url: longUrl }).length).toBeLessThan(longUrl.length);
     expect(callText({})).toContain("(no URL)");
   });
 });
 
-// ─── renderWebFetchResult — collapsed (success) ─────────────────────────────
+// ─── renderWebFetchResult — collapsed ───────────────────────────────────────
 
-describe("renderWebFetchResult (collapsed, success)", () => {
+describe("renderWebFetchResult (collapsed)", () => {
   it("shows check + URL + title + content size", () => {
-    const details = makeDetails({
-      url: "https://example.com/article",
-      title: "Test Article",
-      contentLength: 1500,
-    });
-    const result = makeResult("# Test Article\n\nContent here...", details);
-    const text = resultText(result);
+    const details = makeDetails({ title: "Test Article", contentLength: 1500 });
+    const text = resultText(makeResult("Content...", details));
 
     expect(text).toContain("✓");
     expect(text).toContain("Test Article");
     expect(text).toContain("1500 chars");
   });
 
-  it("renders without a title when none is provided", () => {
-    const details = makeDetails({
-      url: "https://example.com/plain",
-      title: "",
-      contentLength: 500,
-    });
-    const result = makeResult("Source: ...", details);
-    const text = resultText(result);
-
-    expect(text).toContain("✓");
-    expect(text).toContain("500 chars");
-  });
-});
-
-// ─── renderWebFetchResult — collapsed PDF and fallback badges ──────────────
-
-describe("renderWebFetchResult (collapsed, PDF and fallback badges)", () => {
   it("shows the [PDF] badge for a PDF result", () => {
-    const details = makeDetails({
-      url: "https://example.com/doc.pdf",
-      source: "pdf",
-      pageCount: 5,
-    });
-    const result = makeResult("Source: url\n\nPDF text", details);
-    const text = resultText(result);
-
-    expect(text).toContain("[PDF]");
-    expect(text).toContain("✓");
+    const details = makeDetails({ url: "https://example.com/doc.pdf", source: "pdf", pageCount: 5 });
+    expect(resultText(makeResult("PDF text", details))).toContain("[PDF]");
   });
 
-  it("shows the [Fallback] badge for a Jina-fallback result", () => {
-    const details = makeDetails({
-      url: "https://example.com/dynamic",
-      source: "fallback",
-    });
-    const result = makeResult("Fallback content", details);
-    const text = resultText(result);
-
-    expect(text).toContain("[Fallback]");
+  it("renders without a title when none is provided", () => {
+    const details = makeDetails({ title: "", contentLength: 500 });
+    expect(resultText(makeResult("Source: ...", details))).toContain("500 chars");
   });
 });
 
-// ─── renderWebFetchResult — collapsed (error) ──────────────────────────────
-
-describe("renderWebFetchResult (collapsed, error)", () => {
-  it("shows check + URL (error is content-driven in collapsed mode)", () => {
-    const details = makeDetails({
-      url: "https://example.com/error",
-      contentLength: 0,
-    });
-    const result = makeResult("Error text", details);
-    const text = resultText(result);
-
-    expect(text).toContain("✓");
-    expect(text).toContain("example.com/error");
-  });
-});
-
-// ─── renderWebFetchResult — expanded ───────────────────────────────────────
+// ─── renderWebFetchResult — expanded ────────────────────────────────────────
 
 describe("renderWebFetchResult (expanded)", () => {
-  it("shows title, URL, content-type, size, and body", () => {
-    const content =
-      "# Article Title\n\nSource: https://example.com/article\n\nFull article text here.";
+  it("shows title, URL, content-type, size, artifact path, and body", () => {
+    const content = "# Article Title\n\nSource: https://example.com/article\n\nFull text here.";
     const details = makeDetails({
       url: "https://example.com/article",
       title: "Article Title",
       contentType: "text/html",
       contentLength: 1500,
+      artifactPath: "/tmp/pi-web-fetch/sess-1/run/c1.md",
     });
-    const result = makeResult(content, details);
-    const text = resultText(result, false, true);
+    const text = resultText(makeResult(content, details), false, true);
 
     expect(text).toContain("Article Title");
-    expect(text).toContain("https://example.com/article");
     expect(text).toContain("Content-Type: text/html");
     expect(text).toContain("Content: 1500 chars");
-    expect(text).toContain("Full article text here");
+    expect(text).toContain("Artifact: /tmp/pi-web-fetch/sess-1/run/c1.md");
+    expect(text).toContain("Full text here");
+  });
+
+  it("explains artifact session lifetime", () => {
+    const details = makeDetails({ artifactPath: "/tmp/pi-web-fetch/sess-1/run/c1.md" });
+    const text = resultText(makeResult("Body", details), false, true);
+
+    expect(text).toMatch(/Deleted when you leave this session/);
   });
 
   it("truncates a long body with an ellipsis", () => {
     const longBody = "Paragraph text. ".repeat(150);
-    const details = makeDetails({
-      url: "https://example.com/long",
-      title: "Long Page",
-      contentLength: longBody.length + 50,
-    });
-    const result = makeResult(longBody, details);
-    const text = resultText(result, false, true);
-
-    expect(text).toContain("…");
+    const details = makeDetails({ contentLength: longBody.length + 50 });
+    expect(resultText(makeResult(longBody, details), false, true)).toContain("…");
   });
 
   it("shows page count for a PDF result", () => {
@@ -195,15 +137,14 @@ describe("renderWebFetchResult (expanded)", () => {
       source: "pdf",
       pageCount: 15,
     });
-    const result = makeResult("PDF text content", details);
-    const text = resultText(result, false, true);
+    const text = resultText(makeResult("PDF text content", details), false, true);
 
     expect(text).toContain("[pdf]");
     expect(text).toContain("Pages: 15");
     expect(text).not.toContain("truncated");
   });
 
-  it("shows truncation note when a PDF exceeds the page limit", () => {
+  it("shows truncation note and partial-artifact warning when a PDF exceeds the limit", () => {
     const details = makeDetails({
       url: "https://example.com/large.pdf",
       title: "Large PDF",
@@ -212,26 +153,19 @@ describe("renderWebFetchResult (expanded)", () => {
       source: "pdf",
       pageCount: 100,
       truncated: true,
+      artifactComplete: false,
     });
-    const result = makeResult("Truncated PDF content", details);
-    const text = resultText(result, false, true);
+    const text = resultText(makeResult("Truncated PDF content", details), false, true);
 
     expect(text).toContain("Pages: 100");
     expect(text).toContain("truncated");
+    expect(text).toContain("Warning: artifact is partial");
   });
 
-  it("shows the [fallback] source tag for a Jina-fallback result", () => {
-    const details = makeDetails({
-      url: "https://example.com/dynamic",
-      title: "Dynamic Page",
-      contentType: "text/markdown",
-      contentLength: 2000,
-      source: "fallback",
-    });
-    const result = makeResult("Fallback markdown content", details);
-    const text = resultText(result, false, true);
-
-    expect(text).toContain("[fallback]");
+  it("does not warn about a partial artifact when it is complete", () => {
+    const details = makeDetails({});
+    const text = resultText(makeResult("Body", details), false, true);
+    expect(text).not.toContain("artifact is partial");
   });
 });
 
@@ -240,32 +174,19 @@ describe("renderWebFetchResult (expanded)", () => {
 describe("renderWebFetchResult — extraction warning", () => {
   const WARNING = "Very little content extracted (30 chars)";
 
-  it("shows the warning in expanded mode", () => {
-    const details = makeDetails({
-      url: "https://example.com/dynamic",
-      title: "Dynamic Page",
-      contentType: "text/html",
-      contentLength: 30,
-      extractionWarning: WARNING,
-    });
-    const result = makeResult("Source: url\n\nOnly a little text", details);
-    const text = resultText(result, false, true);
-
-    expect(text).toContain("Warning:");
-    expect(text).toContain(WARNING);
-  });
-
-  it("hides the warning in collapsed mode", () => {
+  it("shows the warning in expanded mode and hides it when collapsed", () => {
     const details = makeDetails({
       url: "https://example.com/dynamic",
       title: "Dynamic",
       contentLength: 30,
       extractionWarning: WARNING,
     });
-    const result = makeResult("Short", details);
-    const text = resultText(result, false, false);
+    const expanded = resultText(makeResult("Short", details), false, true);
+    const collapsed = resultText(makeResult("Short", details), false, false);
 
-    expect(text).not.toContain("Warning:");
+    expect(expanded).toContain("Warning:");
+    expect(expanded).toContain(WARNING);
+    expect(collapsed).not.toContain("Warning:");
   });
 });
 

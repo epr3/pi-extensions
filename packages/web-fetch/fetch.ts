@@ -8,13 +8,17 @@ export interface WebFetchDetails {
   /** Character count of extracted text content. */
   contentLength: number;
   /** Where the content was extracted from. */
-  source: "html" | "text" | "pdf" | "fallback";
+  source: "html" | "text" | "pdf";
   /** Error message if the fetch succeeded but extraction was poor. */
   extractionWarning?: string;
   /** Page count for PDFs. */
   pageCount?: number;
   /** Whether PDF content was truncated (page limit hit). */
   truncated?: boolean;
+  /** Absolute path of the finalized Readable artifact on disk. */
+  artifactPath: string;
+  /** Whether the artifact contains the full converted source within limits. */
+  artifactComplete: boolean;
 }
 
 /** Options for fetching a URL. */
@@ -34,8 +38,8 @@ export interface FetchOptions {
   extractPdfFn?: PdfExtractFn;
   /** Maximum pages to extract from a PDF (default 50). */
   pdfPageLimit?: number;
-  /** Whether to disable Jina Reader fallback. */
-  disableFallback?: boolean;
+  /** When provided, body bytes are streamed here instead of accumulated. */
+  sink?: (chunk: Uint8Array) => Promise<void>;
 }
 
 /**
@@ -88,7 +92,7 @@ const BINARY_TYPE_RE =
 const DEFAULT_PDF_PAGE_LIMIT = 50;
 const DEFAULT_PDF_MAX_BYTES = 10 * 1024 * 1024; // 10 MB for PDFs
 
-const JINA_READER_BASE_URL = "https://r.jina.ai";
+export { DEFAULT_PDF_PAGE_LIMIT };
 
 // ─── URL validation (pure) ───────────────────────────────────────────────────
 
@@ -294,56 +298,6 @@ export function defaultPdfExtractFn(
   };
 }
 
-// ─── Jina Reader fallback ───────────────────────────────────────────────────
-
-/**
- * Try to fetch a URL through Jina Reader for better extraction of
- * JavaScript-rendered or otherwise difficult pages.
- *
- * Prefixes the URL with the Jina Reader endpoint and returns the
- * markdown response. On any failure (HTTP error, network error, timeout)
- * returns null so the caller can fall back to the original extraction.
- *
- * @param url - The original URL to fetch via Jina
- * @param options - Fetch options (fetchFn, signal for testability)
- * @returns Markdown content or null on failure
- */
-export async function tryJinaFallback(
-  url: string,
-  options: FetchOptions = {},
-): Promise<string | null> {
-  const fetchFn = options.fetchFn ?? globalThis.fetch;
-  const timeoutMs = 15_000; // shorter timeout for fallback
-  const jinaUrl = `${JINA_READER_BASE_URL}/${url}`;
-
-  const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-
-  const signal = options.signal
-    ? anySignal([options.signal, timeoutController.signal])
-    : timeoutController.signal;
-
-  try {
-    const response = await fetchFn(jinaUrl, {
-      signal,
-      headers: {
-        Accept: "text/plain,text/markdown,*/*;q=0.8",
-      },
-    });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const text = await response.text();
-    return text.trim() || null;
-  } catch {
-    clearTimeout(timeoutId);
-    return null;
-  }
-}
-
 // ─── Fetch (IO, injected for testability) ────────────────────────────────────
 
 /**
@@ -425,7 +379,9 @@ export async function fetchUrl(
     }
   }
 
-  // Read body with size cap
+  // Read body with size cap. When a sink is provided, bytes are streamed to it
+  // incrementally (disk-backed download) instead of accumulated in memory;
+  // the cap is enforced identically in both modes.
   let body: string;
   try {
     const reader = response.body?.getReader();
@@ -443,15 +399,33 @@ export async function fetchUrl(
             `Response exceeded size cap: read over ${effectiveMaxBytes} bytes`,
           );
         }
-        chunks.push(value);
+        if (options.sink) {
+          await options.sink(value);
+        } else {
+          chunks.push(value);
+        }
       }
-      const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
-      let offset = 0;
-      for (const chunk of chunks) {
-        combined.set(chunk, offset);
-        offset += chunk.byteLength;
+      if (options.sink) {
+        body = "";
+      } else {
+        const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        body = new TextDecoder().decode(combined);
       }
-      body = new TextDecoder().decode(combined);
+    } else if (options.sink) {
+      const text = await response.text();
+      if (text.length > effectiveMaxBytes) {
+        throw new WebFetchError(
+          url.toString(),
+          `Response too large: ${text.length} bytes (max ${effectiveMaxBytes} bytes)`,
+        );
+      }
+      await options.sink(new TextEncoder().encode(text));
+      body = "";
     } else {
       body = await response.text();
       if (body.length > effectiveMaxBytes) {
