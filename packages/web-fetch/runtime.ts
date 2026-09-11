@@ -1,6 +1,7 @@
 // ─── Runtime knobs (test seam) ───────────────────────────────────────────────
 
 import type { PdfExtractFn } from "./fetch.ts";
+import type { ProcessLiveness } from "./liveness.ts";
 
 /**
  * Runtime implementations the tool uses. In production every value is
@@ -14,6 +15,7 @@ export interface RuntimeKnobs {
   pdfPageLimit?: number;
   fetchTimeoutMs?: number;
   storageRoot?: string;
+  processLiveness?: ProcessLiveness;
 }
 
 const knobs: RuntimeKnobs = {};

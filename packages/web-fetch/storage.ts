@@ -2,9 +2,10 @@
 
 import { randomUUID } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
+import { DefaultProcessLiveness, type ProcessIdentity, type ProcessLiveness } from "./liveness.ts";
 
 /**
  * Private extension-owned temporary area name. All downloads and Readable
@@ -26,10 +27,15 @@ export interface OwnerRecord {
   sessionId: string;
   runId: string;
   pid: number;
+  /** ISO 8601 process start time for conservative PID-reuse detection. */
+  pidStartTime?: string;
   createdAt: string;
   artifacts: { path: string; kind: ArtifactKind; complete: boolean }[];
   incomplete: string[];
 }
+
+/** Classification of an on-disk ownership record for cleanup decisions. */
+type OwnerStatus = "live" | "abandoned" | "ambiguous";
 
 /** Thrown when an in-flight call must stop because its owner left or was cancelled. */
 export class AbandonedCallError extends Error {
@@ -166,12 +172,14 @@ export class SessionRun {
   readonly tmpDir: string;
   private record: OwnerRecord;
   private left = false;
+  private liveness: ProcessLiveness;
 
-  constructor(area: string, sessionId: string, runId: string) {
+  constructor(area: string, sessionId: string, runId: string, liveness: ProcessLiveness) {
     this.sessionId = sessionId;
     this.runId = runId;
     this.dir = join(area, safeSegment(sessionId, "session"), runId);
     this.tmpDir = join(this.dir, ".tmp");
+    this.liveness = liveness;
     this.record = {
       schema: 1,
       sessionId,
@@ -193,6 +201,8 @@ export class SessionRun {
       throw new AbandonedCallError(this.sessionId, this.runId, "run already left");
     }
     await mkdir(this.tmpDir, { recursive: true });
+    const identity = await this.liveness.current();
+    this.record.pidStartTime = identity.startTime;
     await this.persistRecord();
   }
 
@@ -271,6 +281,7 @@ export interface CleanupErrorEntry {
 export class ArtifactStore {
   readonly runId: string;
   readonly area: string;
+  readonly liveness: ProcessLiveness;
   private runs = new Map<string, SessionRun>();
   private knownSessions = new Set<string>();
   private lastSessionId: string | undefined;
@@ -282,9 +293,23 @@ export class ArtifactStore {
   /** Observable cleanup failures (test seam + diagnostics). */
   readonly cleanupErrors: CleanupErrorEntry[] = [];
 
-  constructor(area?: string) {
+  private initSweepPromise: Promise<void> | undefined;
+
+  constructor(area?: string, liveness?: ProcessLiveness) {
     this.area = area ?? defaultStorageRoot();
     this.runId = randomUUID();
+    this.liveness = liveness ?? new DefaultProcessLiveness();
+    // Sweep once at extension init as an early opportunity to reclaim crash
+    // leftovers. The first fetch also sweeps, so an init-sweep failure is
+    // still retryable.
+    this.initSweepPromise = this.sweepAbandoned().catch((err) => this.recordSweepError(err));
+  }
+
+  /** Test seam: await the init sweep started by the constructor. */
+  async waitForInitSweep(): Promise<void> {
+    if (this.initSweepPromise) {
+      await this.initSweepPromise;
+    }
   }
 
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -310,20 +335,35 @@ export class ArtifactStore {
   /**
    * Begin a call in a session, creating (or reusing) that session's run.
    * The run directory is created lazily by `ensureRunDir`.
+   *
+   * This is serialized with session leave/reload so a call cannot be created
+   * while the session is being abandoned. It also sweeps demonstrably
+   * abandoned runs, making every fetch an opportunity to reclaim crash
+   * leftovers.
    */
-  beginCall(sessionId: string, callId: string, signal: AbortSignal | undefined): PendingCall {
-    const key = sessionId || this.lastSessionId || `no-session-${this.runId}`;
-    this.observeSession(key);
-    let run = this.runs.get(key);
-    // A left run (failed cleanup or reload) must not block fresh fetches in a
-    // still-active session; start a fresh run directory for it.
-    if (!run || run.isLeft) {
-      run = new SessionRun(this.area, key, this.runId);
-      this.runs.set(key, run);
-    }
-    const call = new PendingCall(callId, key, run.runId, signal);
-    this.activeCalls.add(call);
-    return call;
+  async beginCall(sessionId: string, callId: string, signal: AbortSignal | undefined): Promise<PendingCall> {
+    return this.withLock(async () => {
+      // Wait for the init sweep once, then sweep again before creating work so
+      // every fetch is an opportunity to reclaim abandoned runs.
+      if (this.initSweepPromise) {
+        await this.initSweepPromise;
+        this.initSweepPromise = undefined;
+      }
+      await this.sweepAbandoned().catch((err) => this.recordSweepError(err));
+
+      const key = sessionId || this.lastSessionId || `no-session-${this.runId}`;
+      this.observeSession(key);
+      let run = this.runs.get(key);
+      // A left run (failed cleanup or reload) must not block fresh fetches in a
+      // still-active session; start a fresh run directory for it.
+      if (!run || run.isLeft) {
+        run = new SessionRun(this.area, key, this.runId, this.liveness);
+        this.runs.set(key, run);
+      }
+      const call = new PendingCall(callId, key, run.runId, signal);
+      this.activeCalls.add(call);
+      return call;
+    });
   }
 
   /** Stop tracking a finished call (success, failure, or abandonment). */
@@ -434,7 +474,7 @@ export class ArtifactStore {
           this.knownSessions.delete(sid);
           if (this.lastSessionId === sid) this.lastSessionId = undefined;
         } catch (err) {
-          const error = err instanceof Error ? err : new Error(String(err));
+          const error = normalizeError(err);
           this.cleanupErrors.push({ sessionId: sid, error });
           // Ownership info stays on disk for the later retry/sweeping slice;
           // the next leave attempt retries the same directory.
@@ -443,4 +483,126 @@ export class ArtifactStore {
       }
     });
   }
+
+  // ─── Crash/abandoned-run sweep ─────────────────────────────────────────────
+
+  /**
+   * Scan the extension-owned area for runs whose owning process is
+   * demonstrably dead, and remove them. Runs owned by the current extension
+   * instance, other live processes, or ambiguous owners are preserved.
+   */
+  private async sweepAbandoned(): Promise<void> {
+    const current = await this.liveness.current();
+    let sessionNames: string[];
+    try {
+      sessionNames = await readdir(this.area);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return; // storage area does not exist yet
+      throw err;
+    }
+
+    for (const sessionName of sessionNames) {
+      const sessionPath = join(this.area, sessionName);
+      let runNames: string[];
+      try {
+        runNames = await readdir(sessionPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") continue;
+        throw err;
+      }
+
+      let anyPreserved = false;
+      const abandonedRuns: string[] = [];
+      for (const runName of runNames) {
+        const runPath = join(sessionPath, runName);
+        const status = await this.classifyRun(runPath, current);
+        if (status === "abandoned") {
+          abandonedRuns.push(runPath);
+        } else {
+          anyPreserved = true;
+        }
+      }
+
+      for (const runPath of abandonedRuns) {
+        try {
+          await rm(runPath, { recursive: true, force: true });
+        } catch (err) {
+          const error = normalizeError(err);
+          this.cleanupErrors.push({ sessionId: sessionName, error });
+          console.error(
+            `web_fetch: abandoned-run cleanup failed for ${runPath}: ${error.message}`,
+          );
+          anyPreserved = true; // failed run still exists, so session is not empty
+        }
+      }
+
+      // Only remove the session directory when every run inside it was
+      // abandoned and successfully removed. This avoids deleting concurrent
+      // live work or unknown/ambiguous directories.
+      if (!anyPreserved) {
+        try {
+          await rm(sessionPath, { recursive: true, force: true });
+        } catch (err) {
+          const error = normalizeError(err);
+          this.cleanupErrors.push({ sessionId: sessionName, error });
+          console.error(
+            `web_fetch: abandoned-session cleanup failed for ${sessionPath}: ${error.message}`,
+          );
+        }
+      }
+    }
+  }
+
+  private async classifyRun(runPath: string, current: ProcessIdentity): Promise<OwnerStatus> {
+    const recordPath = join(runPath, "owner.json");
+    let raw: string;
+    try {
+      raw = await readFile(recordPath, "utf8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // A run directory without a readable ownership record may be brand-new
+      // work from a concurrent process; preserve it rather than risk deletion.
+      if (code === "ENOENT" || code === "EACCES" || code === "EPERM") {
+        return "ambiguous";
+      }
+      throw err;
+    }
+
+    let record: OwnerRecord;
+    try {
+      record = JSON.parse(raw) as OwnerRecord;
+    } catch {
+      return "ambiguous";
+    }
+
+    // The current extension instance always owns runs created with its runId.
+    if (record.runId === this.runId && record.pid === current.pid) {
+      return "live";
+    }
+
+    // Same pid but a different runId means the owning extension instance is
+    // gone (e.g. replaced/reloaded in the same process) — the run is abandoned.
+    if (record.pid === current.pid) {
+      return "abandoned";
+    }
+
+    // For remote pids, rely on the injected liveness checker. "unknown" is
+    // treated as ambiguous and preserved; age alone never authorizes deletion.
+    const verdict = await this.liveness.check(record.pid, record.pidStartTime);
+    if (verdict === "dead") return "abandoned";
+    if (verdict === "live") return "live";
+    return "ambiguous";
+  }
+
+  private recordSweepError(err: unknown): void {
+    const error = normalizeError(err);
+    this.cleanupErrors.push({ sessionId: "__sweep__", error });
+    console.error(`web_fetch: abandoned-run sweep failed: ${error.message}`);
+  }
+}
+
+function normalizeError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
 }

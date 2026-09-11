@@ -69,6 +69,7 @@ web_fetch({ url: "https://example.com/robots.txt" });
 | Binary content type (images, audio, video, archives) | Error with content-type explanation; PDFs are handled, not rejected          |
 | Response exceeds size cap (512 KiB ordinary, 10 MiB PDF) | Error with byte counts; partial downloads are removed                   |
 | JavaScript-only / unextractable page                 | Actionable error — **no** alternate-service (Jina/browser) fallback          |
+| Process crash leaves abandoned artifacts             | Swept on next extension init/fetch; live/ambiguous owners preserved          |
 | Redirects                                            | Followed automatically                                                       |
 
 ## Readable artifacts
@@ -88,6 +89,12 @@ Artifact: /tmp/pi-web-fetch/<session>/<run>/<call>-artifact.md
   deleted when you leave, replace, fork, or quit that session. Navigation
   within the same session keeps them, and a reload keeps them for the
   continuing session.
+- **Graceful cleanup vs crash reclamation**: when you leave, replace, fork, or
+  quit a session, the extension removes the session's owned files immediately.
+  If the owning process crashes instead, those files are reclaimed the next
+  time the extension initializes or performs a fetch — there is no
+  always-running cleanup service. Live and ambiguously owned sessions are never
+  deleted.
 - **Old transcripts**: a path from an earlier session becomes stale once that
   session ends. **Refetch the URL** to regenerate the artifact — resuming a
   session does not restore deleted source files.
@@ -121,8 +128,9 @@ packages/web-fetch/
 ├── fetch.ts      # URL validation, fetch logic, content-type detection,
 │                 # streaming sink download, PDF extraction, HTML→Markdown
 ├── storage.ts    # Disk-backed downloads, session/run ownership, Readable
-│                 # artifacts, artifact cleanup
-├── runtime.ts    # Test-only runtime knobs (mocked HTTP/PDF/storage root)
+│                 # artifacts, artifact cleanup (normal + crash sweep)
+├── liveness.ts   # Process identity / liveness policy for abandoned-run detection
+├── runtime.ts    # Test-only runtime knobs (mocked HTTP/PDF/storage root/liveness)
 ├── render.ts     # TUI rendering for call/result rows
 ├── package.json
 ├── tsconfig.json
@@ -137,8 +145,16 @@ packages/web-fetch/
   bytes incrementally (Disk-backed download) instead of accumulating them, and
   an optional `fetchFn`/`extractPdfFn` for testability.
 - `storage.ts` owns the private temporary area: one run per extension load,
-  session-keyed directories, an on-disk ownership record (kept for crash
-  cleanup in a later slice), and idempotent cleanup on session leave.
+  session-keyed directories, an on-disk ownership record, idempotent cleanup
+  on session leave, and crash/abandoned-run sweep at init and before each
+  fetch. Deletion stays inside the extension-owned area; live and ambiguous
+  owners are preserved.
+- `liveness.ts` defines the process-identity policy used by the sweep. The
+  default checker treats the current process as live and remote pids as dead
+  only when they no longer exist or their start time differs from the
+  ownership record. Uninterpretable owners are classified as ambiguous and
+  preserved. On Windows the start-time check is unavailable, so remote pids
+  are always treated as ambiguous.
 - `index.ts` wires the tool using Pi's `ExtensionAPI.registerTool` with the
   dual-result contract (stable `content` text for the model, structured
   `details` for renderers), and subscribes to `session_start` /
@@ -166,6 +182,9 @@ events:
   cannot recreate files or publish stale artifact paths; concurrent calls get
   distinct artifacts; concurrent sessions keep separate owned areas
 - Cleanup failure observability with retry
+- Crash/abandoned-run cleanup: abandoned runs are swept, live/ambiguous owners
+  are preserved, PID reuse is handled conservatively, and cleanup failures are
+  retried on later fetches
 - Call/result rendering (collapsed and expanded), artifact and warning display
 
 Run with:
