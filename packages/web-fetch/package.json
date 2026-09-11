@@ -17,9 +17,14 @@
     "@earendil-works/pi-ai": "catalog:",
     "@earendil-works/pi-coding-agent": "catalog:",
     "@earendil-works/pi-tui": "catalog:",
+    "jsdom": "catalog:",
+    "turndown": "catalog:",
+    "turndown-plugin-gfm": "catalog:",
     "typebox": "catalog:"
   },
   "devDependencies": {
+    "@types/jsdom": "catalog:",
+    "@types/turndown": "catalog:",
     "typescript": "catalog:"
   }
 }
