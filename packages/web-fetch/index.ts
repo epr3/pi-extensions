@@ -1,5 +1,7 @@
-import type { ExtensionAPI, AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   validateUrl,
   fetchUrl,
@@ -10,10 +12,13 @@ import {
   normalizeContentType,
   processPlainText,
   extractPdfContent,
-  tryJinaFallback,
   WebFetchError,
+  DEFAULT_PDF_PAGE_LIMIT,
 } from "./fetch.ts";
-import type { WebFetchDetails, FetchOptions } from "./fetch.ts";
+import type { WebFetchDetails, FetchOptions, PdfExtractFn } from "./fetch.ts";
+import { ArtifactStore, FileSink } from "./storage.ts";
+import type { ArtifactKind } from "./storage.ts";
+import { getRuntimeKnobs } from "./runtime.ts";
 import { renderWebFetchCall, renderWebFetchResult } from "./render.ts";
 
 // ─── Dual-result helper ──────────────────────────────────────────────────────
@@ -30,145 +35,217 @@ const parameters = Type.Object({
   }),
 });
 
+// ─── Session identity ────────────────────────────────────────────────────────
+
+function resolveSessionId(ctx: ExtensionContext): string {
+  const sid = ctx.sessionManager?.getSessionId?.();
+  return typeof sid === "string" ? sid : "";
+}
+
+// ─── Converted source (per content type) ─────────────────────────────────────
+
+interface ConvertedSource {
+  kind: ArtifactKind;
+  /** Converted source text — becomes the Readable artifact's content. */
+  text: string;
+  title?: string;
+  warning?: string;
+  pageCount?: number;
+  truncated?: boolean;
+  source: WebFetchDetails["source"];
+  contentType: string;
+}
+
+function convertHtml(body: string, urlStr: string): ConvertedSource {
+  const { title, content, extractionWarning } = extractHtmlContent(body, urlStr);
+  if (!content.trim()) {
+    throw new WebFetchError(
+      urlStr,
+      "Failed to extract readable content — the page may be JavaScript-rendered or empty",
+    );
+  }
+  return {
+    kind: "markdown",
+    text: content,
+    title,
+    warning: extractionWarning,
+    source: "html",
+    contentType: "text/html",
+  };
+}
+
+function convertPdf(
+  body: string,
+  urlStr: string,
+  extractPdfFn: PdfExtractFn | undefined,
+  pageLimit: number,
+): ConvertedSource {
+  const result = extractPdfContent(body, urlStr, { extractPdfFn, pageLimit });
+  if (!result.text) {
+    throw new WebFetchError(
+      urlStr,
+      "Failed to extract text from PDF — the file may be compressed, scanned, or not a valid PDF",
+    );
+  }
+  return {
+    kind: "markdown",
+    text: result.text,
+    pageCount: result.pageCount,
+    truncated: result.truncated ?? false,
+    source: "pdf",
+    contentType: "application/pdf",
+  };
+}
+
+function convertText(body: string, contentType: string): ConvertedSource {
+  return { kind: "text", text: processPlainText(body), source: "text", contentType };
+}
+
 // ─── Extension entry point ───────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+  const store = new ArtifactStore(getRuntimeKnobs().storageRoot);
+
+  // Lifecycle: artifacts belong to the session that created them. Leaving,
+  // replacing, or shutting down the session removes them; in-session
+  // navigation does not, and a reload keeps them for the continuing session.
+  pi.on("session_start", (_event, ctx) => {
+    store.observeSession(resolveSessionId(ctx));
+  });
+
+  pi.on("session_shutdown", async (event, ctx) => {
+    if (event.reason === "reload") {
+      // Same session continues under a fresh runtime; keep its artifacts but
+      // stop any in-flight work from publishing stale results.
+      store.abandonPending();
+      return;
+    }
+    await store.leaveSession(resolveSessionId(ctx));
+  });
+
   pi.registerTool({
     name: "web_fetch",
     label: "Web Fetch",
     description:
-      "Fetch a URL and extract readable content as Markdown. " +
-      "Validates the URL, fetches it with a browser-like user agent, enforces a timeout " +
-      "and response-size cap, and converts HTML pages into clean Markdown by extracting " +
-      "article-like content rather than raw page chrome. " +
-      "Detects and extracts text from PDFs (up to 10MB, 50 pages). " +
-      "For JavaScript-rendered or extraction-resistant HTML pages, automatically falls back " +
-      "to Jina Reader for better markdown extraction. " +
-      "Plain-text responses pass through as-is. " +
-      "Unsupported binary media types produce a clear error. " +
-      "Short or incomplete extraction produces an actionable warning.",
+      "Fetch a URL and extract readable content as Markdown or text. " +
+      "Validates the URL, fetches it with a browser-like user agent, enforces a 30-second timeout " +
+      "and response-size cap, and writes the response incrementally to a temporary download file for conversion. " +
+      "HTML pages are converted to Markdown, PDFs up to 10MB and 50 pages are extracted, " +
+      "and plain-text/Markdown responses pass through. " +
+      "Each successful call also writes a Readable artifact file with the converted source " +
+      "and returns its absolute path. Artifacts live only for the creating session: they are " +
+      "deleted when you leave or end that session, so a path from an old transcript is stale — " +
+      "refetch the URL to regenerate it. " +
+      "Unsupported binary media types, unusable extraction, and exceeded limits produce clear errors.",
     promptSnippet: "Fetch a URL and return its content as readable Markdown",
     promptGuidelines: [
       "Use web_fetch to retrieve the full content of a web page for analysis, summarization, or fact-checking.",
-      "PDFs are extracted up to 10MB and 50 pages; longer PDFs include a truncation notice.",
+      "PDFs are extracted up to 10MB and 50 pages; longer PDFs include a truncation notice and a partial artifact.",
       "Combine with web_search to first discover relevant URLs, then fetch the most promising ones.",
-      "If a page returns very little content, it may rely on JavaScript — try a different source or an LLM-friendly alternative like /llms.txt.",
-      "Jina Reader fallback is attempted automatically for pages that appear extraction-resistant.",
+      "The result includes an artifact path to the converted source file, valid only for the current session — refetch the URL after leaving a session instead of reusing an old path.",
       "For documentation-heavy topics, check for /llms.txt on the host before fetching individual pages.",
+      "Fetching is direct only: JavaScript-only or blocked pages are not sent to any alternate service.",
     ],
     parameters,
     renderCall: renderWebFetchCall,
     renderResult: renderWebFetchResult,
-    async execute(_toolCallId, params, _signal) {
+    async execute(toolCallId, params, signal, _onUpdate, ctx) {
       const rawUrl = params.url as string;
-
-      // 1. Validate URL
       const url = validateUrl(rawUrl);
+      const knobs = getRuntimeKnobs();
+      const call = store.beginCall(resolveSessionId(ctx), toolCallId, signal);
 
-      // 2. Fetch with caps and timeout (PDFs get a larger size cap)
-      const fetchOpts: FetchOptions = { signal: _signal };
-      const { response, body } = await fetchUrl(url, fetchOpts);
+      try {
+        const run = await store.ensureRunDir(call);
 
-      // 3. Determine content type and extract
-      const contentType = normalizeContentType(response.headers.get("content-type"));
-      const urlStr = url.toString();
+        // 1. Disk-backed download: stream response bytes to a temp file.
+        const downloadPath = join(run.tmpDir, `${call.baseName}.download`);
+        await run.registerDownload(downloadPath);
+        call.downloadPath = downloadPath;
+        const sink = new FileSink(downloadPath);
+        call.attachSink(sink);
 
-      // 3a. PDF detection and extraction
-      if (isPdfContentType(contentType, urlStr)) {
-        const result = extractPdfContent(body, urlStr, {
-          extractPdfFn: fetchOpts.extractPdfFn,
-          pageLimit: fetchOpts.pdfPageLimit,
-        });
+        const fetchOpts: FetchOptions = {
+          signal,
+          fetchFn: knobs.fetchFn,
+          fetchTimeoutMs: knobs.fetchTimeoutMs,
+          sink: (chunk) => {
+            // Never keep writing into a removed run or after cancellation.
+            call.assertActive();
+            return sink.write(chunk);
+          },
+        };
+        const { response } = await fetchUrl(url, fetchOpts);
+        await call.closeSink();
+        call.assertActive();
 
-        const { text, pageCount, truncated } = result;
-        if (!text) {
+        // 2. Convert the downloaded source (existing bounded converters).
+        const contentType = normalizeContentType(response.headers.get("content-type"));
+        const urlStr = url.toString();
+        const body = await readFile(downloadPath, "utf8");
+
+        let conv: ConvertedSource;
+        if (isPdfContentType(contentType, urlStr)) {
+          conv = convertPdf(body, urlStr, knobs.extractPdfFn, knobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT);
+        } else if (isHtmlContentType(contentType) || contentType === "") {
+          conv = convertHtml(body, urlStr);
+        } else if (isTextContentType(contentType)) {
+          conv = convertText(body, contentType);
+        } else {
           throw new WebFetchError(
             urlStr,
-            "Failed to extract text from PDF — the file may be compressed, scanned, or not a valid PDF",
+            `Unsupported content type "${contentType}" — the tool can only fetch HTML, plain text, and PDFs`,
           );
         }
 
-        const header = `Source: ${urlStr}`;
-        const pageInfo = `Pages: ${pageCount}${truncated ? ` (extraction limited to first ${fetchOpts.pdfPageLimit ?? 50} pages)` : ""}`;
-        const resultText = `${header}\n${pageInfo}\n\n${text}`;
+        // 3. Finalize the Readable artifact, then release the raw download.
+        const extension = conv.kind === "markdown" ? "md" : "txt";
+        const artifactPath = join(run.dir, `${call.baseName}-artifact.${extension}`);
+        call.artifactPath = artifactPath;
+        await writeFile(artifactPath, conv.text);
+        await store.settleArtifact(call, conv.kind, !conv.truncated);
+        call.assertActive();
+        await store.releaseDownload(call);
 
-        return textResult(resultText, {
-          url: urlStr,
-          title: "",
-          contentType: "application/pdf",
-          contentLength: resultText.length,
-          source: "pdf",
-          pageCount,
-          truncated,
-        });
-      }
-
-      // 3b. HTML extraction with optional Jina fallback
-      if (isHtmlContentType(contentType) || contentType === "") {
-        const { title, content, extractionWarning } = extractHtmlContent(body, urlStr);
-
-        // Try Jina Reader fallback for short/dynamic pages
-        if (!fetchOpts.disableFallback && (content.length < 100 || extractionWarning)) {
-          const fallbackContent = await tryJinaFallback(urlStr, {
-            fetchFn: fetchOpts.fetchFn,
-            signal: _signal,
-          });
-
-          if (fallbackContent) {
-            const resultText = `# ${title || "Extracted via Jina Reader"}\n\nSource: ${urlStr} (Jina Reader fallback)\n\n${fallbackContent}`;
-
-            return textResult(resultText, {
-              url: urlStr,
-              title: title || "",
-              contentType: "text/markdown",
-              contentLength: resultText.length,
-              source: "fallback",
-              extractionWarning: extractionWarning
-                ? `${extractionWarning}; content retrieved via Jina Reader fallback`
-                : undefined,
-            });
-          }
+        // 4. Compose the dual result: plain-text content + structured details.
+        const lines: string[] = [];
+        if (conv.title) lines.push(`# ${conv.title}\n`);
+        lines.push(`Source: ${urlStr}`);
+        lines.push(`Artifact: ${artifactPath}`);
+        if (conv.pageCount !== undefined) {
+          const pageInfo = conv.truncated
+            ? `Pages: ${conv.pageCount} (extraction limited to first ${knobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} pages)`
+            : `Pages: ${conv.pageCount}`;
+          lines.push(pageInfo);
         }
+        if (conv.truncated) {
+          lines.push(
+            `Warning: artifact is partial — PDF extraction limited to ${knobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} of ${conv.pageCount} pages`,
+          );
+        }
+        if (conv.warning) lines.push(`Warning: ${conv.warning}`);
 
-        const resultText = title
-          ? `# ${title}\n\nSource: ${urlStr}\n\n${content}`
-          : `Source: ${urlStr}\n\n${content}`;
-
-        return textResult(resultText, {
+        const content = `${lines.join("\n")}\n\n${conv.text}`;
+        const details: WebFetchDetails = {
           url: urlStr,
-          title,
-          contentType: contentType || "text/html",
-          contentLength: resultText.length,
-          source: "html",
-          extractionWarning,
-        });
+          title: conv.title ?? "",
+          contentType: conv.contentType,
+          contentLength: content.length,
+          source: conv.source,
+          extractionWarning: conv.warning,
+          pageCount: conv.pageCount,
+          truncated: conv.truncated,
+          artifactPath,
+          artifactComplete: !conv.truncated,
+        };
+        return textResult(content, details);
+      } catch (err) {
+        // Remove incomplete files for this call only; never publish anything.
+        await store.failCall(call);
+        throw err;
+      } finally {
+        store.finishCall(call);
       }
-
-      // 3c. Plain-text pass-through
-      if (isTextContentType(contentType)) {
-        const text = processPlainText(body);
-        const resultText = `Source: ${urlStr}\n\n${text}`;
-
-        return textResult(resultText, {
-          url: urlStr,
-          title: "",
-          contentType,
-          contentLength: resultText.length,
-          source: "text",
-        });
-      }
-
-      // 3d. Fallback: try as text
-      const text = processPlainText(body);
-      const resultText = `Source: ${urlStr}\n\n${text}`;
-
-      return textResult(resultText, {
-        url: urlStr,
-        title: "",
-        contentType: contentType || "text/plain",
-        contentLength: resultText.length,
-        source: "text",
-      });
     },
   });
 }

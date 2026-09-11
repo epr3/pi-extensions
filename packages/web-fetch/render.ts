@@ -25,7 +25,8 @@ export function renderWebFetchCall(args: { url?: string }, theme: Theme): Text {
  * Render the web_fetch tool result row.
  *
  * Collapsed: one line — status (success/error) + URL + content size.
- * Expanded: extract title and preview of content.
+ * Expanded: title, source identity, artifact reference, completeness/PDF
+ * warnings, and a bounded content preview.
  */
 export function renderWebFetchResult(
   result: AgentToolResult<WebFetchDetails>,
@@ -44,27 +45,18 @@ export function renderWebFetchResult(
     return new Text(theme.fg("toolOutput", text), 0, 0);
   }
 
-  // isError is available on the render context, but ToolRenderContext isn't
-  // publicly exported; for now error rendering is content-driven.
-
   // Source badge
-  const sourceBadge =
-    d.source === "pdf"
-      ? theme.fg("accent", "[PDF] ")
-      : d.source === "fallback"
-        ? theme.fg("accent", "[Fallback] ")
-        : "";
+  const sourceBadge = d.source === "pdf" ? theme.fg("accent", "[PDF] ") : "";
 
   if (!options.expanded) {
     // Collapsed: one-liner
     const size = d.contentLength > 0 ? `  ${d.contentLength} chars` : "";
     const displayUrl = d.url.length > 50 ? `${d.url.slice(0, 47)}…` : d.url;
     const preview = d.title ? `  ${d.title}` : "";
-    // Show check mark for success; on error the result text speaks for itself
     return new Text(theme.fg("success", `✓  ${sourceBadge}${displayUrl}${preview}${size}`), 0, 0);
   }
 
-  // Expanded: show title, URL, and a bounded content preview
+  // Expanded: title, source identity, artifact reference, warnings, preview.
   const contentText = result.content
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)
@@ -76,9 +68,20 @@ export function renderWebFetchResult(
   lines.push(`${theme.fg("dim", d.url)}  ${theme.fg("muted", `[${d.source}]`)}`);
   if (d.contentType) lines.push(theme.fg("muted", `Content-Type: ${d.contentType}`));
   if (d.contentLength > 0) lines.push(theme.fg("muted", `Content: ${d.contentLength} chars`));
+  if (d.artifactPath) {
+    lines.push(theme.fg("accent", `Artifact: ${d.artifactPath}`));
+    lines.push(
+      theme.fg("muted", "Deleted when you leave this session — refetch to regenerate."),
+    );
+  }
   if (d.pageCount !== undefined) {
     const pageInfo = d.truncated ? `Pages: ${d.pageCount} (truncated)` : `Pages: ${d.pageCount}`;
     lines.push(theme.fg("muted", pageInfo));
+  }
+  if (d.artifactComplete === false) {
+    lines.push(
+      theme.fg("warning", "Warning: artifact is partial — it does not contain the full source."),
+    );
   }
   if (d.extractionWarning) lines.push(theme.fg("warning", `Warning: ${d.extractionWarning}`));
   lines.push("");
