@@ -1,5 +1,7 @@
 // ─── Runtime knobs (test seam) ───────────────────────────────────────────────
 
+import type { ExtractionModelBudgetPolicy } from "./extraction.ts";
+import type { ExtractionModelSettings } from "./settings.ts";
 import type { PdfExtractFn } from "./fetch.ts";
 import type { ProcessLiveness } from "./liveness.ts";
 
@@ -16,6 +18,10 @@ export interface RuntimeKnobs {
   fetchTimeoutMs?: number;
   storageRoot?: string;
   processLiveness?: ProcessLiveness;
+  /** Override the default AI extraction budget policy (tests only). */
+  extractionBudgetPolicy?: Partial<ExtractionModelBudgetPolicy>;
+  /** Override AI extraction model settings read from disk (tests only). */
+  extractionModelSettings?: ExtractionModelSettings;
 }
 
 const knobs: RuntimeKnobs = {};

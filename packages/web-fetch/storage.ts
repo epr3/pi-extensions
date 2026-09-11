@@ -122,16 +122,20 @@ export class PendingCall {
     this.runId = runId;
     this.baseName = safeFileName(id);
     this.signal = signal;
+    this.abortController = new AbortController();
   }
 
   get defunct(): boolean {
     return this.abandoned;
   }
 
+  private abortController: AbortController;
+
   /** Stop the call: no further writes or publication. */
   abandon(reason: string): void {
     this.abandoned = true;
     this.abandonReason = reason;
+    this.abortController.abort();
   }
 
   attachSink(sink: FileSink): void {
@@ -149,9 +153,22 @@ export class PendingCall {
     if (this.abandoned) {
       throw new AbandonedCallError(this.sessionId, this.runId, this.abandonReason);
     }
-    if (this.signal?.aborted) {
+    if (this.signal?.aborted || this.abortController.signal.aborted) {
       throw new DOMException("The web_fetch call was cancelled", "AbortError");
     }
+  }
+
+  /** Combined signal: caller signal plus call abandonment. */
+  get combinedSignal(): AbortSignal {
+    if (!this.signal) return this.abortController.signal;
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    this.signal.addEventListener("abort", onAbort, { once: true });
+    this.abortController.signal.addEventListener("abort", onAbort, { once: true });
+    if (this.signal.aborted || this.abortController.signal.aborted) {
+      controller.abort();
+    }
+    return controller.signal;
   }
 }
 
@@ -341,7 +358,11 @@ export class ArtifactStore {
    * abandoned runs, making every fetch an opportunity to reclaim crash
    * leftovers.
    */
-  async beginCall(sessionId: string, callId: string, signal: AbortSignal | undefined): Promise<PendingCall> {
+  async beginCall(
+    sessionId: string,
+    callId: string,
+    signal: AbortSignal | undefined,
+  ): Promise<PendingCall> {
     return this.withLock(async () => {
       // Wait for the init sweep once, then sweep again before creating work so
       // every fetch is an opportunity to reclaim abandoned runs.
@@ -531,9 +552,7 @@ export class ArtifactStore {
         } catch (err) {
           const error = normalizeError(err);
           this.cleanupErrors.push({ sessionId: sessionName, error });
-          console.error(
-            `web_fetch: abandoned-run cleanup failed for ${runPath}: ${error.message}`,
-          );
+          console.error(`web_fetch: abandoned-run cleanup failed for ${runPath}: ${error.message}`);
           anyPreserved = true; // failed run still exists, so session is not empty
         }
       }

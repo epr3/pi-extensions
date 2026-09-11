@@ -22,7 +22,7 @@ const plainTheme = {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function callText(args: { url?: string }): string {
+function callText(args: { url?: string; prompt?: string }): string {
   return renderWebFetchCall(args, plainTheme).render(80).join("\n");
 }
 
@@ -41,10 +41,13 @@ function makeDetails(overrides: Partial<WebFetchDetails> = {}): WebFetchDetails 
     url: "https://example.com/article",
     title: "",
     contentType: "text/html",
-    contentLength: 0,
     source: "html",
     artifactPath: "/tmp/pi-web-fetch/sess-1/run-1/call-1-artifact.md",
     artifactComplete: true,
+    answer: "Answer text",
+    answerLength: 11,
+    sourceLength: 100,
+    modelInputTruncated: false,
     ...overrides,
   };
 }
@@ -74,8 +77,8 @@ describe("renderWebFetchCall", () => {
 // ─── renderWebFetchResult — collapsed ───────────────────────────────────────
 
 describe("renderWebFetchResult (collapsed)", () => {
-  it("shows check + URL + title + content size", () => {
-    const details = makeDetails({ title: "Test Article", contentLength: 1500 });
+  it("shows check + URL + title + answer length", () => {
+    const details = makeDetails({ title: "Test Article", answerLength: 1500 });
     const text = resultText(makeResult("Content...", details));
 
     expect(text).toContain("✓");
@@ -84,12 +87,16 @@ describe("renderWebFetchResult (collapsed)", () => {
   });
 
   it("shows the [PDF] badge for a PDF result", () => {
-    const details = makeDetails({ url: "https://example.com/doc.pdf", source: "pdf", pageCount: 5 });
+    const details = makeDetails({
+      url: "https://example.com/doc.pdf",
+      source: "pdf",
+      pageCount: 5,
+    });
     expect(resultText(makeResult("PDF text", details))).toContain("[PDF]");
   });
 
   it("renders without a title when none is provided", () => {
-    const details = makeDetails({ title: "", contentLength: 500 });
+    const details = makeDetails({ title: "", answerLength: 500 });
     expect(resultText(makeResult("Source: ...", details))).toContain("500 chars");
   });
 });
@@ -97,35 +104,42 @@ describe("renderWebFetchResult (collapsed)", () => {
 // ─── renderWebFetchResult — expanded ────────────────────────────────────────
 
 describe("renderWebFetchResult (expanded)", () => {
-  it("shows title, URL, content-type, size, artifact path, and body", () => {
-    const content = "# Article Title\n\nSource: https://example.com/article\n\nFull text here.";
+  it("shows title, URL, content-type, answer length, source length, artifact path, and answer", () => {
+    const content =
+      "# Article Title\n\nSource: https://example.com/article\n\nAnswer:\n\nFull text here.";
     const details = makeDetails({
       url: "https://example.com/article",
       title: "Article Title",
       contentType: "text/html",
-      contentLength: 1500,
+      answer: "Full text here.",
+      answerLength: 1500,
+      sourceLength: 2500,
       artifactPath: "/tmp/pi-web-fetch/sess-1/run/c1.md",
     });
     const text = resultText(makeResult(content, details), false, true);
 
     expect(text).toContain("Article Title");
     expect(text).toContain("Content-Type: text/html");
-    expect(text).toContain("Content: 1500 chars");
+    expect(text).toContain("Answer: 1500 chars");
+    expect(text).toContain("Source: 2500 chars");
     expect(text).toContain("Artifact: /tmp/pi-web-fetch/sess-1/run/c1.md");
     expect(text).toContain("Full text here");
   });
 
   it("explains artifact session lifetime", () => {
-    const details = makeDetails({ artifactPath: "/tmp/pi-web-fetch/sess-1/run/c1.md" });
+    const details = makeDetails({
+      artifactPath: "/tmp/pi-web-fetch/sess-1/run/c1.md",
+      answer: "Body",
+    });
     const text = resultText(makeResult("Body", details), false, true);
 
     expect(text).toMatch(/Deleted when you leave this session/);
   });
 
-  it("truncates a long body with an ellipsis", () => {
-    const longBody = "Paragraph text. ".repeat(150);
-    const details = makeDetails({ contentLength: longBody.length + 50 });
-    expect(resultText(makeResult(longBody, details), false, true)).toContain("…");
+  it("truncates a long answer with an ellipsis", () => {
+    const longAnswer = "Paragraph text. ".repeat(150);
+    const details = makeDetails({ answer: longAnswer, answerLength: longAnswer.length });
+    expect(resultText(makeResult(longAnswer, details), false, true)).toContain("…");
   });
 
   it("shows page count for a PDF result", () => {
@@ -133,7 +147,9 @@ describe("renderWebFetchResult (expanded)", () => {
       url: "https://example.com/doc.pdf",
       title: "PDF Document",
       contentType: "application/pdf",
-      contentLength: 5000,
+      answer: "PDF text content",
+      answerLength: 5000,
+      sourceLength: 20_000,
       source: "pdf",
       pageCount: 15,
     });
@@ -149,7 +165,9 @@ describe("renderWebFetchResult (expanded)", () => {
       url: "https://example.com/large.pdf",
       title: "Large PDF",
       contentType: "application/pdf",
-      contentLength: 500_000,
+      answer: "Truncated PDF content",
+      answerLength: 5000,
+      sourceLength: 500_000,
       source: "pdf",
       pageCount: 100,
       truncated: true,
@@ -162,8 +180,22 @@ describe("renderWebFetchResult (expanded)", () => {
     expect(text).toContain("Warning: artifact is partial");
   });
 
+  it("shows model-input truncation warning independently of artifact completeness", () => {
+    const details = makeDetails({
+      answer: "Short answer",
+      answerLength: 12,
+      sourceLength: 50_000,
+      modelInputTruncated: true,
+      artifactComplete: true,
+    });
+    const text = resultText(makeResult("Short answer", details), false, true);
+
+    expect(text).toContain("Warning: model input was truncated");
+    expect(text).not.toContain("Warning: artifact is partial");
+  });
+
   it("does not warn about a partial artifact when it is complete", () => {
-    const details = makeDetails({});
+    const details = makeDetails({ answer: "Body" });
     const text = resultText(makeResult("Body", details), false, true);
     expect(text).not.toContain("artifact is partial");
   });
@@ -178,7 +210,7 @@ describe("renderWebFetchResult — extraction warning", () => {
     const details = makeDetails({
       url: "https://example.com/dynamic",
       title: "Dynamic",
-      contentLength: 30,
+      answerLength: 30,
       extractionWarning: WARNING,
     });
     const expanded = resultText(makeResult("Short", details), false, true);
