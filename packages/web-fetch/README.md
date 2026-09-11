@@ -1,17 +1,17 @@
-# web_fetch — Fetch URLs, extract readable source (Pi extension, TypeScript)
+# web_fetch — Prompt-directed URL extraction (Pi extension, TypeScript)
 
-Adds a `web_fetch` tool that fetches URLs and extracts readable content as a
-**Readable artifact**: a session-owned local Markdown/plain-text file with the
+Adds a `web_fetch` tool that fetches a URL and returns a prompt-directed answer
+from an explicitly configured Extraction model, together with a **Readable
+artifact**: a session-owned local Markdown/plain-text file containing the full
 converted source. Supports HTML pages (Markdown conversion), PDF documents
 (text extraction with page bounds), and plain-text/Markdown pass-through.
 
+```typescript
+web_fetch({
+  url: "https://example.com/article",
+  prompt: "What are the main claims?",
+});
 ```
-web_fetch({ url: "https://example.com/article" })
-```
-
-> This is an intermediate release: the tool still returns converted source
-> inline and takes only a `url`. Prompt-directed AI extraction is a planned
-> follow-up that changes this contract.
 
 ## Setup
 
@@ -25,64 +25,131 @@ Add the absolute path to `~/.pi/agent/settings.json`:
 }
 ```
 
-### 2. Verify
+### 2. Configure an Extraction model
+
+Add a `webFetch.extractionModel` section to `~/.pi/agent/settings.json` (global)
+or `.pi/settings.json` (project override):
+
+```json
+{
+  "webFetch": {
+    "extractionModel": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5"
+    }
+  }
+}
+```
+
+Provider and model identifiers are resolved through Pi's model registry and use
+Pi's existing credentials. There is no automatic model selection or hardcoded
+default.
+
+### 3. Verify
 
 Start a Pi session and run:
 
-```
-web_fetch({ url: "https://example.com" })
+```typescript
+web_fetch({ url: "https://example.com", prompt: "Summarize this page" });
 ```
 
-You should see extracted content as Markdown and an `Artifact:` path.
+You should see an AI extraction answer and an `Artifact:` path to the converted
+source.
 
 ## Usage
 
 ### Tool parameters
 
-| Parameter | Type   | Required | Description                  |
-| --------- | ------ | -------- | ---------------------------- |
-| `url`     | string | yes      | The URL to fetch and extract |
+| Parameter | Type   | Required | Description                                             |
+| --------- | ------ | -------- | ------------------------------------------------------- |
+| `url`     | string | yes      | The URL to fetch and extract content from               |
+| `prompt`  | string | yes      | What the Extraction model should answer from the source |
+
+Both parameters must be non-empty strings after trimming. Missing or blank
+prompts are rejected with a clear error — there is no implicit summary mode.
 
 ### Examples
 
 ```typescript
-// Fetch an article
-web_fetch({ url: "https://en.wikipedia.org/wiki/Markdown" });
+// Ask a specific question about an article
+web_fetch({
+  url: "https://en.wikipedia.org/wiki/Markdown",
+  prompt: "List the standard Markdown syntax elements",
+});
 
-// Fetch a PDF document
-web_fetch({ url: "https://example.com/whitepaper.pdf" });
+// Extract information from a PDF document
+web_fetch({
+  url: "https://example.com/whitepaper.pdf",
+  prompt: "What is the conclusion?",
+});
 
-// Fetch plain-text content
-web_fetch({ url: "https://example.com/robots.txt" });
+// Query plain-text content
+web_fetch({
+  url: "https://example.com/robots.txt",
+  prompt: "Which user agents are allowed?",
+});
 ```
 
 ## Behavior
 
-| Scenario                                             | Result                                                                      |
-| ---------------------------------------------------- | --------------------------------------------------------------------------- |
-| Valid HTML page                                      | Converted Markdown inline + a `.md` Readable artifact                        |
-| PDF document (application/pdf or URL ending in .pdf) | Text extracted from PDF, with page count; truncated at 50 pages with notice  |
-| PDF exceeding 10MB                                   | Error with byte counts                                                       |
-| PDF with no extractable text (compressed/scanned)    | Clear error suggesting the file may need OCR                                 |
-| Plain text / Markdown file                           | Content passes through as a `.txt` Readable artifact                         |
-| Invalid URL, HTTP error (4xx/5xx), timeout           | Clear error message; nothing is written to disk                              |
-| Binary content type (images, audio, video, archives) | Error with content-type explanation; PDFs are handled, not rejected          |
-| Response exceeds size cap (512 KiB ordinary, 10 MiB PDF) | Error with byte counts; partial downloads are removed                   |
-| JavaScript-only / unextractable page                 | Actionable error — **no** alternate-service (Jina/browser) fallback          |
-| Process crash leaves abandoned artifacts             | Swept on next extension init/fetch; live/ambiguous owners preserved          |
-| Redirects                                            | Followed automatically                                                       |
+| Scenario                                                 | Result                                                                                          |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Valid HTML / text / Markdown / supported PDF             | AI extraction answer + finalized Readable artifact path                                         |
+| Missing or blank `prompt`                                | Clear error before any fetch                                                                    |
+| Extraction model not configured                          | Actionable error pointing to `webFetch.extractionModel` settings                                |
+| Configured model unavailable or missing credentials      | Actionable error before expensive retrieval                                                     |
+| Model provider fails after successful conversion         | Error includes the completed artifact path and source metadata                                  |
+| Source larger than the model input budget                | Model sees only a leading portion; tool warns about partial evidence; artifact remains complete |
+| PDF document (application/pdf or URL ending in .pdf)     | Text extracted with page count; truncated at 50 pages with notice                               |
+| PDF exceeding 10MB                                       | Error with byte counts                                                                          |
+| PDF with no extractable text (compressed/scanned)        | Clear error suggesting the file may need OCR                                                    |
+| Plain text / Markdown file                               | Content passes through as a `.txt` Readable artifact                                            |
+| Invalid URL, HTTP error (4xx/5xx), timeout               | Clear error message; nothing is written to disk                                                 |
+| Binary content type (images, audio, video, archives)     | Error with content-type explanation; PDFs are handled, not rejected                             |
+| Response exceeds size cap (512 KiB ordinary, 10 MiB PDF) | Error with byte counts; partial downloads are removed                                           |
+| JavaScript-only / unextractable page                     | Actionable error — **no** alternate-service (Jina/browser) fallback                             |
+| Process crash leaves abandoned artifacts                 | Swept on next extension init/fetch; live/ambiguous owners preserved                             |
+| Redirects                                                | Followed automatically                                                                          |
+
+## AI extraction
+
+- **Required prompt**: every call must supply a `prompt`. The prompt is sent to
+  the configured Extraction model together with the converted source as
+  untrusted evidence.
+- **Explicit model**: the Extraction model is configured in
+  `webFetch.extractionModel.provider` and `webFetch.extractionModel.model`.
+  Project settings override global settings. There is no implicit current-model
+  selection or hardcoded active default.
+- **One direct completion**: the tool makes a single tool-free model completion
+  through Pi's model registry, using Pi credentials. No subagent or tool loop is
+  used.
+- **Budget policy**: input, output, and completion time are bounded:
+  - `outputTokens` defaults to 1024 and is capped at the model's `maxTokens`.
+  - `instructionTokens` reserves 500 tokens for the system prompt and framing.
+  - `charsPerToken` defaults to 4, a conservative character-to-token estimate
+    used when no tokenizer is exposed.
+  - `completionTimeoutMs` defaults to 120 seconds.
+  - If the prompt alone exceeds the model's context window after reserving
+    instructions and output, the request fails before an unchecked completion.
+  - If the converted source exceeds the remaining input budget, only a leading
+    portion is sent to the model. The full artifact is still finalized on disk.
+- **Partial-evidence warning**: when the model input is truncated, the tool
+  reports it independently of the model. The artifact may still be complete.
+- **Usage accounting**: model-reported usage is returned on the tool result,
+  including for error outcomes when the provider supplies usage.
 
 ## Readable artifacts
 
-Every successful call also writes a Readable artifact file with the converted
-source (not the inline headers), and returns its **absolute path** in both the
-plain-text result and the structured `details`:
+Every successful conversion writes a Readable artifact file with the converted
+source (not the AI answer or inline headers), and returns its **absolute path**
+in both the plain-text result and the structured `details`:
 
 ```
 Source: https://example.com/article
 Artifact: /tmp/pi-web-fetch/<session>/<run>/<call>-artifact.md
+Answer:
 
-<converted source>
+<AI extraction answer>
 ```
 
 - **Session lifetime**: artifacts belong to the creating session. They are
@@ -99,9 +166,13 @@ Artifact: /tmp/pi-web-fetch/<session>/<run>/<call>-artifact.md
   session ends. **Refetch the URL** to regenerate the artifact — resuming a
   session does not restore deleted source files.
 - **Completeness**: for PDFs over the page limit, the result and `details`
-  report a partial artifact (`artifactComplete: false`). The path is published
-  only after the file is finalized; failed or cancelled calls never leave
-  usable files behind.
+  report a partial artifact (`artifactComplete: false`). Model-input truncation
+  is reported separately (`modelInputTruncated: true`) and does not make the
+  artifact partial. The path is published only after the file is finalized;
+  failed or cancelled calls never leave usable files behind.
+- **Model-stage failures**: if AI extraction fails after conversion succeeds,
+  the error includes the still-readable artifact path and source metadata. The
+  completed artifact remains available until the session is cleaned up.
 - Raw downloads are written incrementally to a private temporary area
   (`os.tmpdir()/pi-web-fetch`, keyed by session and run) and removed once
   conversion finishes; incomplete downloads and artifacts are removed on
@@ -124,14 +195,16 @@ Artifact: /tmp/pi-web-fetch/<session>/<run>/<call>-artifact.md
 
 ```
 packages/web-fetch/
-├── index.ts      # Extension entry: registers web_fetch, lifecycle hooks
-├── fetch.ts      # URL validation, fetch logic, content-type detection,
-│                 # streaming sink download, PDF extraction, HTML→Markdown
-├── storage.ts    # Disk-backed downloads, session/run ownership, Readable
-│                 # artifacts, artifact cleanup (normal + crash sweep)
-├── liveness.ts   # Process identity / liveness policy for abandoned-run detection
-├── runtime.ts    # Test-only runtime knobs (mocked HTTP/PDF/storage root/liveness)
-├── render.ts     # TUI rendering for call/result rows
+├── index.ts       # Extension entry: registers web_fetch, lifecycle hooks
+├── fetch.ts       # URL validation, fetch logic, content-type detection,
+│                  # streaming sink download, PDF extraction, HTML→Markdown
+├── extraction.ts  # AI extraction: model resolution, budget, completion
+├── settings.ts    # Read webFetch.extractionModel from global/project settings
+├── storage.ts     # Disk-backed downloads, session/run ownership, Readable
+│                  # artifacts, artifact cleanup (normal + crash sweep)
+├── liveness.ts    # Process identity / liveness policy for abandoned-run detection
+├── runtime.ts     # Test-only runtime knobs (mocked HTTP/PDF/storage/model/budget)
+├── render.ts      # TUI rendering for call/result rows
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -144,6 +217,13 @@ packages/web-fetch/
   functions (`fetchUrl`). `fetchUrl` accepts an optional `sink` to stream body
   bytes incrementally (Disk-backed download) instead of accumulating them, and
   an optional `fetchFn`/`extractPdfFn` for testability.
+- `settings.ts` reads the `webFetch.extractionModel` section from
+  `~/.pi/agent/settings.json` and `.pi/settings.json`, with project overriding
+  global.
+- `extraction.ts` resolves the configured model through Pi's registry, computes
+  a bounded input budget from the model's context window, reads only a leading
+  prefix of the artifact when over budget, and makes one tool-free model
+  completion. Returns the answer, usage, and truncation metadata.
 - `storage.ts` owns the private temporary area: one run per extension load,
   session-keyed directories, an on-disk ownership record, idempotent cleanup
   on session leave, and crash/abandoned-run sweep at init and before each
@@ -160,8 +240,8 @@ packages/web-fetch/
   `details` for renderers), and subscribes to `session_start` /
   `session_shutdown` so artifacts follow session lifetime.
 - `render.ts` exports `renderWebFetchCall` and `renderWebFetchResult` for
-  compact/expanded TUI rendering, showing the artifact path, PDF page
-  count/truncation, and completeness warnings.
+  compact/expanded TUI rendering, showing the answer, artifact path, source
+  length, PDF page count/truncation, and model-input truncation warnings.
 
 ## Tests
 
@@ -172,8 +252,20 @@ events:
 - Tool metadata, parameter schema, and lifecycle registration
 - URL validation, content-type detection, PDF extraction, Markdown conversion
 - Disk-backed download (streaming sink), size caps, timeouts
-- Successful HTML/text/PDF calls produce finalized artifacts with absolute
-  paths; PDF truncation is reported as a partial artifact
+- Required `url` and `prompt`; missing/blank prompts are rejected
+- Extraction model configuration errors: missing settings, unavailable model,
+  missing credentials
+- Successful HTML/text/PDF calls return an AI extraction answer and a
+  finalized artifact; PDF truncation is reported as a partial artifact
+- Source-as-evidence separation: the artifact contains converted source, not
+  the answer; the model request includes prompt + evidence with no tools
+- Budget policy: oversized prompts fail before completion; large sources send
+  only a leading portion to the model and report partial evidence; the
+  artifact remains complete
+- Model failures after conversion include the artifact path; usage is reported
+  when available
+- Model-call cancellation/session-change races: leaving the owning session
+  aborts in-flight extraction and prevents stale artifact publication
 - Failures (HTTP, binary, caps, unusable extraction) publish nothing and leave
   no files; no alternate-service requests are ever issued
 - Session lifecycle: leave/replace/fork/shutdown remove artifacts; reload and
@@ -185,7 +277,8 @@ events:
 - Crash/abandoned-run cleanup: abandoned runs are swept, live/ambiguous owners
   are preserved, PID reuse is handled conservatively, and cleanup failures are
   retried on later fetches
-- Call/result rendering (collapsed and expanded), artifact and warning display
+- Call/result rendering (collapsed and expanded), answer/source separation,
+  artifact and warning display
 
 Run with:
 
@@ -193,5 +286,6 @@ Run with:
 pnpm test
 ```
 
-All tests use mocked fetches, isolated real temporary directories, and never
-require live network access, PDF libraries, Jina, or real user artifacts.
+All tests use mocked fetches, mocked model completions, isolated real
+temporary directories, and never require live network access, model services,
+PDF libraries, Jina, real credentials, or real user artifacts.

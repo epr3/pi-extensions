@@ -5,8 +5,6 @@ export interface WebFetchDetails {
   url: string;
   title: string;
   contentType: string;
-  /** Character count of extracted text content. */
-  contentLength: number;
   /** Where the content was extracted from. */
   source: "html" | "text" | "pdf";
   /** Error message if the fetch succeeded but extraction was poor. */
@@ -19,6 +17,18 @@ export interface WebFetchDetails {
   artifactPath: string;
   /** Whether the artifact contains the full converted source within limits. */
   artifactComplete: boolean;
+  /** AI extraction answer returned by the Extraction model. */
+  answer: string;
+  /** Character count of the AI extraction answer. */
+  answerLength: number;
+  /** Character count of the full converted source artifact. */
+  sourceLength: number;
+  /** Whether only a leading portion of the artifact was sent to the model. */
+  modelInputTruncated: boolean;
+  /** Provider identifier of the Extraction model. */
+  modelProvider?: string;
+  /** Model identifier of the Extraction model. */
+  modelId?: string;
 }
 
 /** Options for fetching a URL. */

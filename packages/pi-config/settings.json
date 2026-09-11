@@ -78,5 +78,12 @@
     "//": "Add or override language servers without touching the Extension package dir; merged over the shipped servers.json.",
     "servers": {},
     "diagnosticsDelayMs": 600
+  },
+  "webFetch": {
+    "//": "Explicit Extraction model for the web_fetch tool. Project .pi/settings.json overrides this global block.",
+    "extractionModel": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5"
+    }
   }
 }

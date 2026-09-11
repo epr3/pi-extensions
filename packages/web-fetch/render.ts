@@ -13,7 +13,7 @@ import type { WebFetchDetails } from "./fetch.ts";
  * Collapsed (always compact):
  *   Web Fetch  https://example.com/page
  */
-export function renderWebFetchCall(args: { url?: string }, theme: Theme): Text {
+export function renderWebFetchCall(args: { url?: string; prompt?: string }, theme: Theme): Text {
   const url = args.url ?? "(no URL)";
   const displayUrl = url.length > 70 ? `${url.slice(0, 67)}…` : url;
   const text =
@@ -24,9 +24,9 @@ export function renderWebFetchCall(args: { url?: string }, theme: Theme): Text {
 /**
  * Render the web_fetch tool result row.
  *
- * Collapsed: one line — status (success/error) + URL + content size.
- * Expanded: title, source identity, artifact reference, completeness/PDF
- * warnings, and a bounded content preview.
+ * Collapsed: one line — status + URL + answer length.
+ * Expanded: title, source identity, artifact reference, answer length, source
+ * length, completeness/PDF/model-input warnings, and a bounded answer preview.
  */
 export function renderWebFetchResult(
   result: AgentToolResult<WebFetchDetails>,
@@ -50,7 +50,7 @@ export function renderWebFetchResult(
 
   if (!options.expanded) {
     // Collapsed: one-liner
-    const size = d.contentLength > 0 ? `  ${d.contentLength} chars` : "";
+    const size = d.answerLength > 0 ? `  ${d.answerLength} chars` : "";
     const displayUrl = d.url.length > 50 ? `${d.url.slice(0, 47)}…` : d.url;
     const preview = d.title ? `  ${d.title}` : "";
     return new Text(theme.fg("success", `✓  ${sourceBadge}${displayUrl}${preview}${size}`), 0, 0);
@@ -62,17 +62,19 @@ export function renderWebFetchResult(
     .map((c) => c.text)
     .join("\n");
 
+  // Prefer the structured answer; fall back to parsing the inline content.
+  const answerText = d.answer || contentText;
+
   // Build header info
   const lines: string[] = [];
   if (d.title) lines.push(theme.fg("accent", d.title));
   lines.push(`${theme.fg("dim", d.url)}  ${theme.fg("muted", `[${d.source}]`)}`);
   if (d.contentType) lines.push(theme.fg("muted", `Content-Type: ${d.contentType}`));
-  if (d.contentLength > 0) lines.push(theme.fg("muted", `Content: ${d.contentLength} chars`));
+  if (d.answerLength > 0) lines.push(theme.fg("muted", `Answer: ${d.answerLength} chars`));
+  if (d.sourceLength > 0) lines.push(theme.fg("muted", `Source: ${d.sourceLength} chars`));
   if (d.artifactPath) {
     lines.push(theme.fg("accent", `Artifact: ${d.artifactPath}`));
-    lines.push(
-      theme.fg("muted", "Deleted when you leave this session — refetch to regenerate."),
-    );
+    lines.push(theme.fg("muted", "Deleted when you leave this session — refetch to regenerate."));
   }
   if (d.pageCount !== undefined) {
     const pageInfo = d.truncated ? `Pages: ${d.pageCount} (truncated)` : `Pages: ${d.pageCount}`;
@@ -83,11 +85,20 @@ export function renderWebFetchResult(
       theme.fg("warning", "Warning: artifact is partial — it does not contain the full source."),
     );
   }
+  if (d.modelInputTruncated) {
+    lines.push(
+      theme.fg(
+        "warning",
+        "Warning: model input was truncated — the answer used only a leading portion of the source.",
+      ),
+    );
+  }
   if (d.extractionWarning) lines.push(theme.fg("warning", `Warning: ${d.extractionWarning}`));
+  lines.push(theme.fg("accent", "Answer:"));
   lines.push("");
 
-  // Preview: show first ~2000 chars of content
-  const preview = contentText.length > 2000 ? `${contentText.slice(0, 1997)}…` : contentText;
+  // Preview: show first ~2000 chars of the answer
+  const preview = answerText.length > 2000 ? `${answerText.slice(0, 1997)}…` : answerText;
   lines.push(preview);
 
   return new Text(lines.join("\n"), 0, 0);

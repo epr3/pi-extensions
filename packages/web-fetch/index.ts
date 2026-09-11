@@ -1,4 +1,9 @@
-import type { ExtensionAPI, ExtensionContext, AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  AgentToolResult,
+} from "@earendil-works/pi-coding-agent";
+import type { Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,11 +25,23 @@ import { ArtifactStore, FileSink } from "./storage.ts";
 import type { ArtifactKind } from "./storage.ts";
 import { getRuntimeKnobs } from "./runtime.ts";
 import { renderWebFetchCall, renderWebFetchResult } from "./render.ts";
+import { readWebFetchSettings } from "./settings.ts";
+import {
+  resolveExtractionModel,
+  extractAnswer,
+  resolveBudgetPolicy,
+  ExtractionModelError,
+} from "./extraction.ts";
+import type { ExtractionResult } from "./extraction.ts";
 
 // ─── Dual-result helper ──────────────────────────────────────────────────────
 
-function textResult(text: string, details: WebFetchDetails): AgentToolResult<WebFetchDetails> {
-  return { content: [{ type: "text" as const, text }], details };
+function textResult(
+  text: string,
+  details: WebFetchDetails,
+  usage?: Usage,
+): AgentToolResult<WebFetchDetails> {
+  return { content: [{ type: "text" as const, text }], details, usage };
 }
 
 // ─── Parameter schema ────────────────────────────────────────────────────────
@@ -33,6 +50,9 @@ const parameters = Type.Object({
   url: Type.String({
     description: "The URL to fetch and extract content from",
   }),
+  prompt: Type.String({
+    description: "The extraction prompt: what the model should find or answer from the source",
+  }),
 });
 
 // ─── Session identity ────────────────────────────────────────────────────────
@@ -40,6 +60,14 @@ const parameters = Type.Object({
 function resolveSessionId(ctx: ExtensionContext): string {
   const sid = ctx.sessionManager?.getSessionId?.();
   return typeof sid === "string" ? sid : "";
+}
+
+function resolveModelRegistry(ctx: ExtensionContext) {
+  const registry = ctx.modelRegistry;
+  if (!registry) {
+    throw new Error("Pi model registry is not available in the extension context.");
+  }
+  return registry;
 }
 
 // ─── Converted source (per content type) ─────────────────────────────────────
@@ -101,6 +129,13 @@ function convertText(body: string, contentType: string): ConvertedSource {
   return { kind: "text", text: processPlainText(body), source: "text", contentType };
 }
 
+function validatePrompt(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error("web_fetch requires a non-empty `prompt` parameter.");
+  }
+  return raw.trim();
+}
+
 // ─── Extension entry point ───────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
@@ -128,32 +163,43 @@ export default function (pi: ExtensionAPI) {
     name: "web_fetch",
     label: "Web Fetch",
     description:
-      "Fetch a URL and extract readable content as Markdown or text. " +
-      "Validates the URL, fetches it with a browser-like user agent, enforces a 30-second timeout " +
-      "and response-size cap, and writes the response incrementally to a temporary download file for conversion. " +
-      "HTML pages are converted to Markdown, PDFs up to 10MB and 50 pages are extracted, " +
-      "and plain-text/Markdown responses pass through. " +
-      "Each successful call also writes a Readable artifact file with the converted source " +
-      "and returns its absolute path. Artifacts live only for the creating session: they are " +
-      "deleted when you leave or end that session, and crash leftovers are swept each time the extension " +
-      "initializes or fetches a URL. A path from an old transcript is stale — " +
-      "refetch the URL to regenerate it. " +
-      "Unsupported binary media types, unusable extraction, and exceeded limits produce clear errors.",
-    promptSnippet: "Fetch a URL and return its content as readable Markdown",
+      "Fetch a URL and return a prompt-directed answer based on the page content, " +
+      "plus a Readable artifact of the converted source. Requires both a `url` and an " +
+      "`prompt`. The URL is fetched directly with a browser-like user agent, enforced " +
+      "30-second timeout, and response-size cap, then converted to Markdown or text. " +
+      "An explicitly configured Extraction model answers the prompt using the converted " +
+      "source; only a bounded leading portion of large sources is sent to the model. " +
+      "The artifact contains the full converted source (within limits) and lives only " +
+      "for the creating session. A path from an old transcript is stale — refetch the URL " +
+      "to regenerate it. Unsupported binary media types, unusable extraction, exceeded " +
+      "limits, and missing extraction-model configuration produce clear errors.",
+    promptSnippet: "Fetch a URL and answer a specific question about its content",
     promptGuidelines: [
-      "Use web_fetch to retrieve the full content of a web page for analysis, summarization, or fact-checking.",
+      "Use web_fetch to retrieve a web page and get an answer to a specific question about it.",
+      "Both `url` and `prompt` are required. Missing or empty prompts are rejected; there is no implicit summary.",
+      "The result includes the AI extraction answer and an absolute path to a Readable artifact of the converted source, valid only for the current session.",
+      "Large sources may be truncated for the model input; the artifact remains complete unless the source itself was truncated or the PDF page limit was reached. Refetch the URL after leaving a session instead of reusing an old artifact path.",
       "PDFs are extracted up to 10MB and 50 pages; longer PDFs include a truncation notice and a partial artifact.",
       "Combine with web_search to first discover relevant URLs, then fetch the most promising ones.",
-      "The result includes an artifact path to the converted source file, valid only for the current session — refetch the URL after leaving a session instead of reusing an old path; crash leftovers are swept when the extension next runs, not by a background service.",
       "For documentation-heavy topics, check for /llms.txt on the host before fetching individual pages.",
       "Fetching is direct only: JavaScript-only or blocked pages are not sent to any alternate service.",
+      "Configure the Extraction model in webFetch.extractionModel.provider and webFetch.extractionModel.model; project settings override global settings.",
     ],
     parameters,
     renderCall: renderWebFetchCall,
     renderResult: renderWebFetchResult,
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
       const rawUrl = params.url as string;
+      const rawPrompt = params.prompt as string;
       const url = validateUrl(rawUrl);
+      const prompt = validatePrompt(rawPrompt);
+      const urlStr = url.toString();
+
+      const settings = knobs.extractionModelSettings ?? readWebFetchSettings().extractionModel;
+      const registry = resolveModelRegistry(ctx);
+      const resolvedModel = resolveExtractionModel(registry, settings);
+      const budgetPolicy = resolveBudgetPolicy(knobs.extractionBudgetPolicy);
+
       const callKnobs = getRuntimeKnobs();
       const call = await store.beginCall(resolveSessionId(ctx), toolCallId, signal);
 
@@ -183,12 +229,16 @@ export default function (pi: ExtensionAPI) {
 
         // 2. Convert the downloaded source (existing bounded converters).
         const contentType = normalizeContentType(response.headers.get("content-type"));
-        const urlStr = url.toString();
         const body = await readFile(downloadPath, "utf8");
 
         let conv: ConvertedSource;
         if (isPdfContentType(contentType, urlStr)) {
-          conv = convertPdf(body, urlStr, callKnobs.extractPdfFn, callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT);
+          conv = convertPdf(
+            body,
+            urlStr,
+            callKnobs.extractPdfFn,
+            callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT,
+          );
         } else if (isHtmlContentType(contentType) || contentType === "") {
           conv = convertHtml(body, urlStr);
         } else if (isTextContentType(contentType)) {
@@ -209,7 +259,40 @@ export default function (pi: ExtensionAPI) {
         call.assertActive();
         await store.releaseDownload(call);
 
-        // 4. Compose the dual result: plain-text content + structured details.
+        // 4. AI extraction: ask the configured model to answer the prompt using
+        //    a bounded leading portion of the artifact.
+        let extraction: ExtractionResult;
+        try {
+          extraction = await extractAnswer(
+            registry,
+            resolvedModel,
+            {
+              url: urlStr,
+              title: conv.title ?? "",
+              prompt,
+              artifactPath,
+              artifactComplete: !conv.truncated,
+            },
+            budgetPolicy,
+            call.combinedSignal,
+          );
+        } catch (err) {
+          if (err instanceof ExtractionModelError) {
+            throw err;
+          }
+          // Wrap unexpected extraction failures with the artifact reference.
+          throw new ExtractionModelError(
+            `AI extraction failed: ${(err as Error).message}`,
+            urlStr,
+            artifactPath,
+            !conv.truncated,
+            err instanceof ExtractionModelError ? err.usage : undefined,
+            err,
+          );
+        }
+        call.assertActive();
+
+        // 5. Compose the dual result: plain-text content + structured details.
         const lines: string[] = [];
         if (conv.title) lines.push(`# ${conv.title}\n`);
         lines.push(`Source: ${urlStr}`);
@@ -225,22 +308,33 @@ export default function (pi: ExtensionAPI) {
             `Warning: artifact is partial — PDF extraction limited to ${callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} of ${conv.pageCount} pages`,
           );
         }
+        if (extraction.modelInputTruncated) {
+          lines.push(
+            `Warning: model input was truncated — only the first ${extraction.inputChars} characters of the source were sent to the extraction model`,
+          );
+        }
         if (conv.warning) lines.push(`Warning: ${conv.warning}`);
+        lines.push("Answer:");
 
-        const content = `${lines.join("\n")}\n\n${conv.text}`;
+        const content = `${lines.join("\n")}\n\n${extraction.answer}`;
         const details: WebFetchDetails = {
           url: urlStr,
           title: conv.title ?? "",
           contentType: conv.contentType,
-          contentLength: content.length,
           source: conv.source,
           extractionWarning: conv.warning,
           pageCount: conv.pageCount,
           truncated: conv.truncated,
           artifactPath,
           artifactComplete: !conv.truncated,
+          answer: extraction.answer,
+          answerLength: extraction.answer.length,
+          sourceLength: conv.text.length,
+          modelInputTruncated: extraction.modelInputTruncated,
+          modelProvider: extraction.modelProvider,
+          modelId: extraction.modelId,
         };
-        return textResult(content, details);
+        return textResult(content, details, extraction.usage);
       } catch (err) {
         // Remove incomplete files for this call only; never publish anything.
         await store.failCall(call);
