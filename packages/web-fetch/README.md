@@ -4,8 +4,8 @@ Adds a `web_fetch` tool that fetches a URL and returns a prompt-directed answer
 from an explicitly configured Extraction model, together with a **Readable
 artifact**: a session-owned local Markdown/plain-text file containing the full
 converted source. Supports HTML pages (whole-page Markdown conversion via
-streaming, incremental parsing), PDF documents (text extraction with page
-bounds), and plain-text/Markdown pass-through.
+Turndown + jsdom, bounded by the response cap), PDF documents (text extraction
+with page bounds), and plain-text/Markdown pass-through.
 
 ```typescript
 web_fetch({
@@ -93,26 +93,25 @@ web_fetch({
 
 ## Behavior
 
-| Scenario                                                 | Result                                                                                                       |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Valid HTML / text / Markdown / supported PDF             | AI extraction answer + finalized Readable artifact path                                                      |
-| HTML page                                                | Converted incrementally to whole-page Markdown; scripts/styles removed, navigation/reference links preserved |
-| Streaming conversion limits exceeded                     | Actionable error; conversion never buffers unbounded source or output                                        |
-| Missing or blank `prompt`                                | Clear error before any fetch                                                                                 |
-| Extraction model not configured                          | Actionable error pointing to `webFetch.extractionModel` settings                                             |
-| Configured model unavailable or missing credentials      | Actionable error before expensive retrieval                                                                  |
-| Model provider fails after successful conversion         | Error includes the completed artifact path and source metadata                                               |
-| Source larger than the model input budget                | Model sees only a leading portion; tool warns about partial evidence; artifact remains complete              |
-| PDF document (application/pdf or URL ending in .pdf)     | Text extracted with page count; truncated at 50 pages with notice                                            |
-| PDF exceeding 10MB                                       | Error with byte counts                                                                                       |
-| PDF with no extractable text (compressed/scanned)        | Clear error suggesting the file may need OCR                                                                 |
-| Plain text / Markdown file                               | Content passes through as a `.txt` Readable artifact                                                         |
-| Invalid URL, HTTP error (4xx/5xx), timeout               | Clear error message; nothing is written to disk                                                              |
-| Binary content type (images, audio, video, archives)     | Error with content-type explanation; PDFs are handled, not rejected                                          |
-| Response exceeds size cap (512 KiB ordinary, 10 MiB PDF) | Error with byte counts; partial downloads are removed                                                        |
-| JavaScript-only / unextractable page                     | Actionable error — **no** alternate-service (Jina/browser) fallback                                          |
-| Process crash leaves abandoned artifacts                 | Swept on next extension init/fetch; live/ambiguous owners preserved                                          |
-| Redirects                                                | Followed automatically                                                                                       |
+| Scenario                                                 | Result                                                                                                                                           |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Valid HTML / text / Markdown / supported PDF             | AI extraction answer + finalized Readable artifact path                                                                                          |
+| HTML page                                                | Converted to whole-page Markdown (Turndown): scripts/styles removed; tables, nested lists, code language, entities, and relative links preserved |
+| Missing or blank `prompt`                                | Clear error before any fetch                                                                                                                     |
+| Extraction model not configured                          | Actionable error pointing to `webFetch.extractionModel` settings                                                                                 |
+| Configured model unavailable or missing credentials      | Actionable error before expensive retrieval                                                                                                      |
+| Model provider fails after successful conversion         | Error includes the completed artifact path and source metadata                                                                                   |
+| Source larger than the model input budget                | Model sees only a leading portion; tool warns about partial evidence; artifact remains complete                                                  |
+| PDF document (application/pdf or URL ending in .pdf)     | Text extracted with page count; truncated at 50 pages with notice                                                                                |
+| PDF exceeding 10MB                                       | Error with byte counts                                                                                                                           |
+| PDF with no extractable text (compressed/scanned)        | Clear error suggesting the file may need OCR                                                                                                     |
+| Plain text / Markdown file                               | Content passes through as a `.txt` Readable artifact                                                                                             |
+| Invalid URL, HTTP error (4xx/5xx), timeout               | Clear error message; nothing is written to disk                                                                                                  |
+| Binary content type (images, audio, video, archives)     | Error with content-type explanation; PDFs are handled, not rejected                                                                              |
+| Response exceeds size cap (512 KiB ordinary, 10 MiB PDF) | Error with byte counts; partial downloads are removed                                                                                            |
+| JavaScript-only / unextractable page                     | Actionable error — **no** alternate-service (Jina/browser) fallback                                                                              |
+| Process crash leaves abandoned artifacts                 | Swept on next extension init/fetch; live/ambiguous owners preserved                                                                              |
+| Redirects                                                | Followed automatically; relative links resolve against the final URL                                                                             |
 
 ## AI extraction
 
@@ -180,11 +179,18 @@ Answer:
   (`os.tmpdir()/pi-web-fetch`, keyed by session and run) and removed once
   conversion finishes; incomplete downloads and artifacts are removed on
   failure or cancellation.
-- HTML conversion is streaming and bounded: it reads the download file in
-  chunks and writes the artifact file in chunks. Documented limits (token
-  buffer, stack depth, attribute length, output flush) are enforced; exceeding
-  a limit produces an actionable error rather than silent omission or
-  unbounded buffering.
+- HTML conversion fidelity: GFM tables (header/data rows, escaped cell pipes),
+  nested ordered/unordered lists, fenced code with derived language
+  (`language-*` classes), decoded entities, and relative links resolved against
+  the final post-redirect URL.
+- Honest conversion limits: a table without any header row has its first row
+  promoted to the header (GFM requires one); colspan/rowspan cells are not
+  replicated,
+  definition lists and form controls are simplified or dropped, and exotic
+  structures are converted as best the HTML parser and Turndown allow — not
+  browser-equivalent. Entities are decoded when written with a semicolon.
+- Conversion memory is bounded by the response cap (512 KiB): larger responses
+  fail clearly before conversion, so conversion never sees unbounded input.
 
 ## PDF extraction
 
@@ -206,8 +212,8 @@ packages/web-fetch/
 ├── index.ts       # Extension entry: registers web_fetch, lifecycle hooks
 ├── fetch.ts       # URL validation, fetch logic, content-type detection,
 │                  # streaming sink download, PDF extraction, HTML conversion entry
-├── converter.ts   # Streaming, incremental HTML → Markdown converter with
-│                  # bounded state, backpressure, and chunk-boundary safety
+├── converter.ts   # Turndown + jsdom HTML → Markdown conversion with link
+│                  # resolution, GFM tables, and code-language rules
 ├── extraction.ts  # AI extraction: model resolution, budget, completion
 ├── settings.ts    # Read webFetch.extractionModel from global/project settings
 ├── storage.ts     # Disk-backed downloads, session/run ownership, Readable
@@ -227,9 +233,9 @@ packages/web-fetch/
   `fetchUrl` accepts an optional `sink` to stream body bytes incrementally
   (Disk-backed download) instead of accumulating them, and an optional
   `fetchFn`/`extractPdfFn` for testability.
-- `converter.ts` implements streaming, incremental HTML → Markdown conversion.
-  It is dependency-free, bounds tokenizer/emitter state, handles adversarial
-  chunk boundaries, and writes the artifact incrementally.
+- `converter.ts` converts the capped source with jsdom + Turndown (GFM tables,
+  strikethrough, task lists), strips non-document elements, resolves links
+  against the final URL, and promotes header rows for <th>-less tables.
 - `settings.ts` reads the `webFetch.extractionModel` section from
   `~/.pi/agent/settings.json` and `.pi/settings.json`, with project overriding
   global.
@@ -263,13 +269,16 @@ and run through the registered tool via a fake Pi API, including lifecycle
 events:
 
 - Tool metadata, parameter schema, and lifecycle registration
-- URL validation, content-type detection, PDF extraction, streaming HTML conversion
+- URL validation, content-type detection, PDF extraction, library HTML conversion
 - Disk-backed download (streaming sink), size caps, timeouts
 - Required `url` and `prompt`; missing/blank prompts are rejected
 - Extraction model configuration errors: missing settings, unavailable model,
   missing credentials
 - Successful HTML/text/PDF calls return an AI extraction answer and a
   finalized artifact; PDF truncation is reported as a partial artifact
+- Structured fidelity through registered calls: tables, nested lists, code
+  language, entities, and relative links reach both the artifact and the model
+  evidence; relative links resolve against the post-redirect URL
 - Source-as-evidence separation: the artifact contains converted source, not
   the answer; the model request includes prompt + evidence with no tools
 - Budget policy: oversized prompts fail before completion; large sources send

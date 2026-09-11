@@ -8,6 +8,12 @@ catalog:
   "@earendil-works/pi-tui": 0.84.1
   # Shared libraries
   typebox: 1.3.13
+  # HTML → Markdown conversion
+  jsdom: 30.0.1
+  turndown: 7.2.4
+  "turndown-plugin-gfm": 1.0.2
+  "@types/turndown": 5.0.6
+  "@types/jsdom": 30.0.0
   # Workspace tooling
   "@vitest/coverage-v8": 4.1.10
   oxfmt: 0.63.0

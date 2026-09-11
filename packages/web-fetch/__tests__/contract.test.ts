@@ -43,7 +43,7 @@ import {
   WebFetchError,
 } from "../fetch.ts";
 import type { WebFetchDetails, FetchOptions, PdfExtractFn } from "../fetch.ts";
-import { convertHtmlToMarkdownAsync, streamHtmlToMarkdown } from "../converter.ts";
+import { convertHtmlToMarkdownAsync } from "../converter.ts";
 import { ArtifactStore, type OwnerRecord } from "../storage.ts";
 import { FakeProcessLiveness } from "../liveness.ts";
 
@@ -547,9 +547,9 @@ describe("extractPdfContent", () => {
   });
 });
 
-// ─── Streaming HTML → Markdown conversion ───────────────────────────────────
+// ─── HTML → Markdown conversion ──────────────────────────────────────
 
-describe("streaming HTML conversion", () => {
+describe("HTML conversion", () => {
   it("extracts the title and preserves whole-page content including nav/footer", async () => {
     const { title, markdown } = await convertHtmlToMarkdownAsync(
       HTML_FIXTURE,
@@ -562,7 +562,9 @@ describe("streaming HTML conversion", () => {
   });
 
   it("strips <script> and <style> elements", async () => {
-    const html = `<html><body><article><h1>Real</h1><p>Text.</p><script>alert('x');</script><style>.c{}</style></article></body></html>`;
+    const html =
+      "<html><body><article><h1>Real</h1><p>Text.</p>" +
+      "<script>alert('x');</script><style>.c{}</style></article></body></html>";
     const { markdown } = await convertHtmlToMarkdownAsync(html, "https://example.com");
     expect(markdown).toContain("Real");
     expect(markdown).not.toContain("alert");
@@ -579,13 +581,14 @@ describe("streaming HTML conversion", () => {
 
   it("renders headings, links, emphasis, code, lists, and entities", async () => {
     const { markdown } = await convertHtmlToMarkdownAsync(
-      '<h1>One</h1><p>Visit <a href="https://example.com">Example</a> with <strong>bold</strong> and <code>fetch()</code>.</p><ul><li>Item A</li></ul><p>AT&amp;T</p>',
+      '<h1>One</h1><p>Visit <a href="https://example.com">Example</a> with ' +
+        "<strong>bold</strong> and <code>fetch()</code>.</p><ul><li>Item A</li></ul><p>AT&amp;T</p>",
     );
     expect(markdown).toContain("# One");
     expect(markdown).toContain("[Example](https://example.com/)");
     expect(markdown).toContain("**bold**");
     expect(markdown).toContain("`fetch()`");
-    expect(markdown).toContain("- Item A");
+    expect(markdown).toMatch(/-\s+Item A/);
     expect(markdown).toContain("AT&T");
   });
 
@@ -597,246 +600,102 @@ describe("streaming HTML conversion", () => {
     expect(markdown).toContain("const x = 1;");
     expect(markdown).toContain("![Photo](https://example.com/i.png)");
   });
-});
 
-// ─── Streaming converter: whole-page fidelity ───────────────────────────────
-
-describe("streaming HTML conversion — whole-page fidelity", () => {
-  it("preserves navigation, reference links, and content outside article/main", async () => {
-    const html = `
-      <html><head><title>Reference Page</title></head>
-      <body>
-        <nav><a href="/home">Home</a> <a href="/about">About</a></nav>
-        <main>
-          <h1>Main Article</h1>
-          <p>Article body.</p>
-        </main>
-        <aside>
-          <h2>References</h2>
-          <ul>
-            <li><a href="/ref/one">Reference one</a></li>
-          </ul>
-        </aside>
-        <footer>Contact: <a href="mailto:x@example.com">x@example.com</a></footer>
-      </body></html>`;
+  it("keeps navigation, reference links, and content outside article/main", async () => {
+    const html = [
+      "<html><head><title>Reference Page</title></head><body>",
+      '<nav><a href="/home">Home</a> <a href="/about">About</a></nav>',
+      "<main><h1>Main Article</h1><p>Article body.</p></main>",
+      '<aside><h2>References</h2><ul><li><a href="/ref/one">Reference one</a></li></ul></aside>',
+      '<footer>Contact: <a href="mailto:x@example.com">x@example.com</a></footer>',
+      "</body></html>",
+    ].join("\n");
     const { markdown, title } = await convertHtmlToMarkdownAsync(html, "https://example.com/page");
     expect(title).toBe("Reference Page");
     expect(markdown).toContain("Main Article");
-    expect(markdown).toContain("[Home](https://example.com/home)");
+    expect(markdown).toContain("Article body");
     expect(markdown).toContain("[About](https://example.com/about)");
     expect(markdown).toContain("References");
+    expect(markdown).toContain("[Home](https://example.com/home)");
     expect(markdown).toContain("[Reference one](https://example.com/ref/one)");
     expect(markdown).toContain("[x@example.com](mailto:x@example.com)");
   });
 
-  it("preserves table source text and nested lists without discarding them", async () => {
-    const html = `
-      <table>
-        <tr><th>Name</th><th>Value</th></tr>
-        <tr><td>Alpha</td><td>1</td></tr>
-        <tr><td>Beta</td><td>2</td></tr>
-      </table>
-      <ul>
-        <li>Outer
-          <ul><li>Inner one</li><li>Inner two</li></ul>
-        </li>
-      </ul>`;
+  it("renders tables with header, data rows, and row order", async () => {
+    const html = [
+      "<table><thead><tr><th>Name</th><th>Value</th></tr></thead>",
+      "<tbody><tr><td>Alpha</td><td>1</td></tr><tr><td>Beta</td><td>2</td></tr></tbody></table>",
+    ].join("\n");
     const { markdown } = await convertHtmlToMarkdownAsync(html);
-    expect(markdown).toContain("Alpha");
-    expect(markdown).toContain("Beta");
-    expect(markdown).toContain("Outer");
-    expect(markdown).toContain("Inner one");
-    expect(markdown).toContain("Inner two");
     expect(markdown).toContain("| Name | Value |");
     expect(markdown).toContain("| --- | --- |");
+    expect(markdown.indexOf("Alpha")).toBeLessThan(markdown.indexOf("Beta"));
   });
 
-  it("excludes script and style bodies while keeping surrounding content", async () => {
-    const html = `
-      <p>Before script.</p>
-      <script>console.log('hidden'); document.write('bad');</script>
-      <style>.hidden { display: none; }</style>
-      <p>After style.</p>`;
-    const { markdown } = await convertHtmlToMarkdownAsync(html);
-    expect(markdown).toContain("Before script");
-    expect(markdown).toContain("After style");
-    expect(markdown).not.toContain("hidden");
-    expect(markdown).not.toContain("console.log");
-    expect(markdown).not.toContain("display: none");
-  });
-});
-
-// ─── Streaming converter: chunk independence and adversarial boundaries ─────
-
-function chunked(html: string, sizes: number[]): AsyncIterable<Uint8Array> {
-  const encoder = new TextEncoder();
-  return {
-    [Symbol.asyncIterator]: () => {
-      let offset = 0;
-      let index = 0;
-      return {
-        next: () => {
-          if (offset >= html.length) {
-            return Promise.resolve({ value: undefined, done: true } as IteratorResult<Uint8Array>);
-          }
-          const size = sizes[index++] ?? 1;
-          const chunk = html.slice(offset, offset + size);
-          offset += chunk.length;
-          return Promise.resolve({ value: encoder.encode(chunk), done: false });
-        },
-      };
-    },
-  };
-}
-
-async function chunksToMarkdown(
-  html: string,
-  sizes: number[],
-): Promise<{ markdown: string; title: string }> {
-  const parts: string[] = [];
-  const result = await streamHtmlToMarkdown(
-    chunked(html, sizes),
-    {
-      write: async (text) => {
-        parts.push(text);
-      },
-    },
-    { url: "https://example.com" },
-  );
-  return { markdown: parts.join(""), title: result.title };
-}
-
-describe("streaming HTML conversion — chunk independence", () => {
-  it("produces the same meaningful output for adversarial chunk boundaries", async () => {
-    const html = `<h1>Titles &amp; Codes</h1><p>Price: &#36;5 &lt; 10. Emoji: 🎉</p><pre><code>if (x &lt; 0) { alert("negative"); }</code></pre>`;
-    const oneChunk = await chunksToMarkdown(html, [html.length]);
-    const tinyChunks = await chunksToMarkdown(html, [1, 1, 2, 3, 5, 8, 13, 21, 1000]);
-    expect(tinyChunks.title).toBe(oneChunk.title);
-    expect(tinyChunks.markdown).toContain("# Titles & Codes");
-    expect(tinyChunks.markdown).toContain("Price: $5 < 10");
-    expect(tinyChunks.markdown).toContain("🎉");
-    expect(tinyChunks.markdown).toContain('if (x < 0) { alert("negative"); }');
-  });
-
-  it("does not leak scripts when their closing delimiter is split across chunks", async () => {
-    const html = `<p>Safe</p><script>alert('x');</script><p>Also safe</p>`;
-    // Split right inside </script> so the end tag spans chunks.
-    const split = [html.indexOf("</sc") + 4];
-    const { markdown } = await chunksToMarkdown(html, split);
-    expect(markdown).toContain("Safe");
-    expect(markdown).toContain("Also safe");
-    expect(markdown).not.toContain("alert");
-  });
-
-  it("handles multibyte characters split across chunk boundaries", async () => {
-    const html = `<p>日本語テキスト</p>`;
-    const { markdown } = await chunksToMarkdown(html, [3, 3, 3, 100]);
-    expect(markdown).toContain("日本語テキスト");
-  });
-});
-
-// ─── Streaming converter: backpressure and bounded state ────────────────────
-
-describe("streaming HTML conversion — bounded state / backpressure", () => {
-  it("writes output before the entire input has been consumed", async () => {
-    const bigText = "word ".repeat(10_000);
-    const html = `<h1>Start</h1><p>${bigText}</p><h1>End</h1>`;
-    const encoder = new TextEncoder();
-
-    let inputConsumed = 0;
-    let outputStarted = false;
-    let outputBeforeEnd = false;
-
-    async function* source(): AsyncIterable<Uint8Array> {
-      const chunk = encoder.encode(html);
-      for (let i = 0; i < chunk.length; i += 64) {
-        inputConsumed = i;
-        yield chunk.subarray(i, i + 64);
-      }
-      inputConsumed = chunk.length;
-    }
-
-    const writer = {
-      write: async (text: string) => {
-        if (!outputStarted) outputStarted = true;
-        if (inputConsumed < html.length && text.includes("word")) {
-          outputBeforeEnd = true;
-        }
-      },
-    };
-
-    await streamHtmlToMarkdown(source(), writer, { url: "https://example.com" });
-    expect(outputStarted).toBe(true);
-    expect(outputBeforeEnd).toBe(true);
-  });
-
-  it("applies backpressure with a slow writer", async () => {
-    const bigText = "word ".repeat(10_000);
-    const html = `<h1>Start</h1><p>${bigText}</p><h1>End</h1>`;
-    const encoder = new TextEncoder();
-
-    let concurrentWrites = 0;
-    let maxConcurrentWrites = 0;
-
-    const writer = {
-      write: async (_text: string) => {
-        concurrentWrites++;
-        maxConcurrentWrites = Math.max(maxConcurrentWrites, concurrentWrites);
-        await new Promise((r) => setTimeout(r, 2));
-        concurrentWrites--;
-      },
-    };
-
-    await streamHtmlToMarkdown(
-      (async function* () {
-        yield encoder.encode(html);
-      })(),
-      writer,
-      { url: "https://example.com", outputFlushBytes: 1024 },
+  it("treats the first row as the header when the table has no <th>", async () => {
+    const { markdown } = await convertHtmlToMarkdownAsync(
+      "<table><tr><td>Key</td><td>Val</td></tr><tr><td>a</td><td>b</td></tr></table>",
     );
-
-    expect(maxConcurrentWrites).toBe(1);
+    expect(markdown).toContain("| Key | Val |");
+    expect(markdown).toContain("| --- | --- |");
+    expect(markdown).toContain("| a | b |");
   });
 
-  it("fails actionably when the token buffer limit is exceeded", async () => {
-    const html = `<p>${"x".repeat(200_000)}`;
-    await expect(
-      convertHtmlToMarkdownAsync(html, "https://example.com", { maxTokenBufferBytes: 1024 }),
-    ).rejects.toThrow(/token buffer exceeded/);
+  it("escapes pipes in table cells so rows keep their columns", async () => {
+    const { markdown } = await convertHtmlToMarkdownAsync(
+      "<table><tr><th>Cmd</th><th>Notes</th></tr><tr><td>a|b</td><td>pipe test</td></tr></table>",
+    );
+    expect(markdown).toContain("a\\|b");
+    const row = markdown.split("\n").find((l) => l.includes("pipe test"));
+    // Exactly two cells once escaped pipes are not counted as delimiters.
+    expect(row!.split(/(?<!\\)\|/)).toHaveLength(4);
   });
 
-  it("fails actionably when element nesting depth is exceeded", async () => {
-    const html = "<div>".repeat(500) + "text" + "</div>".repeat(500);
-    await expect(
-      convertHtmlToMarkdownAsync(html, "https://example.com", { maxStackDepth: 10 }),
-    ).rejects.toThrow(/nesting depth exceeded/);
+  it("preserves nested list structure and meaningful numbering", async () => {
+    const html =
+      '<ol start="2"><li>one<ul><li>bullet-a</li></ul></li>' +
+      "<li>two<ol><li>two-one</li></ol></li></ol>";
+    const { markdown } = await convertHtmlToMarkdownAsync(html);
+    expect(markdown).toMatch(/2\.\s+one/);
+    expect(markdown).toMatch(/3\.\s+two/);
+    expect(markdown).toMatch(/^\s+-\s+bullet-a/m);
+    expect(markdown).toMatch(/^\s+1\.\s+two-one/m);
   });
-});
 
-// ─── Streaming converter: cancellation and lifecycle ────────────────────────
+  it("preserves code language and whitespace, and wraps backticked inline code", async () => {
+    const html =
+      '<pre><code class="language-python">def f():\n    return 1</code></pre>' +
+      "<p>Use <code>a `tick`</code> here</p>";
+    const { markdown } = await convertHtmlToMarkdownAsync(html);
+    expect(markdown).toContain("```python");
+    expect(markdown).toContain("    return 1");
+    expect(markdown).toMatch(/`` ?a `tick` ?``/);
+  });
 
-describe("streaming HTML conversion — cancellation", () => {
-  it("stops writing and propagates abort when the signal fires", async () => {
-    const controller = new AbortController();
-    const bigText = "word ".repeat(10_000);
-    const html = `<p>${bigText}</p>`;
-    const encoder = new TextEncoder();
+  it("keeps a fence inside code from corrupting the block", async () => {
+    const { markdown } = await convertHtmlToMarkdownAsync(
+      "<pre><code>```\nnested\n```</code></pre>",
+    );
+    const fenceLines = markdown.split("\n").filter((l) => /^`+$/.test(l.trim()));
+    expect(fenceLines[0]!.length).toBeGreaterThan(3);
+    expect(markdown).toContain("nested");
+  });
 
-    const writer = {
-      write: async (_text: string) => {
-        controller.abort();
-      },
-    };
+  it("decodes common named and numeric entities", async () => {
+    const { markdown } = await convertHtmlToMarkdownAsync(
+      "<p>&amp; &lt; &copy; caf&eacute; &#9731;</p>",
+    );
+    expect(markdown).toContain("& < © café ☃");
+  });
 
-    await expect(
-      streamHtmlToMarkdown(
-        (async function* () {
-          yield encoder.encode(html);
-        })(),
-        writer,
-        { url: "https://example.com", signal: controller.signal },
-      ),
-    ).rejects.toThrow();
+  it("resolves relative and fragment links against the source URL", async () => {
+    const { markdown } = await convertHtmlToMarkdownAsync(
+      '<p><a href="/docs/guide">guide</a> <a href="#intro">intro</a> <a href="https://abs.example">abs</a></p>',
+      "https://example.com/docs/page.html",
+    );
+    expect(markdown).toContain("[guide](https://example.com/docs/guide)");
+    expect(markdown).toContain("[intro](https://example.com/docs/page.html#intro)");
+    expect(markdown).toContain("[abs](https://abs.example/)");
   });
 });
 
@@ -986,6 +845,106 @@ describe("web_fetch tool — successful calls", () => {
     expect(artifactText).toContain("Footer");
     expect(artifactText).not.toContain("Artifact:");
     expect(artifactText).not.toContain("Mock extraction answer");
+  });
+
+  it("structured HTML reaches the artifact and the model evidence", async () => {
+    const registry = makeFakeRegistry();
+    const api = makeFakeApi();
+    const html = [
+      "<html><head><title>Spec</title></head><body>",
+      '<nav><a href="/nav">Nav link</a></nav>',
+      "<table><tr><th>API</th><th>Description</th></tr>",
+      "<tr><td>web_fetch</td><td>Fetches pages</td></tr></table>",
+      "<ul><li>Topic<ul><li>Detail &amp; more</li></ul></li></ul>",
+      '<pre><code class="language-js">const x = 1;</code></pre>',
+      "<p>Escaped: &lt;tag&gt; caf&eacute;</p>",
+      "</body></html>",
+    ].join("\n");
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(mockResponse(html, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com/reference", prompt: "Describe the API table" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+    const details = result.details as WebFetchDetails;
+
+    const artifactText = await readFile(details.artifactPath, "utf8");
+    expect(artifactText).toContain("| --- | --- |");
+    expect(artifactText).toContain("[Nav link](https://example.com/nav)");
+    expect(artifactText).toContain("Detail & more");
+    expect(artifactText).toContain("```js");
+    expect(artifactText).toContain("<tag> café");
+    expect(artifactText).not.toContain("<script");
+
+    // The mocked model observes the same structured evidence within its budget.
+    const context = registry.completeCalls[0].context as {
+      messages: { content: { text: string }[] }[];
+    };
+    const evidence = context.messages[0].content[0].text;
+    expect(evidence).toContain("| web\\_fetch |");
+    expect(evidence).toContain("```js");
+    expect(details.answer).toBe("Mock extraction answer");
+    expect(details.artifactComplete).toBe(true);
+    expect(details.modelInputTruncated).toBe(false);
+  });
+
+  it("resolves relative links against the post-redirect URL", async () => {
+    const registry = makeFakeRegistry();
+    const api = makeFakeApi();
+    const response = mockResponse(
+      '<html><head><title>Moved</title></head><body><p><a href="/docs/page">page</a></p></body></html>',
+      200,
+      { "content-type": "text/html" },
+    );
+    (response as { url?: string }).url = "https://redirected.example.com/final/page";
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(response),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com/old", prompt: "Find the link" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+    const details = result.details as WebFetchDetails;
+    const artifactText = await readFile(details.artifactPath, "utf8");
+    expect(artifactText).toContain("[page](https://redirected.example.com/docs/page)");
+  });
+
+  it("converts malformed markup without losing the rest of the document", async () => {
+    const registry = makeFakeRegistry();
+    const api = makeFakeApi();
+    const html =
+      "<html><head><title>Broken</title></head><body>" +
+      "<p>Before</p><div><span>unclosed<div>" +
+      "<table><tr><td>cell without row end" +
+      "<p>After</p></body>";
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(mockResponse(html, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Read the page" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+    const details = result.details as WebFetchDetails;
+    const artifactText = await readFile(details.artifactPath, "utf8");
+    expect(artifactText).toContain("Before");
+    expect(artifactText).toContain("After");
+    expect(artifactText).toContain("unclosed");
   });
 
   it("fetching plain text creates a .txt artifact with the trimmed source", async () => {
@@ -1273,7 +1232,7 @@ describe("web_fetch tool — AI extraction contract", () => {
   });
 
   it("truncates model input to a leading portion and reports partial evidence", async () => {
-    const artifactBody = "A".repeat(2000) + "__END_MARKER__";
+    const artifactBody = "A".repeat(2000) + "END-OF-SOURCE";
     const smallModel = makeModel({ contextWindow: 500, maxTokens: 100 });
     const registry = makeFakeRegistry(smallModel);
     const api = makeFakeApi();
@@ -1297,11 +1256,11 @@ describe("web_fetch tool — AI extraction contract", () => {
     const details = result.details as WebFetchDetails;
 
     // The artifact contains the marker because conversion finished regardless of model budget.
-    expect(await readFile(details.artifactPath, "utf8")).toContain("__END_MARKER__");
+    expect(await readFile(details.artifactPath, "utf8")).toContain("END-OF-SOURCE");
     // The model request did not contain the marker.
     const call = registry.completeCalls[0];
     const context = call.context as { messages: { content: { text: string }[] }[] };
-    expect(context.messages[0].content[0].text).not.toContain("__END_MARKER__");
+    expect(context.messages[0].content[0].text).not.toContain("END-OF-SOURCE");
     // The tool reports the partial-input warning and keeps artifactComplete true.
     expect(details.modelInputTruncated).toBe(true);
     expect(details.artifactComplete).toBe(true);
@@ -1396,9 +1355,8 @@ describe("web_fetch tool — AI extraction contract", () => {
       makeCtx("sess-1", registry),
     );
 
-    // Wait for the model call to start.
-    await new Promise((r) => setTimeout(r, 10));
-    expect(registry.completeCalls.length).toBe(1);
+    // Wait for the model call to start (conversion + parse take a moment).
+    await vi.waitFor(() => expect(registry.completeCalls.length).toBe(1));
 
     // Leave the session while the model call is pending, and await the
     // expected rejection in parallel so the abort is always observed by a

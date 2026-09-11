@@ -72,11 +72,12 @@ function resolveModelRegistry(ctx: ExtensionContext) {
 
 // ─── Converted source (per content type) ─────────────────────────────────────
 
+/** Converted source per content type. */
 interface ConvertedSource {
   kind: ArtifactKind;
   /** Converted source text — becomes the Readable artifact's content.
-   *  For streaming HTML conversion the artifact is written directly to disk
-   *  and this field may be empty; use `artifactPath` and `sourceLength`.
+   *  For library HTML conversion the artifact is written directly to disk and
+   *  this field may be empty; use `artifactPath` and `sourceLength`.
    */
   text: string;
   title?: string;
@@ -91,7 +92,7 @@ interface ConvertedSource {
   sourceLength?: number;
 }
 
-async function convertHtmlStreaming(
+async function convertHtmlPage(
   downloadPath: string,
   artifactPath: string,
   urlStr: string,
@@ -196,21 +197,26 @@ export default function (pi: ExtensionAPI) {
       "Fetch a URL and return a prompt-directed answer based on the page content, " +
       "plus a Readable artifact of the converted source. Requires both a `url` and an " +
       "`prompt`. The URL is fetched directly with a browser-like user agent, enforced " +
-      "30-second timeout, and response-size cap. HTML is converted to whole-page Markdown " +
-      "incrementally: scripts and styles are removed, but navigation, reference links, and " +
-      "content outside an article/main element are preserved in source order. An explicitly " +
-      "configured Extraction model answers the prompt using the converted source; only a " +
-      "bounded leading portion of large sources is sent to the model. The artifact contains " +
-      "the full converted source (within limits) and lives only for the creating session. " +
-      "A path from an old transcript is stale — refetch the URL to regenerate it. " +
-      "Unsupported binary media types, unusable extraction, exceeded limits, and missing " +
-      "extraction-model configuration produce clear errors.",
+      "30-second timeout, and response-size cap (512 KiB; 10 MiB for PDFs). HTML is converted " +
+      "to whole-page Markdown: scripts and styles are removed, while tables, nested lists, " +
+      "code blocks with language, navigation, reference links, and content outside an " +
+      "article/main element are preserved in source order; relative links resolve against " +
+      "the final URL after redirects. An explicitly configured Extraction model answers the " +
+      "prompt using the converted source; only a bounded leading portion of large sources is " +
+      "sent to the model. The artifact contains the full converted source (within limits) and " +
+      "lives only for the creating session. A path from an old transcript is stale — refetch " +
+      "the URL to regenerate it. Unsupported binary media types, unusable extraction, " +
+      "exceeded limits, and missing extraction-model configuration produce clear errors.",
     promptSnippet: "Fetch a URL and answer a specific question about its content",
     promptGuidelines: [
       "Use web_fetch to retrieve a web page and get an answer to a specific question about it.",
       "Both `url` and `prompt` are required. Missing or empty prompts are rejected; there is no implicit summary.",
       "The result includes the AI extraction answer and an absolute path to a Readable artifact of the converted source, valid only for the current session.",
-      "HTML is converted to whole-page Markdown incrementally: the artifact keeps navigation, reference sections, and other content outside article/main elements in source order. Scripts and styles are excluded.",
+      "HTML is converted to whole-page Markdown: tables keep their columns, nested lists keep " +
+        "their structure, code blocks keep whitespace and language, and navigation or reference " +
+        "sections outside article/main elements remain in source order. Scripts and styles are " +
+        "excluded. Exotic structures (colspan/rowspan spreads, definition lists, form controls) " +
+        "are simplified rather than perfectly reproduced.",
       "Large sources may be truncated for the model input; the artifact remains complete unless the source itself was truncated or the PDF page limit was reached. Refetch the URL after leaving a session instead of reusing an old artifact path.",
       "PDFs are extracted up to 10MB and 50 pages; longer PDFs include a truncation notice and a partial artifact.",
       "Combine with web_search to first discover relevant URLs, then fetch the most promising ones.",
@@ -280,12 +286,9 @@ export default function (pi: ExtensionAPI) {
           );
           await writeFile(artifactPath, conv.text);
         } else if (isHtmlContentType(contentType) || contentType === "") {
-          conv = await convertHtmlStreaming(
-            downloadPath,
-            artifactPath,
-            urlStr,
-            call.combinedSignal,
-          );
+          // Relative links resolve against the final URL after redirects.
+          const baseUrl = response.url || urlStr;
+          conv = await convertHtmlPage(downloadPath, artifactPath, baseUrl, call.combinedSignal);
         } else if (isTextContentType(contentType)) {
           const body = await readFile(downloadPath, "utf8");
           conv = convertText(body, contentType);
