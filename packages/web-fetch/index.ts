@@ -104,7 +104,8 @@ function convertText(body: string, contentType: string): ConvertedSource {
 // ─── Extension entry point ───────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-  const store = new ArtifactStore(getRuntimeKnobs().storageRoot);
+  const knobs = getRuntimeKnobs();
+  const store = new ArtifactStore(knobs.storageRoot, knobs.processLiveness);
 
   // Lifecycle: artifacts belong to the session that created them. Leaving,
   // replacing, or shutting down the session removes them; in-session
@@ -134,7 +135,8 @@ export default function (pi: ExtensionAPI) {
       "and plain-text/Markdown responses pass through. " +
       "Each successful call also writes a Readable artifact file with the converted source " +
       "and returns its absolute path. Artifacts live only for the creating session: they are " +
-      "deleted when you leave or end that session, so a path from an old transcript is stale — " +
+      "deleted when you leave or end that session, and crash leftovers are swept each time the extension " +
+      "initializes or fetches a URL. A path from an old transcript is stale — " +
       "refetch the URL to regenerate it. " +
       "Unsupported binary media types, unusable extraction, and exceeded limits produce clear errors.",
     promptSnippet: "Fetch a URL and return its content as readable Markdown",
@@ -142,7 +144,7 @@ export default function (pi: ExtensionAPI) {
       "Use web_fetch to retrieve the full content of a web page for analysis, summarization, or fact-checking.",
       "PDFs are extracted up to 10MB and 50 pages; longer PDFs include a truncation notice and a partial artifact.",
       "Combine with web_search to first discover relevant URLs, then fetch the most promising ones.",
-      "The result includes an artifact path to the converted source file, valid only for the current session — refetch the URL after leaving a session instead of reusing an old path.",
+      "The result includes an artifact path to the converted source file, valid only for the current session — refetch the URL after leaving a session instead of reusing an old path; crash leftovers are swept when the extension next runs, not by a background service.",
       "For documentation-heavy topics, check for /llms.txt on the host before fetching individual pages.",
       "Fetching is direct only: JavaScript-only or blocked pages are not sent to any alternate service.",
     ],
@@ -152,8 +154,8 @@ export default function (pi: ExtensionAPI) {
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
       const rawUrl = params.url as string;
       const url = validateUrl(rawUrl);
-      const knobs = getRuntimeKnobs();
-      const call = store.beginCall(resolveSessionId(ctx), toolCallId, signal);
+      const callKnobs = getRuntimeKnobs();
+      const call = await store.beginCall(resolveSessionId(ctx), toolCallId, signal);
 
       try {
         const run = await store.ensureRunDir(call);
@@ -167,8 +169,8 @@ export default function (pi: ExtensionAPI) {
 
         const fetchOpts: FetchOptions = {
           signal,
-          fetchFn: knobs.fetchFn,
-          fetchTimeoutMs: knobs.fetchTimeoutMs,
+          fetchFn: callKnobs.fetchFn,
+          fetchTimeoutMs: callKnobs.fetchTimeoutMs,
           sink: (chunk) => {
             // Never keep writing into a removed run or after cancellation.
             call.assertActive();
@@ -186,7 +188,7 @@ export default function (pi: ExtensionAPI) {
 
         let conv: ConvertedSource;
         if (isPdfContentType(contentType, urlStr)) {
-          conv = convertPdf(body, urlStr, knobs.extractPdfFn, knobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT);
+          conv = convertPdf(body, urlStr, callKnobs.extractPdfFn, callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT);
         } else if (isHtmlContentType(contentType) || contentType === "") {
           conv = convertHtml(body, urlStr);
         } else if (isTextContentType(contentType)) {
@@ -214,13 +216,13 @@ export default function (pi: ExtensionAPI) {
         lines.push(`Artifact: ${artifactPath}`);
         if (conv.pageCount !== undefined) {
           const pageInfo = conv.truncated
-            ? `Pages: ${conv.pageCount} (extraction limited to first ${knobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} pages)`
+            ? `Pages: ${conv.pageCount} (extraction limited to first ${callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} pages)`
             : `Pages: ${conv.pageCount}`;
           lines.push(pageInfo);
         }
         if (conv.truncated) {
           lines.push(
-            `Warning: artifact is partial — PDF extraction limited to ${knobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} of ${conv.pageCount} pages`,
+            `Warning: artifact is partial — PDF extraction limited to ${callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} of ${conv.pageCount} pages`,
           );
         }
         if (conv.warning) lines.push(`Warning: ${conv.warning}`);

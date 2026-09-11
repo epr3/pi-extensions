@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, readdir, readFile, rm, chmod, access, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, chmod, access, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -39,7 +39,8 @@ import {
   WebFetchError,
 } from "../fetch.ts";
 import type { WebFetchDetails, FetchOptions, PdfExtractFn } from "../fetch.ts";
-import { ArtifactStore } from "../storage.ts";
+import { ArtifactStore, type OwnerRecord } from "../storage.ts";
+import { FakeProcessLiveness } from "../liveness.ts";
 
 // ─── Test harness: fake Pi API with tool capture + lifecycle events ─────────
 
@@ -248,6 +249,10 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function writeOwnerRecord(recordPath: string, record: OwnerRecord): Promise<void> {
+  await writeFile(recordPath, JSON.stringify(record, null, 2));
 }
 
 // ─── Per-test isolation ──────────────────────────────────────────────────────
@@ -963,7 +968,7 @@ describe("web_fetch tool — cleanup failure observability", () => {
 describe("ArtifactStore internal — finalized artifact retention", () => {
   it("does not delete an artifact that was settled before a later failure", async () => {
     const store = new ArtifactStore(storageRoot);
-    const call = store.beginCall("sess-1", "c1", undefined);
+    const call = await store.beginCall("sess-1", "c1", undefined);
     const run = await store.ensureRunDir(call);
 
     // Simulate a completed call: download registered, artifact written, settled.
@@ -982,7 +987,7 @@ describe("ArtifactStore internal — finalized artifact retention", () => {
 
   it("still removes an artifact that was never settled", async () => {
     const store = new ArtifactStore(storageRoot);
-    const call = store.beginCall("sess-1", "c1", undefined);
+    const call = await store.beginCall("sess-1", "c1", undefined);
     await store.ensureRunDir(call);
 
     const artifactPath = join(storageRoot, "sess-1", store.runId, `${call.baseName}-artifact.md`);
@@ -992,6 +997,238 @@ describe("ArtifactStore internal — finalized artifact retention", () => {
     await store.failCall(call);
 
     expect(await fileExists(artifactPath)).toBe(false);
+  });
+});
+
+// ─── Crash/abandoned-run cleanup ─────────────────────────────────────────────
+
+function makeOwnerRecord(overrides: Partial<OwnerRecord> & { sessionId: string; runId: string; pid: number }): OwnerRecord {
+  return {
+    schema: 1,
+    sessionId: overrides.sessionId,
+    runId: overrides.runId,
+    pid: overrides.pid,
+    pidStartTime: overrides.pidStartTime,
+    createdAt: new Date(Date.now() - 60_000).toISOString(),
+    artifacts: overrides.artifacts ?? [],
+    incomplete: overrides.incomplete ?? [],
+  };
+}
+
+describe("web_fetch tool — crash/abandoned-run cleanup", () => {
+  it("sweeps demonstrably abandoned runs when the extension initializes", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    liveness.setAnswer(99999, "dead");
+
+    const abandonedSession = join(storageRoot, "crashed-session");
+    const abandonedRun = join(abandonedSession, "dead-run");
+    await mkdir(abandonedRun, { recursive: true });
+    await writeOwnerRecord(join(abandonedRun, "owner.json"), makeOwnerRecord({ sessionId: "crashed-session", runId: "dead-run", pid: 99999 }));
+    await writeFile(join(abandonedRun, "artifact.md"), "leftover");
+
+    const store = new ArtifactStore(storageRoot, liveness);
+    await store.waitForInitSweep();
+
+    expect(await fileExists(abandonedRun)).toBe(false);
+    expect(await fileExists(abandonedSession)).toBe(false);
+  });
+
+  it("sweeps demonstrably abandoned runs on a subsequent fetch", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    liveness.setAnswer(99999, "dead");
+    configureTestRuntime({
+      storageRoot,
+      processLiveness: liveness,
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    const api = makeFakeApi();
+    const abandonedSession = join(storageRoot, "crashed-session");
+    const abandonedRun = join(abandonedSession, "dead-run");
+    await mkdir(abandonedRun, { recursive: true });
+    await writeOwnerRecord(join(abandonedRun, "owner.json"), makeOwnerRecord({ sessionId: "crashed-session", runId: "dead-run", pid: 99999 }));
+    await writeFile(join(abandonedRun, "partial.download"), "leftover");
+
+    await api.tool.execute("c1", { url: "https://example.com" }, undefined, undefined, makeCtx("sess-1"));
+
+    expect(await fileExists(abandonedRun)).toBe(false);
+  });
+
+  it("preserves live owners from other processes", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    liveness.setAnswer(11111, "live", new Date(Date.now() - 120_000).toISOString());
+    configureTestRuntime({ storageRoot, processLiveness: liveness });
+
+    const liveSession = join(storageRoot, "live-session");
+    const liveRun = join(liveSession, "live-run");
+    await mkdir(liveRun, { recursive: true });
+    await writeOwnerRecord(join(liveRun, "owner.json"), makeOwnerRecord({ sessionId: "live-session", runId: "live-run", pid: 11111, pidStartTime: new Date(Date.now() - 120_000).toISOString() }));
+    await writeFile(join(liveRun, "artifact.md"), "keep me");
+
+    makeFakeApi();
+
+    expect(await fileExists(liveRun)).toBe(true);
+    expect(await readFile(join(liveRun, "artifact.md"), "utf8")).toBe("keep me");
+  });
+
+  it("preserves ambiguous owners when liveness is unknown", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    liveness.setAnswer(11111, "unknown");
+    configureTestRuntime({ storageRoot, processLiveness: liveness });
+
+    const ambiguousSession = join(storageRoot, "ambiguous-session");
+    const ambiguousRun = join(ambiguousSession, "ambiguous-run");
+    await mkdir(ambiguousRun, { recursive: true });
+    await writeOwnerRecord(join(ambiguousRun, "owner.json"), makeOwnerRecord({ sessionId: "ambiguous-session", runId: "ambiguous-run", pid: 11111 }));
+    await writeFile(join(ambiguousRun, "artifact.md"), "maybe keep");
+
+    makeFakeApi();
+
+    expect(await fileExists(ambiguousRun)).toBe(true);
+  });
+
+  it("treats a reused pid with a different start time as abandoned", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    const oldStart = new Date(Date.now() - 120_000).toISOString();
+    const newStart = new Date(Date.now() - 30_000).toISOString();
+    liveness.setAnswer(11111, "live", newStart);
+
+    const reusedSession = join(storageRoot, "reused-session");
+    const reusedRun = join(reusedSession, "reused-run");
+    await mkdir(reusedRun, { recursive: true });
+    await writeOwnerRecord(join(reusedRun, "owner.json"), makeOwnerRecord({ sessionId: "reused-session", runId: "reused-run", pid: 11111, pidStartTime: oldStart }));
+
+    const store = new ArtifactStore(storageRoot, liveness);
+    await store.waitForInitSweep();
+
+    expect(await fileExists(reusedRun)).toBe(false);
+  });
+
+  it("keeps a remote owner whose start time matches the record", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    const start = new Date(Date.now() - 120_000).toISOString();
+    liveness.setAnswer(11111, "live", start);
+    configureTestRuntime({ storageRoot, processLiveness: liveness });
+
+    const keptSession = join(storageRoot, "kept-session");
+    const keptRun = join(keptSession, "kept-run");
+    await mkdir(keptRun, { recursive: true });
+    await writeOwnerRecord(join(keptRun, "owner.json"), makeOwnerRecord({ sessionId: "kept-session", runId: "kept-run", pid: 11111, pidStartTime: start }));
+    await writeFile(join(keptRun, "artifact.md"), "kept");
+
+    makeFakeApi();
+
+    expect(await fileExists(keptRun)).toBe(true);
+  });
+
+  it("never deletes a live session's files, even while sweeping other abandoned runs", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    liveness.setAnswer(99999, "dead");
+    configureTestRuntime({
+      storageRoot,
+      processLiveness: liveness,
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    const api = makeFakeApi();
+    const crashedSession = join(storageRoot, "crashed-session");
+    const crashedRun = join(crashedSession, "dead-run");
+    await mkdir(crashedRun, { recursive: true });
+    await writeOwnerRecord(join(crashedRun, "owner.json"), makeOwnerRecord({ sessionId: "crashed-session", runId: "dead-run", pid: 99999 }));
+
+    const result = await api.tool.execute("c1", { url: "https://example.com" }, undefined, undefined, makeCtx("sess-1"));
+    const liveArtifact = (result.details as WebFetchDetails).artifactPath;
+
+    expect(await fileExists(crashedRun)).toBe(false);
+    expect(await fileExists(liveArtifact)).toBe(true);
+  });
+
+  it("does not follow ownership records or links outside the owned area", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    liveness.setAnswer(99999, "dead");
+
+    const outsideFile = join(os.tmpdir(), `web-fetch-outside-${Date.now()}.txt`);
+    await writeFile(outsideFile, "outside");
+
+    const rogueSession = join(storageRoot, "rogue-session");
+    const rogueRun = join(rogueSession, "rogue-run");
+    await mkdir(rogueRun, { recursive: true });
+    const record = makeOwnerRecord({ sessionId: "rogue-session", runId: "rogue-run", pid: 99999 });
+    record.artifacts.push({ path: outsideFile, kind: "text", complete: true });
+    await writeOwnerRecord(join(rogueRun, "owner.json"), record);
+
+    const store = new ArtifactStore(storageRoot, liveness);
+    await store.waitForInitSweep();
+
+    expect(await fileExists(outsideFile)).toBe(true);
+    expect(await fileExists(rogueRun)).toBe(false);
+    await rm(outsideFile, { force: true });
+  });
+
+  it("reports a cleanup failure, keeps the ownership record, and retries successfully", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    liveness.setAnswer(99999, "dead");
+    const fetchFor = (body: string) =>
+      makeFetchMock(mockResponse(body, 200, { "content-type": "text/html" }));
+    configureTestRuntime({
+      storageRoot,
+      processLiveness: liveness,
+      fetchFn: fetchFor(HTML_FIXTURE),
+    });
+
+    const crashedSession = join(storageRoot, "crashed-session");
+    const crashedRun = join(crashedSession, "dead-run");
+    await mkdir(crashedRun, { recursive: true });
+    await writeOwnerRecord(join(crashedRun, "owner.json"), makeOwnerRecord({ sessionId: "crashed-session", runId: "dead-run", pid: 99999 }));
+    await writeFile(join(crashedRun, "artifact.md"), "stuck");
+
+    // Make the run directory read-only so deletion fails.
+    await chmod(crashedRun, 0o555);
+    const api = makeFakeApi();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // First fetch attempts cleanup and fails.
+    await api.tool.execute("c1", { url: "https://example.com" }, undefined, undefined, makeCtx("sess-1"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("abandoned-run cleanup failed"));
+    expect(await fileExists(crashedRun)).toBe(true);
+
+    // Restore permissions; a later fetch retries and succeeds.
+    await chmod(crashedRun, 0o755);
+    configureTestRuntime({ fetchFn: fetchFor("<html><body><article><h1>Again</h1><p>ok</p></article></body></html>") });
+    await api.tool.execute("c2", { url: "https://example.com/again" }, undefined, undefined, makeCtx("sess-1"));
+    expect(await fileExists(crashedRun)).toBe(false);
+
+    errorSpy.mockRestore();
+  });
+
+  it("is idempotent when an abandoned run is already removed", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    liveness.setAnswer(99999, "dead");
+
+    const crashedSession = join(storageRoot, "crashed-session");
+    const crashedRun = join(crashedSession, "dead-run");
+    await mkdir(crashedRun, { recursive: true });
+    await writeOwnerRecord(join(crashedRun, "owner.json"), makeOwnerRecord({ sessionId: "crashed-session", runId: "dead-run", pid: 99999 }));
+
+    await rm(crashedRun, { recursive: true, force: true });
+
+    const store = new ArtifactStore(storageRoot, liveness);
+    await expect(store.waitForInitSweep()).resolves.toBeUndefined();
+    expect(await fileExists(crashedSession)).toBe(false);
+  });
+
+  it("preserves a brand-new run directory that has not written its owner.json yet", async () => {
+    const liveness = new FakeProcessLiveness({ pid: process.pid });
+    configureTestRuntime({ storageRoot, processLiveness: liveness });
+
+    const racingSession = join(storageRoot, "racing-session");
+    const racingRun = join(racingSession, "racing-run");
+    await mkdir(racingRun, { recursive: true });
+    // No owner.json: sweep cannot prove abandonment, so it must preserve.
+
+    makeFakeApi();
+
+    expect(await fileExists(racingRun)).toBe(true);
   });
 });
 
