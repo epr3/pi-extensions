@@ -97,9 +97,7 @@ export class DefaultProcessLiveness implements ProcessLiveness {
     if (!liveStart) {
       return "unknown";
     }
-    return normalizeStartTime(liveStart) === normalizeStartTime(recordStartTime)
-      ? "live"
-      : "dead";
+    return normalizeStartTime(liveStart) === normalizeStartTime(recordStartTime) ? "live" : "dead";
   }
 
   private async getStartTime(pid: number): Promise<string | undefined> {

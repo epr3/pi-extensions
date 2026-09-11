@@ -1,6 +1,8 @@
 # Prompt-directed extraction with session-owned source artifacts
 
-Status: accepted design; implementation pending.
+Status: accepted design; implementation in progress (disk-backed downloads,
+session-owned artifacts, and streaming whole-page HTML conversion landed;
+AI extraction and crash-safe cleanup in follow-up tickets).
 
 `web_fetch` will require `{ url, prompt }` and return a prompt-directed **AI extraction** answer plus a **Readable artifact** path, rather than inline source Markdown. This deliberately breaks URL-only calls and introduces a model-call dependency: an explicitly configured provider/model uses Pi's existing credentials, independently of the session model, with usage included in session accounting. Missing configuration, credentials, or failed extraction produces an actionable error, not a silent model substitution; a completed source artifact remains available through its path when AI extraction fails. The plain-text `content` plus structured `details` contract remains, although the meaning of the text changes from source document to answer.
 
