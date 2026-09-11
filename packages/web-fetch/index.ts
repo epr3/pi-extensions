@@ -10,7 +10,6 @@ import { join } from "node:path";
 import {
   validateUrl,
   fetchUrl,
-  extractHtmlContent,
   isHtmlContentType,
   isTextContentType,
   isPdfContentType,
@@ -20,6 +19,7 @@ import {
   WebFetchError,
   DEFAULT_PDF_PAGE_LIMIT,
 } from "./fetch.ts";
+import { convertHtmlFileToMarkdown } from "./converter.ts";
 import type { WebFetchDetails, FetchOptions, PdfExtractFn } from "./fetch.ts";
 import { ArtifactStore, FileSink } from "./storage.ts";
 import type { ArtifactKind } from "./storage.ts";
@@ -74,7 +74,10 @@ function resolveModelRegistry(ctx: ExtensionContext) {
 
 interface ConvertedSource {
   kind: ArtifactKind;
-  /** Converted source text — becomes the Readable artifact's content. */
+  /** Converted source text — becomes the Readable artifact's content.
+   *  For streaming HTML conversion the artifact is written directly to disk
+   *  and this field may be empty; use `artifactPath` and `sourceLength`.
+   */
   text: string;
   title?: string;
   warning?: string;
@@ -82,11 +85,24 @@ interface ConvertedSource {
   truncated?: boolean;
   source: WebFetchDetails["source"];
   contentType: string;
+  /** Absolute path when the conversion wrote the artifact directly. */
+  artifactPath?: string;
+  /** Pre-computed source length when the text is not loaded in memory. */
+  sourceLength?: number;
 }
 
-function convertHtml(body: string, urlStr: string): ConvertedSource {
-  const { title, content, extractionWarning } = extractHtmlContent(body, urlStr);
-  if (!content.trim()) {
+async function convertHtmlStreaming(
+  downloadPath: string,
+  artifactPath: string,
+  urlStr: string,
+  signal?: AbortSignal,
+): Promise<ConvertedSource> {
+  const { title, textChars, outputChars, extractionWarning } = await convertHtmlFileToMarkdown(
+    downloadPath,
+    artifactPath,
+    { url: urlStr, signal },
+  );
+  if (textChars === 0) {
     throw new WebFetchError(
       urlStr,
       "Failed to extract readable content — the page may be JavaScript-rendered or empty",
@@ -94,11 +110,13 @@ function convertHtml(body: string, urlStr: string): ConvertedSource {
   }
   return {
     kind: "markdown",
-    text: content,
+    text: "", // artifact is on disk; not loaded into memory
     title,
     warning: extractionWarning,
     source: "html",
     contentType: "text/html",
+    artifactPath,
+    sourceLength: outputChars,
   };
 }
 
@@ -127,6 +145,18 @@ function convertPdf(
 
 function convertText(body: string, contentType: string): ConvertedSource {
   return { kind: "text", text: processPlainText(body), source: "text", contentType };
+}
+
+function artifactExtension(contentType: string, url: string): string {
+  if (
+    isPdfContentType(contentType, url) ||
+    isHtmlContentType(contentType) ||
+    contentType === "text/markdown" ||
+    contentType === ""
+  ) {
+    return "md";
+  }
+  return "txt";
 }
 
 function validatePrompt(raw: unknown): string {
@@ -166,18 +196,21 @@ export default function (pi: ExtensionAPI) {
       "Fetch a URL and return a prompt-directed answer based on the page content, " +
       "plus a Readable artifact of the converted source. Requires both a `url` and an " +
       "`prompt`. The URL is fetched directly with a browser-like user agent, enforced " +
-      "30-second timeout, and response-size cap, then converted to Markdown or text. " +
-      "An explicitly configured Extraction model answers the prompt using the converted " +
-      "source; only a bounded leading portion of large sources is sent to the model. " +
-      "The artifact contains the full converted source (within limits) and lives only " +
-      "for the creating session. A path from an old transcript is stale — refetch the URL " +
-      "to regenerate it. Unsupported binary media types, unusable extraction, exceeded " +
-      "limits, and missing extraction-model configuration produce clear errors.",
+      "30-second timeout, and response-size cap. HTML is converted to whole-page Markdown " +
+      "incrementally: scripts and styles are removed, but navigation, reference links, and " +
+      "content outside an article/main element are preserved in source order. An explicitly " +
+      "configured Extraction model answers the prompt using the converted source; only a " +
+      "bounded leading portion of large sources is sent to the model. The artifact contains " +
+      "the full converted source (within limits) and lives only for the creating session. " +
+      "A path from an old transcript is stale — refetch the URL to regenerate it. " +
+      "Unsupported binary media types, unusable extraction, exceeded limits, and missing " +
+      "extraction-model configuration produce clear errors.",
     promptSnippet: "Fetch a URL and answer a specific question about its content",
     promptGuidelines: [
       "Use web_fetch to retrieve a web page and get an answer to a specific question about it.",
       "Both `url` and `prompt` are required. Missing or empty prompts are rejected; there is no implicit summary.",
       "The result includes the AI extraction answer and an absolute path to a Readable artifact of the converted source, valid only for the current session.",
+      "HTML is converted to whole-page Markdown incrementally: the artifact keeps navigation, reference sections, and other content outside article/main elements in source order. Scripts and styles are excluded.",
       "Large sources may be truncated for the model input; the artifact remains complete unless the source itself was truncated or the PDF page limit was reached. Refetch the URL after leaving a session instead of reusing an old artifact path.",
       "PDFs are extracted up to 10MB and 50 pages; longer PDFs include a truncation notice and a partial artifact.",
       "Combine with web_search to first discover relevant URLs, then fetch the most promising ones.",
@@ -229,20 +262,34 @@ export default function (pi: ExtensionAPI) {
 
         // 2. Convert the downloaded source (existing bounded converters).
         const contentType = normalizeContentType(response.headers.get("content-type"));
-        const body = await readFile(downloadPath, "utf8");
 
         let conv: ConvertedSource;
+        const artifactPath = join(
+          run.dir,
+          `${call.baseName}-artifact.${artifactExtension(contentType, urlStr)}`,
+        );
+        call.artifactPath = artifactPath;
+
         if (isPdfContentType(contentType, urlStr)) {
+          const body = await readFile(downloadPath, "utf8");
           conv = convertPdf(
             body,
             urlStr,
             callKnobs.extractPdfFn,
             callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT,
           );
+          await writeFile(artifactPath, conv.text);
         } else if (isHtmlContentType(contentType) || contentType === "") {
-          conv = convertHtml(body, urlStr);
+          conv = await convertHtmlStreaming(
+            downloadPath,
+            artifactPath,
+            urlStr,
+            call.combinedSignal,
+          );
         } else if (isTextContentType(contentType)) {
+          const body = await readFile(downloadPath, "utf8");
           conv = convertText(body, contentType);
+          await writeFile(artifactPath, conv.text);
         } else {
           throw new WebFetchError(
             urlStr,
@@ -251,10 +298,6 @@ export default function (pi: ExtensionAPI) {
         }
 
         // 3. Finalize the Readable artifact, then release the raw download.
-        const extension = conv.kind === "markdown" ? "md" : "txt";
-        const artifactPath = join(run.dir, `${call.baseName}-artifact.${extension}`);
-        call.artifactPath = artifactPath;
-        await writeFile(artifactPath, conv.text);
         await store.settleArtifact(call, conv.kind, !conv.truncated);
         call.assertActive();
         await store.releaseDownload(call);
@@ -329,7 +372,7 @@ export default function (pi: ExtensionAPI) {
           artifactComplete: !conv.truncated,
           answer: extraction.answer,
           answerLength: extraction.answer.length,
-          sourceLength: conv.text.length,
+          sourceLength: conv.sourceLength ?? conv.text.length,
           modelInputTruncated: extraction.modelInputTruncated,
           modelProvider: extraction.modelProvider,
           modelId: extraction.modelId,

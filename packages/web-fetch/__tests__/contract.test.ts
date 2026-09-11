@@ -37,14 +37,13 @@ import {
   isTextContentType,
   isPdfContentType,
   normalizeContentType,
-  extractHtmlContent,
-  htmlToMarkdown,
   processPlainText,
   fetchUrl,
   extractPdfContent,
   WebFetchError,
 } from "../fetch.ts";
 import type { WebFetchDetails, FetchOptions, PdfExtractFn } from "../fetch.ts";
+import { convertHtmlToMarkdownAsync, streamHtmlToMarkdown } from "../converter.ts";
 import { ArtifactStore, type OwnerRecord } from "../storage.ts";
 import { FakeProcessLiveness } from "../liveness.ts";
 
@@ -548,56 +547,296 @@ describe("extractPdfContent", () => {
   });
 });
 
-// ─── HTML extraction ─────────────────────────────────────────────────────────
+// ─── Streaming HTML → Markdown conversion ───────────────────────────────────
 
-describe("extractHtmlContent", () => {
-  it("extracts the <title> and strips nav/footer chrome", () => {
-    const { title, content } = extractHtmlContent(HTML_FIXTURE, "https://example.com");
+describe("streaming HTML conversion", () => {
+  it("extracts the title and preserves whole-page content including nav/footer", async () => {
+    const { title, markdown } = await convertHtmlToMarkdownAsync(
+      HTML_FIXTURE,
+      "https://example.com",
+    );
     expect(title).toBe("Test Page");
-    expect(content).toContain("Main Heading");
-    expect(content).not.toContain("Nav links");
-    expect(content).not.toContain("Footer");
+    expect(markdown).toContain("Main Heading");
+    expect(markdown).toContain("Nav links");
+    expect(markdown).toContain("Footer");
   });
 
-  it("strips <script> and <style> elements", () => {
+  it("strips <script> and <style> elements", async () => {
     const html = `<html><body><article><h1>Real</h1><p>Text.</p><script>alert('x');</script><style>.c{}</style></article></body></html>`;
-    const { content } = extractHtmlContent(html, "https://example.com");
-    expect(content).toContain("Real");
-    expect(content).not.toContain("alert");
-    expect(content).not.toContain(".c");
+    const { markdown } = await convertHtmlToMarkdownAsync(html, "https://example.com");
+    expect(markdown).toContain("Real");
+    expect(markdown).not.toContain("alert");
+    expect(markdown).not.toContain(".c");
   });
 
-  it("emits an extraction warning for very short content", () => {
-    const { extractionWarning } = extractHtmlContent(
+  it("emits an extraction warning for very short content", async () => {
+    const { extractionWarning } = await convertHtmlToMarkdownAsync(
       "<html><body><p>Hi</p></body></html>",
       "https://example.com",
     );
     expect(extractionWarning).toContain("Very little content");
   });
-});
 
-// ─── Markdown conversion ─────────────────────────────────────────────────────
-
-describe("htmlToMarkdown", () => {
-  it("renders headings, links, emphasis, code, lists, and entities", () => {
-    const md = htmlToMarkdown(
+  it("renders headings, links, emphasis, code, lists, and entities", async () => {
+    const { markdown } = await convertHtmlToMarkdownAsync(
       '<h1>One</h1><p>Visit <a href="https://example.com">Example</a> with <strong>bold</strong> and <code>fetch()</code>.</p><ul><li>Item A</li></ul><p>AT&amp;T</p>',
     );
-    expect(md).toContain("# One");
-    expect(md).toContain("[Example](https://example.com)");
-    expect(md).toContain("**bold**");
-    expect(md).toContain("`fetch()`");
-    expect(md).toContain("- Item A");
-    expect(md).toContain("AT&T");
+    expect(markdown).toContain("# One");
+    expect(markdown).toContain("[Example](https://example.com/)");
+    expect(markdown).toContain("**bold**");
+    expect(markdown).toContain("`fetch()`");
+    expect(markdown).toContain("- Item A");
+    expect(markdown).toContain("AT&T");
   });
 
-  it("renders fenced code blocks and images", () => {
-    const md = htmlToMarkdown(
+  it("renders fenced code blocks and images", async () => {
+    const { markdown } = await convertHtmlToMarkdownAsync(
       '<pre><code>const x = 1;</code></pre><img src="https://example.com/i.png" alt="Photo">',
     );
-    expect(md).toContain("```");
-    expect(md).toContain("const x = 1;");
-    expect(md).toContain("![Photo](https://example.com/i.png)");
+    expect(markdown).toContain("```");
+    expect(markdown).toContain("const x = 1;");
+    expect(markdown).toContain("![Photo](https://example.com/i.png)");
+  });
+});
+
+// ─── Streaming converter: whole-page fidelity ───────────────────────────────
+
+describe("streaming HTML conversion — whole-page fidelity", () => {
+  it("preserves navigation, reference links, and content outside article/main", async () => {
+    const html = `
+      <html><head><title>Reference Page</title></head>
+      <body>
+        <nav><a href="/home">Home</a> <a href="/about">About</a></nav>
+        <main>
+          <h1>Main Article</h1>
+          <p>Article body.</p>
+        </main>
+        <aside>
+          <h2>References</h2>
+          <ul>
+            <li><a href="/ref/one">Reference one</a></li>
+          </ul>
+        </aside>
+        <footer>Contact: <a href="mailto:x@example.com">x@example.com</a></footer>
+      </body></html>`;
+    const { markdown, title } = await convertHtmlToMarkdownAsync(html, "https://example.com/page");
+    expect(title).toBe("Reference Page");
+    expect(markdown).toContain("Main Article");
+    expect(markdown).toContain("[Home](https://example.com/home)");
+    expect(markdown).toContain("[About](https://example.com/about)");
+    expect(markdown).toContain("References");
+    expect(markdown).toContain("[Reference one](https://example.com/ref/one)");
+    expect(markdown).toContain("[x@example.com](mailto:x@example.com)");
+  });
+
+  it("preserves table source text and nested lists without discarding them", async () => {
+    const html = `
+      <table>
+        <tr><th>Name</th><th>Value</th></tr>
+        <tr><td>Alpha</td><td>1</td></tr>
+        <tr><td>Beta</td><td>2</td></tr>
+      </table>
+      <ul>
+        <li>Outer
+          <ul><li>Inner one</li><li>Inner two</li></ul>
+        </li>
+      </ul>`;
+    const { markdown } = await convertHtmlToMarkdownAsync(html);
+    expect(markdown).toContain("Alpha");
+    expect(markdown).toContain("Beta");
+    expect(markdown).toContain("Outer");
+    expect(markdown).toContain("Inner one");
+    expect(markdown).toContain("Inner two");
+    expect(markdown).toContain("| Name | Value |");
+    expect(markdown).toContain("| --- | --- |");
+  });
+
+  it("excludes script and style bodies while keeping surrounding content", async () => {
+    const html = `
+      <p>Before script.</p>
+      <script>console.log('hidden'); document.write('bad');</script>
+      <style>.hidden { display: none; }</style>
+      <p>After style.</p>`;
+    const { markdown } = await convertHtmlToMarkdownAsync(html);
+    expect(markdown).toContain("Before script");
+    expect(markdown).toContain("After style");
+    expect(markdown).not.toContain("hidden");
+    expect(markdown).not.toContain("console.log");
+    expect(markdown).not.toContain("display: none");
+  });
+});
+
+// ─── Streaming converter: chunk independence and adversarial boundaries ─────
+
+function chunked(html: string, sizes: number[]): AsyncIterable<Uint8Array> {
+  const encoder = new TextEncoder();
+  return {
+    [Symbol.asyncIterator]: () => {
+      let offset = 0;
+      let index = 0;
+      return {
+        next: () => {
+          if (offset >= html.length) {
+            return Promise.resolve({ value: undefined, done: true } as IteratorResult<Uint8Array>);
+          }
+          const size = sizes[index++] ?? 1;
+          const chunk = html.slice(offset, offset + size);
+          offset += chunk.length;
+          return Promise.resolve({ value: encoder.encode(chunk), done: false });
+        },
+      };
+    },
+  };
+}
+
+async function chunksToMarkdown(
+  html: string,
+  sizes: number[],
+): Promise<{ markdown: string; title: string }> {
+  const parts: string[] = [];
+  const result = await streamHtmlToMarkdown(
+    chunked(html, sizes),
+    {
+      write: async (text) => {
+        parts.push(text);
+      },
+    },
+    { url: "https://example.com" },
+  );
+  return { markdown: parts.join(""), title: result.title };
+}
+
+describe("streaming HTML conversion — chunk independence", () => {
+  it("produces the same meaningful output for adversarial chunk boundaries", async () => {
+    const html = `<h1>Titles &amp; Codes</h1><p>Price: &#36;5 &lt; 10. Emoji: 🎉</p><pre><code>if (x &lt; 0) { alert("negative"); }</code></pre>`;
+    const oneChunk = await chunksToMarkdown(html, [html.length]);
+    const tinyChunks = await chunksToMarkdown(html, [1, 1, 2, 3, 5, 8, 13, 21, 1000]);
+    expect(tinyChunks.title).toBe(oneChunk.title);
+    expect(tinyChunks.markdown).toContain("# Titles & Codes");
+    expect(tinyChunks.markdown).toContain("Price: $5 < 10");
+    expect(tinyChunks.markdown).toContain("🎉");
+    expect(tinyChunks.markdown).toContain('if (x < 0) { alert("negative"); }');
+  });
+
+  it("does not leak scripts when their closing delimiter is split across chunks", async () => {
+    const html = `<p>Safe</p><script>alert('x');</script><p>Also safe</p>`;
+    // Split right inside </script> so the end tag spans chunks.
+    const split = [html.indexOf("</sc") + 4];
+    const { markdown } = await chunksToMarkdown(html, split);
+    expect(markdown).toContain("Safe");
+    expect(markdown).toContain("Also safe");
+    expect(markdown).not.toContain("alert");
+  });
+
+  it("handles multibyte characters split across chunk boundaries", async () => {
+    const html = `<p>日本語テキスト</p>`;
+    const { markdown } = await chunksToMarkdown(html, [3, 3, 3, 100]);
+    expect(markdown).toContain("日本語テキスト");
+  });
+});
+
+// ─── Streaming converter: backpressure and bounded state ────────────────────
+
+describe("streaming HTML conversion — bounded state / backpressure", () => {
+  it("writes output before the entire input has been consumed", async () => {
+    const bigText = "word ".repeat(10_000);
+    const html = `<h1>Start</h1><p>${bigText}</p><h1>End</h1>`;
+    const encoder = new TextEncoder();
+
+    let inputConsumed = 0;
+    let outputStarted = false;
+    let outputBeforeEnd = false;
+
+    async function* source(): AsyncIterable<Uint8Array> {
+      const chunk = encoder.encode(html);
+      for (let i = 0; i < chunk.length; i += 64) {
+        inputConsumed = i;
+        yield chunk.subarray(i, i + 64);
+      }
+      inputConsumed = chunk.length;
+    }
+
+    const writer = {
+      write: async (text: string) => {
+        if (!outputStarted) outputStarted = true;
+        if (inputConsumed < html.length && text.includes("word")) {
+          outputBeforeEnd = true;
+        }
+      },
+    };
+
+    await streamHtmlToMarkdown(source(), writer, { url: "https://example.com" });
+    expect(outputStarted).toBe(true);
+    expect(outputBeforeEnd).toBe(true);
+  });
+
+  it("applies backpressure with a slow writer", async () => {
+    const bigText = "word ".repeat(10_000);
+    const html = `<h1>Start</h1><p>${bigText}</p><h1>End</h1>`;
+    const encoder = new TextEncoder();
+
+    let concurrentWrites = 0;
+    let maxConcurrentWrites = 0;
+
+    const writer = {
+      write: async (_text: string) => {
+        concurrentWrites++;
+        maxConcurrentWrites = Math.max(maxConcurrentWrites, concurrentWrites);
+        await new Promise((r) => setTimeout(r, 2));
+        concurrentWrites--;
+      },
+    };
+
+    await streamHtmlToMarkdown(
+      (async function* () {
+        yield encoder.encode(html);
+      })(),
+      writer,
+      { url: "https://example.com", outputFlushBytes: 1024 },
+    );
+
+    expect(maxConcurrentWrites).toBe(1);
+  });
+
+  it("fails actionably when the token buffer limit is exceeded", async () => {
+    const html = `<p>${"x".repeat(200_000)}`;
+    await expect(
+      convertHtmlToMarkdownAsync(html, "https://example.com", { maxTokenBufferBytes: 1024 }),
+    ).rejects.toThrow(/token buffer exceeded/);
+  });
+
+  it("fails actionably when element nesting depth is exceeded", async () => {
+    const html = "<div>".repeat(500) + "text" + "</div>".repeat(500);
+    await expect(
+      convertHtmlToMarkdownAsync(html, "https://example.com", { maxStackDepth: 10 }),
+    ).rejects.toThrow(/nesting depth exceeded/);
+  });
+});
+
+// ─── Streaming converter: cancellation and lifecycle ────────────────────────
+
+describe("streaming HTML conversion — cancellation", () => {
+  it("stops writing and propagates abort when the signal fires", async () => {
+    const controller = new AbortController();
+    const bigText = "word ".repeat(10_000);
+    const html = `<p>${bigText}</p>`;
+    const encoder = new TextEncoder();
+
+    const writer = {
+      write: async (_text: string) => {
+        controller.abort();
+      },
+    };
+
+    await expect(
+      streamHtmlToMarkdown(
+        (async function* () {
+          yield encoder.encode(html);
+        })(),
+        writer,
+        { url: "https://example.com", signal: controller.signal },
+      ),
+    ).rejects.toThrow();
   });
 });
 
@@ -740,11 +979,13 @@ describe("web_fetch tool — successful calls", () => {
     expect(result.usage).toEqual(makeUsage());
 
     // The artifact file itself contains converted source, not the answer or header.
+    // Whole-page conversion preserves navigation and reference content.
     const artifactText = await readFile(details.artifactPath, "utf8");
     expect(artifactText).toContain("Main Heading");
+    expect(artifactText).toContain("Nav links");
+    expect(artifactText).toContain("Footer");
     expect(artifactText).not.toContain("Artifact:");
     expect(artifactText).not.toContain("Mock extraction answer");
-    expect(artifactText).not.toContain("Nav links");
   });
 
   it("fetching plain text creates a .txt artifact with the trimmed source", async () => {
