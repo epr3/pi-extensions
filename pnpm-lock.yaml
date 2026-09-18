@@ -97,6 +97,16 @@ importers:
         specifier: 'catalog:'
         version: 7.0.2
 
+  packages/model-compaction:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: 'catalog:'
+        version: 0.84.1(ws@8.21.0)(zod@4.4.3)
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/model-presets:
     dependencies:
       '@earendil-works/pi-coding-agent':

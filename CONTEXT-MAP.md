@@ -5,6 +5,7 @@ This repo uses a multi-context layout mirroring the tracked Pi Extension package
 ## Contexts
 
 - [lsp](./packages/lsp/CONTEXT.md) — language-server-backed code navigation and diagnostics tools.
+- [model-compaction](./packages/model-compaction/CONTEXT.md) — model-aware compaction trigger that starts automatic compaction at 50% of the active model's advertised context window.
 - [model-presets](./packages/model-presets/CONTEXT.md) — atomic provider/model/thinking presets for Pi model selection.
 - [question](./packages/question/CONTEXT.md) — structured multiple-choice question tool for interactive agent workflows.
 - [statusline](./packages/statusline/CONTEXT.md) — context-degradation footer status rendered inside Pi.
@@ -27,6 +28,7 @@ This repo uses a multi-context layout mirroring the tracked Pi Extension package
 - **Package test suite** contains **Deterministic package tests**, especially for web and LSP boundaries.
 - Skills depend on these tools only when available and keep prose or direct-tool fallbacks.
 - **Tool presentation** uses a dual result contract: stable plain-text `content` for the model plus structured `details` for user-facing renderers or session state.
+- **Model-aware compaction Extension package** measures the **Model context window**; the statusline's **Effective limit** stays fixed and independent.
 
 ## Cross-context language
 
@@ -35,6 +37,9 @@ _Avoid_: Tool docs, better descriptions.
 
 **Tool presentation**: User-facing affordances that make a tool's activity and result legible in Pi, including call rows, result renderers, streaming updates, interactive prompts, and statusline output.
 _Avoid_: Tool UI, better UX.
+
+**Model context window**: The active model's advertised token capacity that model-aware compaction measures its 50% boundary against, distinct from the statusline's fixed **Effective limit**.
+_Avoid_: Context budget, dumb zone, token reserve.
 
 **Extension test harness**: Vitest-based package-level test setup that lets each **Extension package** run its own behavior tests through its local `test` script.
 _Avoid_: Proper testing framework, test tooling, test setup.
