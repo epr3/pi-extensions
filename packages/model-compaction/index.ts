@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isAtOrAboveThreshold } from "./trigger.ts";
+import { CONTINUATION_CONTEXT, isInterruptedWork } from "./resume.ts";
 
 /**
  * Model-aware compaction Extension package.
@@ -14,9 +15,11 @@ import { isAtOrAboveThreshold } from "./trigger.ts";
  * `compaction.keepRecentTokens` setting (see `packages/pi-config/settings.json`),
  * applied to manual and extension-triggered compaction alike.
  *
- * `ctx.compact()` is asynchronous and fire-and-forget: the callbacks settle the
- * in-progress guard. Automatic continuation after an interrupted turn and
- * user-visible failure reporting are follow-up ticket 0002.
+ * `ctx.compact()` is asynchronous and fire-and-forget. A successful compaction
+ * of an interrupted tool-result turn injects hidden continuation context so the
+ * model resumes the work; a text-only turn compacts without a follow-up reply.
+ * A failed compaction notifies the user, clears the in-progress guard, and is
+ * retried after the next completed turn that stays at or above the threshold.
  */
 export default function (pi: ExtensionAPI): void {
   let compacting = false;
@@ -25,13 +28,34 @@ export default function (pi: ExtensionAPI): void {
     compacting = false;
   };
 
-  pi.on("turn_end", (_event, ctx: ExtensionContext) => {
+  pi.on("turn_end", (event, ctx: ExtensionContext) => {
     if (compacting) return;
     if (!isAtOrAboveThreshold(ctx.getContextUsage())) return;
 
+    // Capture this turn's shape now: the continuation decision belongs to the
+    // compaction this turn starts, not to whatever completes later.
+    const interrupted = isInterruptedWork(event);
     compacting = true;
     try {
-      ctx.compact({ onComplete: settle, onError: settle });
+      ctx.compact({
+        onComplete: () => {
+          settle();
+          if (interrupted)
+            pi.sendMessage(
+              {
+                customType: "model-compaction-continuation",
+                content: CONTINUATION_CONTEXT,
+                display: false,
+              },
+              { triggerTurn: true },
+            );
+        },
+        onError: (error) => {
+          // Notify + release the guard; the next breached turn retries.
+          settle();
+          ctx.ui.notify(`Automatic compaction failed: ${error.message}`, "error");
+        },
+      });
     } catch {
       // The request never started, so it is not active: release the guard.
       settle();
