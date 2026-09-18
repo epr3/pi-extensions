@@ -1,0 +1,22 @@
+{
+  "name": "@epr3/pi-extension-model-compaction",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Model-aware compaction: start automatic compaction at 50% of the active model's advertised context window.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts --root ."
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

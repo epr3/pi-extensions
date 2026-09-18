@@ -1,6 +1,6 @@
 # Pi Agent Skill Suite — Artifact-First Workflow
 
-Pi port of a nineteen-skill suite (`@earendil-works/pi`), plus eight Pi Extension packages. The workflow:
+Pi port of a nineteen-skill suite (`@earendil-works/pi`), plus nine Pi Extension packages. The workflow:
 
 ```
 /grill-with-docs  →  /to-prd  →  /to-issues  →  /resolve-issue  →  /offload-context
@@ -16,7 +16,7 @@ Grill the thinking out against the domain docs, synthesize a PRD, break it into 
 **Architecture** — `improve-codebase-architecture` (+ `LANGUAGE`, `DEEPENING`, `INTERFACE-DESIGN`, `HTML-REPORT`)
 **Setup & utilities** — `setup-context` · `sharpen-context` · `merge-context` · `rebase-context` · `zoom-out` · `handoff` · `write-a-skill` · `caveman` · `teach` (+ 4 format refs)
 
-## The eight Extension packages (`packages/<name>/`, TypeScript)
+## The nine Extension packages (`packages/<name>/`, TypeScript)
 
 All are real Pi extensions written against the documented `ExtensionAPI`, loaded via jiti (no build step). `typebox`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-ai` are provided by Pi at runtime. Each Extension package lives in its own directory under `packages/` and is a first-class buildable unit; the shipped config bundle (`pi-config/`) is separate and is not an Extension package.
 
@@ -27,6 +27,7 @@ All are real Pi extensions written against the documented `ExtensionAPI`, loaded
 | `todo`            | `todo_write` / `todo_read`                                                                                                                                    | state in tool-result details, reconstructed on `session_start`                                                                                                          |
 | `lsp`             | `lsp_definition` / `implementation` / `references` / `workspace_symbols` / `document_symbols` / `hover` / `incoming_calls` / `outgoing_calls` / `diagnostics` | dependency-free stdio LSP client; runtime-tested vs a mock server                                                                                                       |
 | `statusline`      | dumb-zone footer status                                                                                                                                       | uses `ctx.getContextUsage()`, `ctx.model.contextWindow`, `ctx.cwd`, `pi.exec(git)`, `ctx.ui.setStatus`                                                                  |
+| `model-compaction` | model-aware compaction trigger                                                                                                                               | `turn_end` + `ctx.getContextUsage()` start one `ctx.compact()` at 50% of the active model's advertised window; Pi's native fixed-token auto-compaction is disabled in settings |
 | `web-fetch`       | `web_fetch` tool for fetching URLs and extracting Markdown                                                                                                    | validates URLs, browser-like UA, timeout, size cap, HTML→Markdown via heuristic extraction, plain-text pass-through, binary rejection                                   |
 | `web-search`      | `web_search` tool for parent-agent web discovery                                                                                                              | Google Custom Search; credentials from env vars or `~/.pi/agent/auth/web-search.json`; query composition with exact phrases, exclusions, site restriction               |
 | `model-presets`   | `/model-preset` command, `Ctrl+Shift+M` cycle, `model_select` repair                                                                                          | atomic model presets binding provider, model id, and thinking level; shipped config includes a Coding preset set (default, fast-codex, coding-fallback, deep-reasoning) |
@@ -47,7 +48,7 @@ The code-intelligence guidance and the context-store/ADR convention are repo-agn
 
 ## Settings — keys in Pi's `settings.json`
 
-No extra config file and no shared loader: each extension inlines its own ~8-line read of **its own top-level key** in Pi's settings (`subagents`, `statusline`, `lsp`, `modelPresets`) — fully self-contained, copy one directory and it works. Layered **code defaults → `~/.pi/agent/settings.json` (global) → `<project>/.pi/settings.json` → env vars**. Objects deep-merge, arrays replace, `"//"` keys are comments. The shipped `pi-config/settings.json` carries a commented example of four keys. Notable knobs: `subagents.explore.extraTools` (read-only tool grants for explore — the example grants the `lsp_*` set), `subagents.maxConcurrency`, `statusline.effectiveLimit` / `thresholds` / `meterWidth`, `lsp.servers` (add languages without touching the extension dir) and `lsp.diagnosticsDelayMs`. `modelPresets` example shows a Coding preset set with four presets and a cycle. `question` and `todo` currently expose no options and gain keys only when they earn one.
+No extra config file and no shared loader: each extension inlines its own ~8-line read of **its own top-level key** in Pi's settings (`subagents`, `statusline`, `lsp`, `modelPresets`) — fully self-contained, copy one directory and it works. `model-compaction` has no key of its own: it consumes Pi's native `compaction` block (`enabled: false`, `keepRecentTokens: 8000`). Layered **code defaults → `~/.pi/agent/settings.json` (global) → `<project>/.pi/settings.json` → env vars**. Objects deep-merge, arrays replace, `"//"` keys are comments. The shipped `pi-config/settings.json` carries a commented example for each block it documents. Notable knobs: `subagents.explore.extraTools` (read-only tool grants for explore — the example grants the `lsp_*` set), `subagents.maxConcurrency`, `statusline.effectiveLimit` / `thresholds` / `meterWidth`, `compaction.enabled` / `keepRecentTokens` (native auto-compaction off, 8k retained), `lsp.servers` (add languages without touching the extension dir) and `lsp.diagnosticsDelayMs`. `modelPresets` example shows a Coding preset set with four presets and a cycle. `question` and `todo` currently expose no options and gain keys only when they earn one.
 
 ## How the skills use the extensions — all "if available"
 
@@ -75,7 +76,7 @@ pi-extensions/
 ├── pnpm-workspace.yaml       packages/*
 └── packages/
     ├── pi-config/            config bundle (settings.json + skills/) — NOT an Extension package
-    │   ├── settings.json     loads skills + the eight Extension packages
+    │   ├── settings.json     loads skills + the nine Extension packages
     │   └── skills/           21 skills (+ reference files)
     ├── subagents/  index.ts agents.ts manager.ts runner.ts
     ├── question/   index.ts
@@ -84,6 +85,7 @@ pi-extensions/
     ├── web-search/  index.ts search.ts render.ts
     ├── web-fetch/   index.ts fetch.ts render.ts
     ├── model-presets/ index.ts catalog.ts activate.ts
+    ├── model-compaction/ index.ts trigger.ts
     └── statusline/ index.ts zone.ts
 ```
 
@@ -100,8 +102,8 @@ The pure modules (`zone.ts`, `manager.ts`, `fetch.ts` extraction and conversion 
 
 ## Install
 
-Drop `pi-config/skills` into your skills path and point Pi's `settings.json` at the eight Extension package dirs (see `pi-config/settings.json`). Extension packages are TypeScript and run as-is under Pi's jiti loader. The language servers used by `lsp` must be on `PATH`.
+Drop `pi-config/skills` into your skills path and point Pi's `settings.json` at the nine Extension package dirs (see `pi-config/settings.json`). Extension packages are TypeScript and run as-is under Pi's jiti loader. The language servers used by `lsp` must be on `PATH`.
 
 ## Verify
 
-One command, one source of truth — `pnpm verify:ext` runs `scripts/audit-extensions.sh`, which checks that the eight Extension packages build and typecheck, that no code imports the removed shared support, that reference docs and shipped settings use current paths, and that root scripts, package metadata, and the reference README tell the same Extension package story. Run it after any change to a package or to the layout.
+One command, one source of truth — `pnpm verify:ext` runs `scripts/audit-extensions.sh`, which checks that the nine Extension packages build and typecheck, that no code imports the removed shared support, that reference docs and shipped settings use current paths, and that root scripts, package metadata, and the reference README tell the same Extension package story. Run it after any change to a package or to the layout.

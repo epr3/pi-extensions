@@ -18,6 +18,7 @@ Read the `CONTEXT.md` files relevant to the task. If no relevant context exists 
 ```text
 CONTEXT-MAP.md
 packages/lsp/CONTEXT.md
+packages/model-compaction/CONTEXT.md
 packages/model-presets/CONTEXT.md
 packages/question/CONTEXT.md
 packages/statusline/CONTEXT.md
