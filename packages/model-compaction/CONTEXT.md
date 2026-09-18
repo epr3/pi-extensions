@@ -16,11 +16,19 @@ _Avoid_: lock, mutex, debounce.
 **Retained-context budget**: The 8k recent tokens Pi leaves unsummarized during compaction, owned by Pi's `compaction.keepRecentTokens` setting.
 _Avoid_: keep window, recent limit, model-relative budget.
 
+**Interrupted work**: A completed turn that produced tool results, so the work those results belong to is unfinished and must resume after compaction.
+_Avoid_: pending turn, open tool call, in-flight turn.
+
+**Hidden continuation context**: A display-suppressed Extension message injected after a successful compaction of **Interrupted work**, directing the model to resume from the compaction summary and retained messages and starting the next turn.
+_Avoid_: auto-retry, resume prompt, system nudge.
+
 ## Relationships
 
 - **Model-aware compaction Extension package** starts at most one compaction per **Model-aware boundary** breach.
 - **In-progress guard** clears when the active request settles, so a later breached turn can compact again.
 - **Retained-context budget** is fixed and independent of the **Model-aware boundary**.
+- **Hidden continuation context** follows a successful compaction of **Interrupted work**; a text-only turn compacts without it.
+- A failed compaction notifies the user, clears the **In-progress guard**, and retries on the next breached turn.
 
 ## Example dialogue
 

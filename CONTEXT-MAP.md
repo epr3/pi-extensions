@@ -5,7 +5,7 @@ This repo uses a multi-context layout mirroring the tracked Pi Extension package
 ## Contexts
 
 - [lsp](./packages/lsp/CONTEXT.md) — language-server-backed code navigation and diagnostics tools.
-- [model-compaction](./packages/model-compaction/CONTEXT.md) — model-aware compaction trigger that starts automatic compaction at 50% of the active model's advertised context window.
+- [model-compaction](./packages/model-compaction/CONTEXT.md) — model-aware compaction trigger that starts automatic compaction at 50% of the active model's advertised context window, resumes interrupted work, and recovers from failures.
 - [model-presets](./packages/model-presets/CONTEXT.md) — atomic provider/model/thinking presets for Pi model selection.
 - [question](./packages/question/CONTEXT.md) — structured multiple-choice question tool for interactive agent workflows.
 - [statusline](./packages/statusline/CONTEXT.md) — context-degradation footer status rendered inside Pi.

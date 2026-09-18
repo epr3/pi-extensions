@@ -27,7 +27,7 @@ All are real Pi extensions written against the documented `ExtensionAPI`, loaded
 | `todo`            | `todo_write` / `todo_read`                                                                                                                                    | state in tool-result details, reconstructed on `session_start`                                                                                                          |
 | `lsp`             | `lsp_definition` / `implementation` / `references` / `workspace_symbols` / `document_symbols` / `hover` / `incoming_calls` / `outgoing_calls` / `diagnostics` | dependency-free stdio LSP client; runtime-tested vs a mock server                                                                                                       |
 | `statusline`      | dumb-zone footer status                                                                                                                                       | uses `ctx.getContextUsage()`, `ctx.model.contextWindow`, `ctx.cwd`, `pi.exec(git)`, `ctx.ui.setStatus`                                                                  |
-| `model-compaction` | model-aware compaction trigger                                                                                                                               | `turn_end` + `ctx.getContextUsage()` start one `ctx.compact()` at 50% of the active model's advertised window; Pi's native fixed-token auto-compaction is disabled in settings |
+| `model-compaction` | model-aware compaction trigger                                                                                                                               | `turn_end` + `ctx.getContextUsage()` start one `ctx.compact()` at 50% of the active model's advertised window; resumes interrupted tool-result turns with hidden continuation context and notifies/retries on failure; Pi's native fixed-token auto-compaction is disabled in settings |
 | `web-fetch`       | `web_fetch` tool for fetching URLs and extracting Markdown                                                                                                    | validates URLs, browser-like UA, timeout, size cap, HTML→Markdown via heuristic extraction, plain-text pass-through, binary rejection                                   |
 | `web-search`      | `web_search` tool for parent-agent web discovery                                                                                                              | Google Custom Search; credentials from env vars or `~/.pi/agent/auth/web-search.json`; query composition with exact phrases, exclusions, site restriction               |
 | `model-presets`   | `/model-preset` command, `Ctrl+Shift+M` cycle, `model_select` repair                                                                                          | atomic model presets binding provider, model id, and thinking level; shipped config includes a Coding preset set (default, fast-codex, coding-fallback, deep-reasoning) |
@@ -85,7 +85,7 @@ pi-extensions/
     ├── web-search/  index.ts search.ts render.ts
     ├── web-fetch/   index.ts fetch.ts render.ts
     ├── model-presets/ index.ts catalog.ts activate.ts
-    ├── model-compaction/ index.ts trigger.ts
+    ├── model-compaction/ index.ts trigger.ts resume.ts
     └── statusline/ index.ts zone.ts
 ```
 
