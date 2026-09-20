@@ -46,6 +46,8 @@ import type { WebFetchDetails, FetchOptions, PdfExtractFn } from "../fetch.ts";
 import { convertHtmlToMarkdownAsync } from "../converter.ts";
 import { ArtifactStore, type OwnerRecord } from "../storage.ts";
 import { FakeProcessLiveness } from "../liveness.ts";
+import { projectOutputCeiling, DEFAULT_BUDGET_POLICY } from "../extraction.ts";
+import { adjustMaxTokensForThinking } from "@earendil-works/pi-ai/api/simple-options";
 
 // ─── Test harness: fake Pi API with tool capture + lifecycle events ─────────
 
@@ -75,7 +77,26 @@ interface FakeRegistry extends ModelRegistry {
   setCompleteResult(result: AssistantMessage): void;
   setCompleteError(error: Error): void;
   setAuthConfigured(configured: boolean): void;
+  setAuthResult(
+    result:
+      | {
+          ok: true;
+          apiKey?: string;
+          headers?: Record<string, string>;
+          baseUrl?: string;
+          env?: Record<string, string>;
+        }
+      | { ok: false; error: string },
+  ): void;
+  setStreamSimpleHandler(
+    handler: (
+      model: Model<Api>,
+      context: unknown,
+      options: Record<string, unknown>,
+    ) => AssistantMessage | Promise<AssistantMessage>,
+  ): void;
   completeCalls: { model: Model<Api>; context: unknown; options: unknown }[];
+  streamSimpleCalls: { model: Model<Api>; context: unknown; options: Record<string, unknown> }[];
 }
 
 function makeModel(overrides: Partial<Model<Api>> = {}): Model<Api> {
@@ -124,7 +145,43 @@ function makeFakeRegistry(model: Model<Api> = makeModel()): FakeRegistry {
   let completeResult: AssistantMessage = makeAssistantMessage();
   let completeError: Error | undefined;
   let authConfigured = true;
+  let authResult:
+    | {
+        ok: true;
+        apiKey?: string;
+        headers?: Record<string, string>;
+        baseUrl?: string;
+        env?: Record<string, string>;
+      }
+    | { ok: false; error: string } = {
+    ok: true,
+    apiKey: "fake-key",
+    headers: { "x-auth-derived": "1" },
+    env: { FAKE_PROVIDER_ENV: "1" },
+  };
+  let streamSimpleHandler: (
+    model: Model<Api>,
+    context: unknown,
+    options: Record<string, unknown>,
+  ) => AssistantMessage | Promise<AssistantMessage> = () => completeResult;
   const calls: { model: Model<Api>; context: unknown; options: unknown }[] = [];
+  const streamSimpleCalls: {
+    model: Model<Api>;
+    context: unknown;
+    options: Record<string, unknown>;
+  }[] = [];
+
+  const fakeProvider = {
+    id: model.provider,
+    // Fake registered provider: records the provider-neutral call and lets the
+    // test emulate a budget-based or effort-based adapter.
+    streamSimple: (m: Model<Api>, context: unknown, options: Record<string, unknown>) => {
+      streamSimpleCalls.push({ model: m, context, options });
+      return {
+        result: async () => streamSimpleHandler(m, context, options),
+      };
+    },
+  };
 
   const registry = {
     find: (provider: string, modelId: string) => {
@@ -134,6 +191,9 @@ function makeFakeRegistry(model: Model<Api> = makeModel()): FakeRegistry {
       return undefined;
     },
     hasConfiguredAuth: () => authConfigured,
+    getProvider: (providerId: string) =>
+      providerId === currentModel.provider ? fakeProvider : undefined,
+    getApiKeyAndHeaders: async () => authResult,
     complete: async (_model: Model<Api>, context: unknown, options: unknown) => {
       calls.push({ model: _model, context, options });
       if (completeError) throw completeError;
@@ -152,18 +212,30 @@ function makeFakeRegistry(model: Model<Api> = makeModel()): FakeRegistry {
     setAuthConfigured: (configured: boolean) => {
       authConfigured = configured;
     },
+    setAuthResult: (result: typeof authResult) => {
+      authResult = result;
+    },
+    setStreamSimpleHandler: (handler: typeof streamSimpleHandler) => {
+      streamSimpleHandler = handler;
+    },
     completeCalls: calls,
+    streamSimpleCalls,
   } as unknown as FakeRegistry;
 
   return registry;
 }
 
 /** Minimal ExtensionContext: only what web_fetch executes read. */
-function makeCtx(sessionId?: string, registry?: FakeRegistry): ExtensionContext {
+function makeCtx(
+  sessionId?: string,
+  registry?: FakeRegistry,
+  extra?: Record<string, unknown>,
+): ExtensionContext {
   return {
     sessionManager: sessionId === undefined ? undefined : { getSessionId: () => sessionId },
     cwd: process.cwd(),
     modelRegistry: registry ?? makeFakeRegistry(),
+    ...extra,
   } as unknown as ExtensionContext;
 }
 
@@ -1372,6 +1444,414 @@ describe("web_fetch tool — AI extraction contract", () => {
     // The pending model call must be aborted and no artifact published.
     await pendingRejection;
     expect(await listFiles(storageRoot)).toEqual([]);
+  });
+});
+
+// ─── AI extraction: thinking level headroom ──────────────────────────────────
+
+/** Extract the model-visible source evidence from a captured completion context. */
+function evidenceTextFromContext(context: unknown): string {
+  const text = (context as { messages: { content: { text: string }[] }[] }).messages[0].content[0]
+    .text;
+  const match = text.match(
+    /--- Source evidence from [^\n]* ---\n([\s\S]*?)\n--- End source evidence ---/,
+  );
+  return match?.[1] ?? "";
+}
+
+const LARGE_HTML = `<html><body><p>${"A".repeat(500_000)}</p></body></html>`;
+
+describe("web_fetch tool — Extraction thinking level", () => {
+  it("omitted thinkingLevel preserves the existing raw completion path", async () => {
+    const registry = makeFakeRegistry();
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+
+    expect(registry.completeCalls).toHaveLength(1);
+    expect(registry.streamSimpleCalls).toHaveLength(0);
+    expect(registry.completeCalls[0].options).toMatchObject({
+      maxTokens: 1024,
+      timeoutMs: 120_000,
+    });
+    expect((result.details as WebFetchDetails).warnings).toBeUndefined();
+  });
+
+  it("malformed thinkingLevel warns and behaves as absent via the raw path", async () => {
+    const notifications: { message: string; level: string }[] = [];
+    const registry = makeFakeRegistry();
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "maximum",
+      },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry, {
+        hasUI: true,
+        ui: { notify: (message: string, level: string) => notifications.push({ message, level }) },
+      }),
+    );
+
+    // Malformed behaves as absent: raw path, existing options untouched.
+    expect(registry.completeCalls).toHaveLength(1);
+    expect(registry.streamSimpleCalls).toHaveLength(0);
+    expect(registry.completeCalls[0].options).toMatchObject({
+      maxTokens: 1024,
+      timeoutMs: 120_000,
+    });
+    const details = result.details as WebFetchDetails;
+    expect(details.warnings).toEqual([
+      expect.objectContaining({
+        type: "malformed",
+        setting: "webFetch.extractionModel.thinkingLevel",
+        reference: '"maximum"',
+      }),
+    ]);
+    expect(notifications).toEqual([expect.objectContaining({ level: "warning" })]);
+    expect(notifications[0].message).toContain("is malformed");
+    expect((result.content[0] as { text: string }).text).toContain("is malformed");
+    expect(details.answer).toBe("Mock extraction answer");
+  });
+
+  it("explicit off uses the provider-neutral path with no reasoning and no headroom", async () => {
+    const registry = makeFakeRegistry();
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "off",
+      },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+
+    expect(registry.completeCalls).toHaveLength(0);
+    expect(registry.streamSimpleCalls).toHaveLength(1);
+    expect(registry.streamSimpleCalls[0].options).toMatchObject({
+      maxTokens: 1024,
+      timeoutMs: 120_000,
+    });
+    expect(registry.streamSimpleCalls[0].options.reasoning).toBeUndefined();
+    expect((result.details as WebFetchDetails).warnings).toBeUndefined();
+  });
+
+  it("explicit level reaches the provider with reasoning and preserves auth/endpoint", async () => {
+    const model = makeModel({ reasoning: true });
+    const registry = makeFakeRegistry(model);
+    registry.setAuthResult({
+      ok: true,
+      apiKey: "resolved-key",
+      headers: { "x-auth-derived": "1" },
+      baseUrl: "https://override.example.com",
+      env: { PROVIDER_ENV: "1" },
+    });
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "high",
+      },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+
+    // No extension-owned model or level substitution: the configured model runs.
+    expect(registry.completeCalls).toHaveLength(0);
+    expect(registry.streamSimpleCalls).toHaveLength(1);
+    const call = registry.streamSimpleCalls[0];
+    expect(call.options.reasoning).toBe("high");
+    expect(call.options.maxTokens).toBe(1024);
+    expect(call.options.apiKey).toBe("resolved-key");
+    expect(call.options.headers).toEqual({ "x-auth-derived": "1" });
+    expect(call.options.env).toEqual({ PROVIDER_ENV: "1" });
+    expect(call.model.baseUrl).toBe("https://override.example.com");
+    expect(call.model.id).toBe("test-model");
+    expect((call.options.signal as AbortSignal) instanceof AbortSignal).toBe(true);
+  });
+
+  it("clamps an unsupported level to the model and warns requested vs effective", async () => {
+    const notifications: { message: string; level: string }[] = [];
+    // Default fixture model is non-reasoning.
+    const registry = makeFakeRegistry();
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "high",
+      },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry, {
+        hasUI: true,
+        ui: { notify: (message: string, level: string) => notifications.push({ message, level }) },
+      }),
+    );
+
+    expect(registry.streamSimpleCalls).toHaveLength(1);
+    expect(registry.streamSimpleCalls[0].options.reasoning).toBeUndefined();
+    const details = result.details as WebFetchDetails;
+    expect(details.warnings).toEqual([
+      expect.objectContaining({ type: "clamped", requested: "high", effective: "off" }),
+    ]);
+    expect(notifications[0].message).toContain('effective "off"');
+    expect(details.answer).toBe("Mock extraction answer");
+  });
+
+  it("reserves bounded reasoning headroom and reduces model-visible evidence", async () => {
+    const prompt = "Find the end marker";
+    const model = makeModel({ reasoning: true, contextWindow: 100_000, maxTokens: 8192 });
+
+    // Baseline: omitted preference.
+    const offRegistry = makeFakeRegistry(model);
+    const offApi = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(mockResponse(LARGE_HTML, 200, { "content-type": "text/html" })),
+    });
+    await offApi.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt },
+      undefined,
+      undefined,
+      makeCtx("sess-1", offRegistry),
+    );
+    const offEvidence = evidenceTextFromContext(offRegistry.completeCalls[0].context);
+
+    // Enabled: explicit level reserves the adapter's reasoning allowance.
+    const onRegistry = makeFakeRegistry(model);
+    const onApi = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "high",
+      },
+      fetchFn: makeFetchMock(mockResponse(LARGE_HTML, 200, { "content-type": "text/html" })),
+    });
+    await onApi.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt },
+      undefined,
+      undefined,
+      makeCtx("sess-1", onRegistry),
+    );
+    const onEvidence = evidenceTextFromContext(onRegistry.streamSimpleCalls[0].context);
+
+    const outputTokens = Math.min(DEFAULT_BUDGET_POLICY.outputTokens, model.maxTokens);
+    const reserved = projectOutputCeiling(model, outputTokens, "high");
+    const promptTokens = Math.ceil(prompt.length / DEFAULT_BUDGET_POLICY.charsPerToken);
+    const expectedEvidence =
+      (model.contextWindow - DEFAULT_BUDGET_POLICY.instructionTokens - promptTokens - reserved) *
+      DEFAULT_BUDGET_POLICY.charsPerToken;
+
+    expect(onEvidence.length).toBe(expectedEvidence);
+    expect(onEvidence.length).toBeLessThan(offEvidence.length);
+  });
+
+  it("adds the reasoning allowance only once for a Pi budget adapter", async () => {
+    const prompt = "Summarize";
+    const model = makeModel({ reasoning: true, contextWindow: 100_000, maxTokens: 8192 });
+    const registry = makeFakeRegistry(model);
+    let adapterCeiling = 0;
+    registry.setStreamSimpleHandler((_model, _context, options) => {
+      adapterCeiling = adjustMaxTokensForThinking(
+        options.maxTokens as number,
+        model.maxTokens,
+        options.reasoning as never,
+      ).maxTokens;
+      return makeAssistantMessage();
+    });
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "high",
+      },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+
+    // Base answer allowance is sent; the adapter expands exactly once.
+    expect(registry.streamSimpleCalls[0].options.maxTokens).toBe(1024);
+    expect(adapterCeiling).toBe(8192);
+    expect(adapterCeiling).toBe(projectOutputCeiling(model, 1024, "high"));
+  });
+
+  it("keeps the base ceiling for an effort-based adapter with bounded evidence", async () => {
+    const prompt = "Summarize";
+    const model = makeModel({ reasoning: true, contextWindow: 100_000, maxTokens: 8192 });
+    const registry = makeFakeRegistry(model);
+    let effortCeiling = 0;
+    registry.setStreamSimpleHandler((_model, _context, options) => {
+      effortCeiling = options.maxTokens as number;
+      return makeAssistantMessage();
+    });
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "medium",
+      },
+      fetchFn: makeFetchMock(mockResponse(LARGE_HTML, 200, { "content-type": "text/html" })),
+    });
+
+    await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+
+    // Effort adapters keep the base ceiling; the extension never inflates it.
+    expect(effortCeiling).toBe(1024);
+    // The reservation is a safe upper bound: the request stays within it even
+    // though this adapter adds no reasoning tokens to the ceiling.
+    const evidence = evidenceTextFromContext(registry.streamSimpleCalls[0].context);
+    const reserved = projectOutputCeiling(model, 1024, "medium");
+    const promptTokens = Math.ceil(prompt.length / DEFAULT_BUDGET_POLICY.charsPerToken);
+    const expected =
+      (model.contextWindow - DEFAULT_BUDGET_POLICY.instructionTokens - promptTokens - reserved) *
+      DEFAULT_BUDGET_POLICY.charsPerToken;
+    expect(evidence.length).toBe(expected);
+  });
+
+  it("yields headroom to a tight context ceiling instead of failing", async () => {
+    const prompt = "Find x";
+    const model = makeModel({ reasoning: true, contextWindow: 4000, maxTokens: 8192 });
+    const registry = makeFakeRegistry(model);
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "high",
+      },
+      fetchFn: makeFetchMock(mockResponse(LARGE_HTML, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+
+    // Reasoning headroom is best-effort: evidence shrinks to zero, no throw.
+    expect(evidenceTextFromContext(registry.streamSimpleCalls[0].context)).toBe("");
+    expect((result.details as WebFetchDetails).modelInputTruncated).toBe(true);
+    expect((result.details as WebFetchDetails).answer).toBe("Mock extraction answer");
+  });
+
+  it("retains the completed artifact when the reasoning-path model call fails", async () => {
+    const model = makeModel({ reasoning: true });
+    const registry = makeFakeRegistry(model);
+    registry.setStreamSimpleHandler(() => {
+      throw new Error("provider exploded");
+    });
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "high",
+      },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    await expect(
+      api.tool.execute(
+        "c1",
+        { url: "https://example.com", prompt: "Summarize" },
+        undefined,
+        undefined,
+        makeCtx("sess-1", registry),
+      ),
+    ).rejects.toThrow(/provider exploded/);
+
+    const files = await listFiles(storageRoot);
+    expect(files.some((f) => f.endsWith("-artifact.md"))).toBe(true);
+  });
+
+  it("fails actionably when provider auth resolution fails on the reasoning path", async () => {
+    const model = makeModel({ reasoning: true });
+    const registry = makeFakeRegistry(model);
+    registry.setAuthResult({ ok: false, error: "No API key found for provider" });
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "high",
+      },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    await expect(
+      api.tool.execute(
+        "c1",
+        { url: "https://example.com", prompt: "Summarize" },
+        undefined,
+        undefined,
+        makeCtx("sess-1", registry),
+      ),
+    ).rejects.toThrow(/No API key found for provider/);
+
+    // No silent model/level substitution, raw-path fallback, or retry.
+    expect(registry.streamSimpleCalls).toHaveLength(0);
+    expect(registry.completeCalls).toHaveLength(0);
   });
 });
 

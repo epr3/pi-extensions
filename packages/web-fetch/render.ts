@@ -6,6 +6,7 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { WebFetchDetails } from "./fetch.ts";
+import { thinkingWarningSummary } from "./thinking-level.ts";
 
 /**
  * Render the web_fetch tool call row — compact URL summary.
@@ -94,6 +95,14 @@ export function renderWebFetchResult(
     );
   }
   if (d.extractionWarning) lines.push(theme.fg("warning", `Warning: ${d.extractionWarning}`));
+  if (d.warnings?.length) {
+    for (const w of d.warnings) {
+      const suffix = w.type === "malformed" ? " — ignored" : "";
+      lines.push(
+        theme.fg("warning", `Warning: ${w.setting} ${thinkingWarningSummary(w)}${suffix}`),
+      );
+    }
+  }
   lines.push(theme.fg("accent", "Answer:"));
   lines.push("");
 
