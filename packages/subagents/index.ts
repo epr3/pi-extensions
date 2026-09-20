@@ -1,6 +1,5 @@
 import type {
   AgentToolResult,
-  CreateAgentSessionOptions,
   ExtensionAPI,
   Theme,
   ToolRenderResultOptions,
@@ -12,6 +11,8 @@ import { resolveAgentType, exploreToolset } from "./agents.ts";
 import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts";
 import { AgentManager, type AgentRecord } from "./manager.ts";
 import { resolveTypeDefaultModel, checkDefaultModelWarnings } from "./model-ref.ts";
+import { resolveTypeThinkingLevel } from "./thinking-level.ts";
+import type { AgentWarning } from "./warnings.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -164,7 +165,19 @@ function settingsKey(): Record<string, any> {
     path.join(process.cwd(), ".pi", "settings.json"),
   ]) {
     try {
-      Object.assign(out, JSON.parse(readFileSync(f, "utf8"))["subagents"] ?? {});
+      const raw = JSON.parse(readFileSync(f, "utf8"))["subagents"] ?? {};
+      for (const key of Object.keys(raw)) {
+        if (key === "explore" || key === "general") continue;
+        out[key] = raw[key];
+      }
+      // Merge each per-type object rather than replacing it, so a project
+      // per-type thinking value does not discard a global per-type model (or
+      // vice versa) — thinking and model stay independently configurable.
+      for (const type of ["explore", "general"] as const) {
+        if (raw[type] !== undefined) {
+          out[type] = { ...out[type], ...raw[type] };
+        }
+      }
     } catch {
       /* missing or malformed file: defaults stand */
     }
@@ -179,19 +192,19 @@ export default function (pi: ExtensionAPI) {
     explore: {
       extraTools: Array.isArray(raw.explore?.extraTools) ? raw.explore.extraTools : [],
       defaultModel: String(raw.explore?.defaultModel ?? "").trim() || undefined,
+      thinkingLevel: raw.explore?.thinkingLevel,
     },
 
-    thinkingLevel:
-      typeof raw.thinkingLevel === "string" &&
-      ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(raw.thinkingLevel)
-        ? (raw.thinkingLevel as CreateAgentSessionOptions["thinkingLevel"])
-        : undefined,
+    // Raw thinking values are validated by resolveTypeThinkingLevel so a
+    // malformed candidate can warn and fall through to the next level.
+    thinkingLevel: raw.thinkingLevel,
     defaultModel: String(raw.defaultModel ?? "").trim() || undefined,
     general: {
       excludeExtraTools: Array.isArray(raw.general?.excludeExtraTools)
         ? raw.general.excludeExtraTools
         : [],
       defaultModel: String(raw.general?.defaultModel ?? "").trim() || undefined,
+      thinkingLevel: raw.general?.thinkingLevel,
     },
   };
   const exploreTools = exploreToolset(cfg.explore.extraTools);
@@ -249,26 +262,11 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      const warnings: Array<{
-        scope: string;
-        reference: string;
-        type: string;
-        setting?: string;
-        requested?: string;
-        effective?: string;
-      }> = [...modelWarnings];
-      if (raw.thinkingLevel !== undefined && cfg.thinkingLevel === undefined) {
-        warnings.push({
-          scope: "shared",
-          reference: JSON.stringify(raw.thinkingLevel),
-          setting: "subagents.thinkingLevel",
-          type: "malformed",
-        });
-        if (ctx.hasUI)
-          ctx.ui.notify(
-            "subagents.thinkingLevel is malformed — using SDK/settings defaults",
-            "warning",
-          );
+      const thinking = resolveTypeThinkingLevel(cfg[type].thinkingLevel, cfg.thinkingLevel, type);
+
+      const warnings: AgentWarning[] = [...modelWarnings, ...thinking.warnings];
+      for (const w of thinking.warnings) {
+        if (ctx.hasUI) ctx.ui.notify(`${w.setting} is malformed — falling back`, "warning");
       }
 
       // Foreground runs stream child assistant text and compact tool activity
@@ -301,21 +299,21 @@ export default function (pi: ExtensionAPI) {
           prompt: params.prompt,
           cwd: ctx.cwd,
           model,
-          thinkingLevel: cfg.thinkingLevel,
+          thinkingLevel: thinking.winner?.level,
           onThinkingLevel: (effective) => {
-            const requested = cfg.thinkingLevel;
-            if (requested === undefined || requested === effective) return;
+            const winner = thinking.winner;
+            if (!winner || winner.level === effective) return;
             warnings.push({
-              scope: "shared",
-              reference: requested,
-              setting: "subagents.thinkingLevel",
+              scope: winner.scope,
+              reference: winner.level,
+              setting: winner.setting,
               type: "clamped",
-              requested,
+              requested: winner.level,
               effective,
             });
             if (ctx.hasUI)
               ctx.ui.notify(
-                `subagents.thinkingLevel requested "${requested}"; effective "${effective}" (Pi model capabilities)`,
+                `${winner.setting} requested "${winner.level}"; effective "${effective}" (Pi model capabilities)`,
                 "warning",
               );
           },

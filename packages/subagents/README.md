@@ -143,36 +143,62 @@ settings-driven only, not per-call.
 
 ## Subagent thinking level
 
-Set an optional shared reasoning-effort preference for both `explore` and
-`general`, in foreground or background runs:
+Set an optional reasoning-effort preference for Subagent runs, shared across
+types or per type, in foreground or background runs:
 
 ```jsonc
 // ~/.pi/agent/settings.json or .pi/settings.json
 {
   "subagents": {
+    // Shared fallback for any type without its own preference.
     "thinkingLevel": "medium",
+    "explore": {
+      // Per-type preference wins over the shared level for `explore` only.
+      "thinkingLevel": "low",
+    },
+    "general": {
+      "thinkingLevel": "high",
+    },
   },
 }
 ```
 
-Project settings override global settings. Accepted values are Pi's `off`,
-`minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
-Thinking and `defaultModel` resolve independently: configure either or both;
-a malformed model preference does not discard valid thinking, or vice versa.
+Project settings override global settings, at each level independently (a
+project per-type value beats a global per-type value, and a project shared
+value beats a global shared value). Accepted values are Pi's `off`, `minimal`,
+`low`, `medium`, `high`, `xhigh`, and `max`.
+
+### Resolution precedence
+
+1. **Per-type** — `subagents.{explore,general}.thinkingLevel` for the type
+   being launched.
+2. **Shared** — the top-level `subagents.thinkingLevel` setting.
+3. **SDK/settings** — no session override: Pi's own defaults and capability
+   adaptation remain in effect.
+
+A malformed candidate warns and falls through to the next level, so a typo in
+a per-type value still lets a valid shared value apply. The shared value is
+warned about only when it is actually consulted — a valid per-type preference
+silences a broken shared one. Thinking and `defaultModel` resolve
+independently: configure either or both; a malformed model preference does not
+discard valid thinking, or vice versa.
 
 - **Omitted:** no session thinking override; existing SDK/settings defaults and
   capability adaptation remain in effect. Inheriting the Parent model does not
   newly inherit the parent's active thinking level.
 - **Explicit `"off"`:** requests disabled thinking, subject to Pi's capability
-  adaptation; it is not the same as omission.
-- **Malformed:** warns and behaves as absent.
+  adaptation; it is not the same as omission. A per-type `"off"` overrides a
+  shared enabled level rather than behaving as absent.
+- **Malformed:** warns and behaves as absent, falling through to the next
+  level.
 - **Valid but unsupported:** Pi adapts the preference for the resolved model,
   without choosing a different model. A warning reports the requested and
   effective levels, including when a non-reasoning model disables thinking.
 
 Warnings appear in tool-result `details.warnings` and, when available, UI
-notifications—not in generated Subagent result prose. Thinking traces are not
-returned to the parent as result text.
+notifications—not in generated Subagent result prose. Thinking warnings name
+the setting that held the value; model warnings carry the scope and reference.
+Thinking traces are not returned to the parent as result text.
 
 This is opt-in: bundled settings remain unchanged. There is no per-call
 thinking parameter, model preset, or token-budget setting.

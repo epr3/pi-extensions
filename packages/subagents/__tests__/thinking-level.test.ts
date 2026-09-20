@@ -245,3 +245,138 @@ describe("shared Subagent thinking at the Agent session boundary", () => {
     expect(options.model).toBe(parent);
   });
 });
+
+describe("per-type Subagent thinking at the Agent session boundary", () => {
+  describe.each(["explore", "general"])("%s", (type) => {
+    describe.each([false, true])("background=%s", (background) => {
+      it("overrides shared with a valid per-type preference", async () => {
+        boundary.global = {
+          thinkingLevel: "high",
+          explore: { thinkingLevel: "low" },
+          general: { thinkingLevel: "medium" },
+        };
+        const { options, result } = await harness().launch(type, background);
+        expect(options.thinkingLevel).toBe(type === "explore" ? "low" : "medium");
+        expect(result.details.warnings ?? []).toEqual([]);
+      });
+
+      it("applies a per-type-only preference without a shared level", async () => {
+        boundary.global = { explore: { thinkingLevel: "low" }, general: { thinkingLevel: "high" } };
+        const { options } = await harness().launch(type, background);
+        expect(options.thinkingLevel).toBe(type === "explore" ? "low" : "high");
+      });
+
+      it("lets project per-type settings override global per-type settings", async () => {
+        boundary.global = { thinkingLevel: "high", explore: { thinkingLevel: "low" } };
+        boundary.project = { general: { thinkingLevel: "minimal" } };
+        const { options } = await harness().launch(type, background);
+        const expected = type === "explore" ? "low" : "minimal";
+        expect(options.thinkingLevel).toBe(expected);
+      });
+
+      it("falls through to shared when the per-type preference is malformed", async () => {
+        boundary.global = { thinkingLevel: "high", [type]: { thinkingLevel: false } };
+        const h = harness();
+        const { options, result } = await h.launch(type, background);
+        expect(options.thinkingLevel).toBe("high");
+        expect(result.details.warnings).toEqual([
+          expect.objectContaining({
+            scope: type,
+            setting: `subagents.${type}.thinkingLevel`,
+            type: "malformed",
+          }),
+        ]);
+        expect(h.notify).toHaveBeenCalledWith(
+          expect.stringContaining(`subagents.${type}.thinkingLevel`),
+          "warning",
+        );
+      });
+
+      it("treats explicit off per-type as winning over shared enabled", async () => {
+        boundary.global = { thinkingLevel: "high", [type]: { thinkingLevel: "off" } };
+        const { options, result } = await harness().launch(type, background);
+        expect(options.thinkingLevel).toBe("off");
+        expect(result.details.warnings ?? []).toEqual([]);
+      });
+
+      it("reports clamped per-type adaptation after model resolution", async () => {
+        boundary.global = { [type]: { thinkingLevel: "max" }, defaultModel: "test/selected" };
+        const h = harness();
+        const { options, result } = await h.launch(type, background);
+        expect(options.model).toBe(selected);
+        expect(options.thinkingLevel).toBe("max");
+        expect(result.details.warnings).toEqual([
+          expect.objectContaining({
+            scope: type,
+            setting: `subagents.${type}.thinkingLevel`,
+            type: "clamped",
+            requested: "max",
+            effective: "high",
+          }),
+        ]);
+        expect(h.notify).toHaveBeenCalledWith(expect.stringMatching(/max.*high/), "warning");
+      });
+    });
+  });
+
+  it("keeps per-type model and thinking independent across settings levels", async () => {
+    boundary.global = { explore: { defaultModel: "test/selected" } };
+    boundary.project = { explore: { thinkingLevel: "low" } };
+    const forward = await harness().launch("explore");
+    expect(forward.options.model).toBe(selected);
+    expect(forward.options.thinkingLevel).toBe("low");
+    expect(forward.result.details.warnings ?? []).toEqual([]);
+
+    boundary.global = { explore: { thinkingLevel: "high" } };
+    boundary.project = { explore: { defaultModel: "test/selected" } };
+    const reverse = await harness().launch("explore");
+    expect(reverse.options.model).toBe(selected);
+    expect(reverse.options.thinkingLevel).toBe("high");
+    expect(reverse.result.details.warnings ?? []).toEqual([]);
+  });
+
+  it("warns for malformed shared only when no valid per-type preference resolves", async () => {
+    boundary.global = { thinkingLevel: false, explore: { thinkingLevel: "low" } };
+    const valid = await harness().launch("explore");
+    expect(valid.options.thinkingLevel).toBe("low");
+    expect(valid.result.details.warnings ?? []).toEqual([]);
+
+    const invalid = await harness().launch("general");
+    expect(invalid.options).not.toHaveProperty("thinkingLevel");
+    expect(invalid.result.details.warnings).toEqual([
+      expect.objectContaining({ setting: "subagents.thinkingLevel", type: "malformed" }),
+    ]);
+  });
+
+  it("resolves per-type model and thinking independently in both directions", async () => {
+    boundary.global = {
+      explore: { defaultModel: "malformed", thinkingLevel: "low" },
+      general: { defaultModel: "test/selected", thinkingLevel: false },
+    };
+    const explore = await harness().launch("explore");
+    expect(explore.options.model).toBe(parent);
+    expect(explore.options.thinkingLevel).toBe("low");
+    expect(explore.result.details.warnings).toEqual([
+      expect.objectContaining({ scope: "explore", type: "malformed" }),
+    ]);
+
+    const general = await harness().launch("general");
+    expect(general.options.model).toBe(selected);
+    expect(general.options).not.toHaveProperty("thinkingLevel");
+    expect(general.result.details.warnings).toEqual([
+      expect.objectContaining({
+        scope: "general",
+        setting: "subagents.general.thinkingLevel",
+        type: "malformed",
+      }),
+    ]);
+  });
+
+  it("does not leak per-type reasoning into result prose", async () => {
+    boundary.global = { explore: { thinkingLevel: "high" } };
+    const h = harness();
+    const { result } = await h.launch("explore");
+    expect(result.content).toEqual([{ type: "text", text: "answer" }]);
+    expect(JSON.stringify(h.updates.mock.calls)).not.toContain("secret reasoning");
+  });
+});
