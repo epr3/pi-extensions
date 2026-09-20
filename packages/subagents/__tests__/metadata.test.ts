@@ -1,15 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import subagentsExtension from "../index.ts";
-
-function makeFakeApi(captured: ToolDefinition[]): ExtensionAPI {
-  return {
-    registerTool: (tool) => captured.push(tool as ToolDefinition),
-    on: () => {},
-    registerCommand: () => {},
-    events: { emit: () => {} },
-  } as unknown as ExtensionAPI;
-}
+import { makeFakeApi } from "./helpers.ts";
 
 function registerSubagents(): ToolDefinition[] {
   const tools: ToolDefinition[] = [];

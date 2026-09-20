@@ -138,7 +138,14 @@ export function renderAgentCall(
   args: { subagent_type: string; description: string },
   theme: Theme,
 ): Text {
-  const type = resolveAgentType(args.subagent_type);
+  let type: string;
+  try {
+    type = resolveAgentType(args.subagent_type);
+  } catch {
+    // Unsupported type: show it as requested. `execute` rejects it with the
+    // actionable error; rendering must not throw.
+    type = args.subagent_type;
+  }
   const text =
     theme.fg("toolTitle", theme.bold("Agent ")) +
     theme.fg("accent", type) +
