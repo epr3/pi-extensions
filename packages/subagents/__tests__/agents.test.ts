@@ -85,9 +85,9 @@ describe("resolveAgentType()", () => {
     expect(resolveAgentType("EXPLORE")).toBe("explore");
   });
 
-  it("defaults unknown prefixes to general", () => {
-    expect(resolveAgentType("anything_else")).toBe("general");
-    expect(resolveAgentType("researcher")).toBe("general");
+  it("rejects unsupported types instead of normalizing to general", () => {
+    expect(() => resolveAgentType("anything_else")).toThrow(/Unsupported subagent_type/);
+    expect(() => resolveAgentType("researcher")).toThrow(/Unsupported subagent_type/);
   });
 });
 

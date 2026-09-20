@@ -107,6 +107,13 @@ describe("renderAgentCall", () => {
     expect(trimmed.startsWith("Agent")).toBe(true);
     expect(trimmed.startsWith("explore")).toBe(false);
   });
+
+  it("renders an unsupported type as requested without throwing", () => {
+    const text = renderedText("researcher", "stale task");
+    expect(text).toContain("Agent");
+    expect(text).toContain("researcher");
+    expect(text).toContain("stale task");
+  });
 });
 
 // ---------------------------------------------------------------------------

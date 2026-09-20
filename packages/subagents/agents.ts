@@ -63,5 +63,16 @@ export const AGENTS: Record<AgentType, AgentDef> = {
 export function resolveAgentType(requested: string): AgentType {
   const s = String(requested).toLowerCase();
   if (s.startsWith("expl")) return "explore";
-  return "general";
+  if (s === "general") return "general";
+  // No fallback to a supported type: a stale or unknown request must not be
+  // silently widened to write-capable `general` work.
+  const retired =
+    s === "researcher"
+      ? ` The "researcher" type was retired — use the parent agent's web_search / web_fetch ` +
+        `tools directly for web research.`
+      : "";
+  throw new Error(
+    `Unsupported subagent_type "${requested}". Supported types: "explore" (read-only ` +
+      `discovery) and "general" (read/write).${retired}`,
+  );
 }

@@ -34,6 +34,9 @@ _Avoid_: Current model, inherited model.
 **Default Subagent model**: Configured model selection, either shared or **Subagent type**-specific, written as an exact `provider/model` reference and used by a **Subagent** run in preference to the **Parent model**.
 _Avoid_: Default model, fallback model, child model.
 
+**Subagent thinking level**: Persistent reasoning-effort preference for a **Subagent run**, independent of its model selection and configurable per **Subagent type** or shared across types.
+_Avoid_: Thinking budget, parent thinking, model preset.
+
 **External web research**: Source-gathering workflow performed by the parent Pi coding agent through web Extension tools, not by a built-in **Subagent type**.
 _Avoid_: Researcher subagent, web subagent.
 

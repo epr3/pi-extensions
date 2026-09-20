@@ -19,6 +19,9 @@ _Avoid_: Markdown conversion, readable content extraction.
 **Extraction model**: The explicitly configured provider/model used for AI extraction independently of the calling session's model.
 _Avoid_: Subagent, current model, automatic fast model.
 
+**Extraction thinking level**: Optional persistent reasoning-effort preference for the **Extraction model** during **AI extraction**.
+_Avoid_: Thinking budget, extraction prompt setting, model preset.
+
 **Extraction prompt**: The required caller instruction specifying what the AI extraction should find in the retrieved document.
 _Avoid_: Search query, URL description.
 
