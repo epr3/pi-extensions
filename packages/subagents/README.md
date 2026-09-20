@@ -141,6 +141,42 @@ the subagent result text — they are delivered in two channels:
 The `Agent` tool parameters do **not** gain a model field — model selection is
 settings-driven only, not per-call.
 
+## Subagent thinking level
+
+Set an optional shared reasoning-effort preference for both `explore` and
+`general`, in foreground or background runs:
+
+```jsonc
+// ~/.pi/agent/settings.json or .pi/settings.json
+{
+  "subagents": {
+    "thinkingLevel": "medium",
+  },
+}
+```
+
+Project settings override global settings. Accepted values are Pi's `off`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+Thinking and `defaultModel` resolve independently: configure either or both;
+a malformed model preference does not discard valid thinking, or vice versa.
+
+- **Omitted:** no session thinking override; existing SDK/settings defaults and
+  capability adaptation remain in effect. Inheriting the Parent model does not
+  newly inherit the parent's active thinking level.
+- **Explicit `"off"`:** requests disabled thinking, subject to Pi's capability
+  adaptation; it is not the same as omission.
+- **Malformed:** warns and behaves as absent.
+- **Valid but unsupported:** Pi adapts the preference for the resolved model,
+  without choosing a different model. A warning reports the requested and
+  effective levels, including when a non-reasoning model disables thinking.
+
+Warnings appear in tool-result `details.warnings` and, when available, UI
+notifications—not in generated Subagent result prose. Thinking traces are not
+returned to the parent as result text.
+
+This is opt-in: bundled settings remain unchanged. There is no per-call
+thinking parameter, model preset, or token-budget setting.
+
 ## Structure
 
 `manager.ts` is a deep `AgentManager` — a concurrency-limited scheduler (`launch` / `getResult` / `list`) that hides the records, queue, and lifecycle events and takes an opaque `exec` thunk (so it's testable with a fake, with no Pi). `index.ts` only wires the tools to it; `runner.ts` does the actual spawn.
