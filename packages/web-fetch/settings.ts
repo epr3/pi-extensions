@@ -13,6 +13,11 @@ import { join } from "node:path";
 export interface ExtractionModelSettings {
   provider: string;
   model: string;
+  /**
+   * Raw thinking preference from settings. Validated during extraction
+   * resolution; malformed values warn and behave as absent.
+   */
+  thinkingLevel?: unknown;
 }
 
 /**
@@ -54,7 +59,13 @@ export function readWebFetchSettings(): WebFetchSettings {
         const provider = extractionModel["provider"];
         const model = extractionModel["model"];
         if (isString(provider) && isString(model)) {
-          merged.extractionModel = { provider, model };
+          const next: ExtractionModelSettings = { provider, model };
+          // Preserve the raw value so resolution can warn on malformed input
+          // instead of silently dropping it.
+          if ("thinkingLevel" in extractionModel) {
+            next.thinkingLevel = extractionModel["thinkingLevel"];
+          }
+          merged.extractionModel = next;
         }
       }
     } catch {

@@ -33,6 +33,9 @@ import {
   ExtractionModelError,
 } from "./extraction.ts";
 import type { ExtractionResult } from "./extraction.ts";
+import { resolveExtractionThinking, planExtractionThinking } from "./thinking-level.ts";
+import { thinkingWarningSummary } from "./thinking-level.ts";
+import type { ExtractionThinkingWarning } from "./thinking-level.ts";
 
 // ─── Dual-result helper ──────────────────────────────────────────────────────
 
@@ -42,6 +45,20 @@ function textResult(
   usage?: Usage,
 ): AgentToolResult<WebFetchDetails> {
   return { content: [{ type: "text" as const, text }], details, usage };
+}
+
+// ─── Thinking warnings ───────────────────────────────────────────────────────
+
+function thinkingWarningText(w: ExtractionThinkingWarning): string {
+  return w.type === "malformed"
+    ? `${w.setting} ${thinkingWarningSummary(w)} — falling back to the existing completion path`
+    : `${w.setting} ${thinkingWarningSummary(w)} (Pi model capabilities)`;
+}
+
+function thinkingWarningLine(w: ExtractionThinkingWarning): string {
+  return w.type === "malformed"
+    ? `Warning: ${w.setting} ${thinkingWarningSummary(w)} — ignoring the preference`
+    : `Warning: ${w.setting} ${thinkingWarningSummary(w)}`;
 }
 
 // ─── Parameter schema ────────────────────────────────────────────────────────
@@ -239,6 +256,17 @@ export default function (pi: ExtensionAPI) {
       const resolvedModel = resolveExtractionModel(registry, settings);
       const budgetPolicy = resolveBudgetPolicy(knobs.extractionBudgetPolicy);
 
+      // Thinking resolves independently of model selection: a malformed model
+      // preference does not discard a valid thinking preference, or vice versa.
+      const thinkingPlan = planExtractionThinking(
+        resolvedModel.model,
+        resolveExtractionThinking(settings?.thinkingLevel),
+      );
+      const thinkingWarnings = thinkingPlan.warnings;
+      if (thinkingWarnings.length > 0 && ctx.hasUI) {
+        for (const w of thinkingWarnings) ctx.ui.notify(thinkingWarningText(w), "warning");
+      }
+
       const callKnobs = getRuntimeKnobs();
       const call = await store.beginCall(resolveSessionId(ctx), toolCallId, signal);
 
@@ -321,6 +349,7 @@ export default function (pi: ExtensionAPI) {
             },
             budgetPolicy,
             call.combinedSignal,
+            thinkingPlan.effective,
           );
         } catch (err) {
           if (err instanceof ExtractionModelError) {
@@ -360,6 +389,7 @@ export default function (pi: ExtensionAPI) {
           );
         }
         if (conv.warning) lines.push(`Warning: ${conv.warning}`);
+        for (const w of thinkingWarnings) lines.push(thinkingWarningLine(w));
         lines.push("Answer:");
 
         const content = `${lines.join("\n")}\n\n${extraction.answer}`;
@@ -379,6 +409,7 @@ export default function (pi: ExtensionAPI) {
           modelInputTruncated: extraction.modelInputTruncated,
           modelProvider: extraction.modelProvider,
           modelId: extraction.modelId,
+          ...(thinkingWarnings.length > 0 ? { warnings: thinkingWarnings } : {}),
         };
         return textResult(content, details, extraction.usage);
       } catch (err) {

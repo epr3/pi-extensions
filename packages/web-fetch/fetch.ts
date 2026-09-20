@@ -1,5 +1,7 @@
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+import type { ExtractionThinkingWarning } from "./thinking-level.ts";
+
 /** Structured details returned in tool result `details`. */
 export interface WebFetchDetails {
   url: string;
@@ -29,6 +31,8 @@ export interface WebFetchDetails {
   modelProvider?: string;
   /** Model identifier of the Extraction model. */
   modelId?: string;
+  /** Warnings about the configured Extraction thinking preference. */
+  warnings?: ExtractionThinkingWarning[];
 }
 
 /** Options for fetching a URL. */

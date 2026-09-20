@@ -36,7 +36,8 @@ or `.pi/settings.json` (project override):
   "webFetch": {
     "extractionModel": {
       "provider": "anthropic",
-      "model": "claude-sonnet-4-5"
+      "model": "claude-sonnet-4-5",
+      "thinkingLevel": "medium"
     }
   }
 }
@@ -45,6 +46,10 @@ or `.pi/settings.json` (project override):
 Provider and model identifiers are resolved through Pi's model registry and use
 Pi's existing credentials. There is no automatic model selection or hardcoded
 default.
+
+`thinkingLevel` is optional: omit it to preserve Pi's default completion path.
+When set, it requests reasoning independently of model selection — see
+[AI extraction](#ai-extraction).
 
 ### 3. Verify
 
@@ -98,6 +103,8 @@ web_fetch({
 | Valid HTML / text / Markdown / supported PDF             | AI extraction answer + finalized Readable artifact path                                                                                          |
 | HTML page                                                | Converted to whole-page Markdown (Turndown): scripts/styles removed; tables, nested lists, code language, entities, and relative links preserved |
 | Missing or blank `prompt`                                | Clear error before any fetch                                                                                                                     |
+| Explicit Extraction `thinkingLevel`                      | Sent through Pi's provider-neutral reasoning interface; unsupported levels clamp and warn                                                        |
+| Malformed `webFetch.extractionModel.thinkingLevel`       | Warning in `details`/UI; behaves as absent via the existing completion path                                                                      |
 | Extraction model not configured                          | Actionable error pointing to `webFetch.extractionModel` settings                                                                                 |
 | Configured model unavailable or missing credentials      | Actionable error before expensive retrieval                                                                                                      |
 | Model provider fails after successful conversion         | Error includes the completed artifact path and source metadata                                                                                   |
@@ -125,6 +132,24 @@ web_fetch({
 - **One direct completion**: the tool makes a single tool-free model completion
   through Pi's model registry, using Pi credentials. No subagent or tool loop is
   used.
+- **Optional thinking level**: set `webFetch.extractionModel.thinkingLevel` to
+  one of Pi's levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+  `max`) to request reasoning for the Extraction model. Omission leaves the
+  existing completion path and options untouched; explicit `off` requests no
+  reasoning where Pi supports it, and is not the same as omission. A valid
+  level the model cannot honor is clamped through Pi and reported with a
+  requested/effective warning — the tool never substitutes a model. A malformed
+  value warns and behaves as absent. Warnings use the result's structured
+  `details` and the Pi UI; they are never mixed into the answer prose.
+- **Bounded reasoning headroom**: when thinking is explicitly enabled, the tool
+  reserves the adapter's reasoning allowance on top of the existing answer
+  allowance and shrinks the model-visible source prefix to fit the model's
+  context window. It reuses Pi's reasoning-budget policy, and Pi's budget
+  adapters add the allowance exactly once. Effort-based adapters keep the base
+  completion ceiling, so the reservation is a safe upper bound for them.
+  Headroom is best-effort, not a guarantee of answer tokens; a tight context
+  ceiling yields headroom rather than failing. Explicit `off` and omission
+  reserve no headroom.
 - **Budget policy**: input, output, and completion time are bounded:
   - `outputTokens` defaults to 1024 and is capped at the model's `maxTokens`.
   - `instructionTokens` reserves 500 tokens for the system prompt and framing.
@@ -214,7 +239,8 @@ packages/web-fetch/
 │                  # streaming sink download, PDF extraction, HTML conversion entry
 ├── converter.ts   # Turndown + jsdom HTML → Markdown conversion with link
 │                  # resolution, GFM tables, and code-language rules
-├── extraction.ts  # AI extraction: model resolution, budget, completion
+├── extraction.ts  # AI extraction: model resolution, reasoning headroom, completion
+├── thinking-level.ts # Extraction thinking vocabulary, validation, capability adaptation
 ├── settings.ts    # Read webFetch.extractionModel from global/project settings
 ├── storage.ts     # Disk-backed downloads, session/run ownership, Readable
 │                  # artifacts, artifact cleanup (normal + crash sweep)
@@ -238,11 +264,18 @@ packages/web-fetch/
   against the final URL, and promotes header rows for <th>-less tables.
 - `settings.ts` reads the `webFetch.extractionModel` section from
   `~/.pi/agent/settings.json` and `.pi/settings.json`, with project overriding
-  global.
+  global. A `thinkingLevel` is carried through raw so resolution can warn on
+  malformed input.
+- `thinking-level.ts` validates the configured thinking level against Pi's
+  vocabulary, adapts a valid request to the selected model through Pi's
+  `clampThinkingLevel`, and reports malformed/clamped warnings.
 - `extraction.ts` resolves the configured model through Pi's registry, computes
-  a bounded input budget from the model's context window, reads only a leading
-  prefix of the artifact when over budget, and makes one tool-free model
-  completion. Returns the answer, usage, and truncation metadata.
+  a bounded input budget from the model's context window (including reasoning
+  headroom from Pi's policy), reads only a leading prefix of the artifact when
+  over budget, and makes one tool-free model completion — the existing raw path
+  when no thinking is requested, or Pi's provider-neutral `streamSimple`
+  reasoning path when one is. Returns the answer, usage, and truncation
+  metadata.
 - `storage.ts` owns the private temporary area: one run per extension load,
   session-keyed directories, an on-disk ownership record, idempotent cleanup
   on session leave, and crash/abandoned-run sweep at init and before each
@@ -264,9 +297,9 @@ packages/web-fetch/
 
 ## Tests
 
-Tests live in `__tests__/contract.test.ts` and `__tests__/rendering.test.ts`
-and run through the registered tool via a fake Pi API, including lifecycle
-events:
+Tests live in `__tests__/contract.test.ts`, `__tests__/rendering.test.ts`,
+and `__tests__/thinking-level.test.ts` and run through the registered tool via a
+fake Pi API, including lifecycle events:
 
 - Tool metadata, parameter schema, and lifecycle registration
 - URL validation, content-type detection, PDF extraction, library HTML conversion
@@ -284,6 +317,11 @@ events:
 - Budget policy: oversized prompts fail before completion; large sources send
   only a leading portion to the model and report partial evidence; the
   artifact remains complete
+- Extraction thinking level: omission preserves the raw completion path and
+  options, malformed values warn, explicit levels/warnings reach registered
+  providers, unsupported levels clamp, bounded reasoning headroom reduces
+  evidence for budget and effort adapters without double-counting, tight
+  ceilings yield headroom, and artifacts/failures keep their contract
 - Model failures after conversion include the artifact path; usage is reported
   when available
 - Model-call cancellation/session-change races: leaving the owning session

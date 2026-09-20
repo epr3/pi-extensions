@@ -1,7 +1,17 @@
 // ─── AI extraction: model resolution, budget, and completion ───────────────
 
 import { open } from "node:fs/promises";
-import type { Api, AssistantMessage, Context, Model, Usage } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  Context,
+  Model,
+  ModelThinkingLevel,
+  SimpleStreamOptions,
+  ThinkingLevel,
+  Usage,
+} from "@earendil-works/pi-ai";
+import { adjustMaxTokensForThinking } from "@earendil-works/pi-ai/api/simple-options";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ExtractionModelSettings } from "./settings.ts";
 
@@ -140,30 +150,29 @@ export function resolveExtractionModel(
 
 // ─── Budget computation ──────────────────────────────────────────────────────
 
-interface BudgetResult {
-  evidenceCharBudget: number;
-  outputTokens: number;
-}
-
 /**
  * Compute the artifact evidence character budget for a model and caller prompt.
  *
- * Reserves instruction tokens, caller prompt tokens, and output tokens. If the
- * caller prompt alone exhausts the model context window, an error is thrown so
- * the request fails before an unchecked completion.
+ * Reserves instruction tokens, caller prompt tokens, and the completion output
+ * reservation (the answer allowance plus any reasoning headroom the adapter may
+ * request). If the prompt alone exhausts the model context window, an error is
+ * thrown so the request fails before an unchecked completion. Reasoning
+ * headroom is best-effort: it yields to the context ceiling before evidence is
+ * squeezed below zero.
  */
 function computeBudget(
   model: Model<Api>,
   prompt: string,
   policy: ExtractionModelBudgetPolicy,
-): BudgetResult {
+  outputTokens: number,
+  outputReservation: number,
+): number {
   if (model.contextWindow <= 0) {
     throw new Error(
       `Extraction model "${model.provider}/${model.id}" reports a non-positive context window (${model.contextWindow}).`,
     );
   }
 
-  const outputTokens = Math.min(policy.outputTokens, model.maxTokens);
   if (policy.instructionTokens + outputTokens > model.contextWindow) {
     throw new Error(
       `Extraction model "${model.provider}/${model.id}" context window (${model.contextWindow}) ` +
@@ -173,8 +182,7 @@ function computeBudget(
   }
 
   const promptTokens = Math.ceil(prompt.length / policy.charsPerToken);
-  const totalReservedTokens = policy.instructionTokens + promptTokens + outputTokens;
-  if (totalReservedTokens > model.contextWindow) {
+  if (policy.instructionTokens + promptTokens + outputTokens > model.contextWindow) {
     throw new Error(
       `The extraction prompt is too large for the model context window. ` +
         `Prompt uses ~${promptTokens} tokens; only ${model.contextWindow - policy.instructionTokens - outputTokens} ` +
@@ -182,9 +190,74 @@ function computeBudget(
     );
   }
 
-  const evidenceTokens = model.contextWindow - totalReservedTokens;
-  const evidenceCharBudget = Math.max(0, evidenceTokens * policy.charsPerToken);
-  return { evidenceCharBudget, outputTokens };
+  const nonEvidenceTokens = policy.instructionTokens + promptTokens;
+  // Best-effort headroom: never let the reasoning reservation push past the
+  // context ceiling; evidence then shrinks toward zero.
+  const reserved = Math.min(outputReservation, model.contextWindow - nonEvidenceTokens);
+  const evidenceTokens = model.contextWindow - nonEvidenceTokens - reserved;
+  return Math.max(0, evidenceTokens * policy.charsPerToken);
+}
+
+function baseOutputAllowance(model: Model<Api>, policy: ExtractionModelBudgetPolicy): number {
+  return Math.min(policy.outputTokens, model.maxTokens);
+}
+
+/**
+ * Project the completion ceiling Pi's budget adapters will request for an
+ * explicit level: the answer allowance plus the adapter's reasoning budget,
+ * clamped to the model ceiling. Reuses Pi's own reasoning-budget policy so the
+ * arithmetic matches the adapter. Effort-based adapters do not expand the
+ * ceiling, so this is a safe upper bound for context reservation.
+ */
+export function projectOutputCeiling(
+  model: Model<Api>,
+  outputTokens: number,
+  level: ThinkingLevel,
+): number {
+  return adjustMaxTokensForThinking(outputTokens, model.maxTokens, level).maxTokens;
+}
+
+/**
+ * Send one completion through Pi's provider-neutral reasoning interface.
+ *
+ * The provider's `streamSimple` maps a reasoning level to the adapter's native
+ * control (effort or token budget); the extension never selects a provider API
+ * path itself. The registry facade exposes no simple completion, so this
+ * reassembles the same request fields `prepareRequest` would: credentials,
+ * auth-derived headers, provider-scoped environment, and endpoint overrides.
+ */
+async function completeWithReasoning(
+  registry: ModelRegistry,
+  model: Model<Api>,
+  context: Context,
+  options: {
+    signal?: AbortSignal;
+    maxTokens: number;
+    timeoutMs: number;
+    reasoning?: ThinkingLevel;
+  },
+): Promise<AssistantMessage> {
+  const provider = registry.getProvider(model.provider);
+  if (!provider) {
+    throw new Error(
+      `Extraction provider "${model.provider}" is not available in Pi's model registry.`,
+    );
+  }
+
+  const auth = await registry.getApiKeyAndHeaders(model);
+  if (!auth.ok) throw new Error(auth.error);
+
+  const preparedModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+  const streamOptions: SimpleStreamOptions = {
+    signal: options.signal,
+    maxTokens: options.maxTokens,
+    timeoutMs: options.timeoutMs,
+    ...(auth.apiKey !== undefined ? { apiKey: auth.apiKey } : {}),
+    ...(auth.headers !== undefined ? { headers: auth.headers } : {}),
+    ...(auth.env !== undefined ? { env: auth.env } : {}),
+    ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
+  };
+  return provider.streamSimple(preparedModel, context, streamOptions).result();
 }
 
 // ─── Artifact prefix reading ─────────────────────────────────────────────────
@@ -281,9 +354,25 @@ export async function extractAnswer(
   request: ExtractionRequest,
   policy: ExtractionModelBudgetPolicy,
   signal?: AbortSignal,
+  effectiveThinking?: ModelThinkingLevel,
 ): Promise<ExtractionResult> {
   const { model, provider, modelId } = resolved;
-  const { evidenceCharBudget, outputTokens } = computeBudget(model, request.prompt, policy);
+  const outputTokens = baseOutputAllowance(model, policy);
+  // Explicit reasoning reserves the adapter's projected ceiling. Pi's reasoning
+  // policy only expands budget adapters; effort adapters keep the base ceiling,
+  // so the projection is a safe upper bound for context sizing rather than an
+  // exact promise. The base allowance is what we send, so Pi adds headroom once.
+  const outputReservation =
+    effectiveThinking !== undefined && effectiveThinking !== "off"
+      ? projectOutputCeiling(model, outputTokens, effectiveThinking)
+      : outputTokens;
+  const evidenceCharBudget = computeBudget(
+    model,
+    request.prompt,
+    policy,
+    outputTokens,
+    outputReservation,
+  );
 
   const { text: evidence, truncated: modelInputTruncated } = await readArtifactPrefix(
     request.artifactPath,
@@ -308,11 +397,23 @@ export async function extractAnswer(
 
   let assistant: AssistantMessage;
   try {
-    assistant = await registry.complete(model, context, {
-      signal,
-      maxTokens: outputTokens,
-      timeoutMs: policy.completionTimeoutMs,
-    });
+    if (effectiveThinking === undefined) {
+      // Omitted or malformed preference: preserve the existing raw path/options.
+      assistant = await registry.complete(model, context, {
+        signal,
+        maxTokens: outputTokens,
+        timeoutMs: policy.completionTimeoutMs,
+      });
+    } else {
+      // Explicit preference: pass the base answer allowance; Pi's budget
+      // adapters add the reasoning allowance themselves, exactly once.
+      assistant = await completeWithReasoning(registry, model, context, {
+        signal,
+        maxTokens: outputTokens,
+        timeoutMs: policy.completionTimeoutMs,
+        ...(effectiveThinking !== "off" ? { reasoning: effectiveThinking } : {}),
+      });
+    }
   } catch (err) {
     throw new ExtractionModelError(
       `Extraction model request failed: ${(err as Error).message}`,
