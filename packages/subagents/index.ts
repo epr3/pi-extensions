@@ -1,5 +1,6 @@
 import type {
   AgentToolResult,
+  CreateAgentSessionOptions,
   ExtensionAPI,
   Theme,
   ToolRenderResultOptions,
@@ -180,6 +181,11 @@ export default function (pi: ExtensionAPI) {
       defaultModel: String(raw.explore?.defaultModel ?? "").trim() || undefined,
     },
 
+    thinkingLevel:
+      typeof raw.thinkingLevel === "string" &&
+      ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(raw.thinkingLevel)
+        ? (raw.thinkingLevel as CreateAgentSessionOptions["thinkingLevel"])
+        : undefined,
     defaultModel: String(raw.defaultModel ?? "").trim() || undefined,
     general: {
       excludeExtraTools: Array.isArray(raw.general?.excludeExtraTools)
@@ -227,20 +233,42 @@ export default function (pi: ExtensionAPI) {
         ctx.model,
       );
       // Compute warnings for any configured-but-broken model refs.
-      const warnings = checkDefaultModelWarnings(
+      const modelWarnings = checkDefaultModelWarnings(
         cfg[type].defaultModel,
         cfg.defaultModel,
         (provider, modelId) => ctx.modelRegistry.find(provider, modelId),
         type,
       );
       // Emit UI toast for each warning when the TUI is active.
-      if (warnings.length > 0 && ctx.hasUI) {
-        for (const w of warnings) {
+      if (modelWarnings.length > 0 && ctx.hasUI) {
+        for (const w of modelWarnings) {
           ctx.ui.notify(
             `Default ${w.scope} subagent model "${w.reference}" is ${w.type} — falling back`,
             "warning",
           );
         }
+      }
+
+      const warnings: Array<{
+        scope: string;
+        reference: string;
+        type: string;
+        setting?: string;
+        requested?: string;
+        effective?: string;
+      }> = [...modelWarnings];
+      if (raw.thinkingLevel !== undefined && cfg.thinkingLevel === undefined) {
+        warnings.push({
+          scope: "shared",
+          reference: JSON.stringify(raw.thinkingLevel),
+          setting: "subagents.thinkingLevel",
+          type: "malformed",
+        });
+        if (ctx.hasUI)
+          ctx.ui.notify(
+            "subagents.thinkingLevel is malformed — using SDK/settings defaults",
+            "warning",
+          );
       }
 
       // Foreground runs stream child assistant text and compact tool activity
@@ -273,6 +301,24 @@ export default function (pi: ExtensionAPI) {
           prompt: params.prompt,
           cwd: ctx.cwd,
           model,
+          thinkingLevel: cfg.thinkingLevel,
+          onThinkingLevel: (effective) => {
+            const requested = cfg.thinkingLevel;
+            if (requested === undefined || requested === effective) return;
+            warnings.push({
+              scope: "shared",
+              reference: requested,
+              setting: "subagents.thinkingLevel",
+              type: "clamped",
+              requested,
+              effective,
+            });
+            if (ctx.hasUI)
+              ctx.ui.notify(
+                `subagents.thinkingLevel requested "${requested}"; effective "${effective}" (Pi model capabilities)`,
+                "warning",
+              );
+          },
           ...(type === "explore" ? { tools: exploreTools } : {}),
           excludeExtraTools: cfg.general.excludeExtraTools,
           onStreamEvent,

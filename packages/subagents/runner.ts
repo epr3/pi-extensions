@@ -5,6 +5,7 @@ import {
   ModelRuntime,
   SessionManager,
   getAgentDir,
+  type CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import { AGENTS, CORE_READ_TOOLS, SAFETY_EXCLUDES, type AgentType } from "./agents.ts";
@@ -130,6 +131,9 @@ export async function runSubagent(opts: {
   prompt: string;
   cwd: string;
   model?: AnyModel;
+  thinkingLevel?: CreateAgentSessionOptions["thinkingLevel"];
+  /** Observe Pi's effective level after session creation and capability adaptation. */
+  onThinkingLevel?: (effective: NonNullable<CreateAgentSessionOptions["thinkingLevel"]>) => void;
   /** Allowlist for the sub-session (explore). Undefined = everything discovered (general). */
   tools?: string[];
   /** Extra exclusions on top of SAFETY_EXCLUDES. */
@@ -154,6 +158,7 @@ export async function runSubagent(opts: {
     createAgentSession({
       cwd: opts.cwd,
       ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.thinkingLevel !== undefined ? { thinkingLevel: opts.thinkingLevel } : {}),
       ...(tools ? { tools } : {}),
       // Enforce one-level-deep: the loader discovers this very extension in the
       // sub-session, so without this a `general` sub-agent could recursively
@@ -174,6 +179,8 @@ export async function runSubagent(opts: {
     if (!def.readOnly) throw e;
     ({ session } = await makeSession(CORE_READ_TOOLS));
   }
+
+  if (opts.thinkingLevel !== undefined) opts.onThinkingLevel?.(session.thinkingLevel);
 
   return runSubagentSession({
     session,
