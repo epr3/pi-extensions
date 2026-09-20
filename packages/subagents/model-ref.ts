@@ -1,5 +1,6 @@
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentType } from "./agents.ts";
+import type { WarningScope } from "./warnings.ts";
 
 /**
  * Pure model reference parser for exact `provider/model` strings.
@@ -109,7 +110,7 @@ export function resolveTypeDefaultModel(
  */
 export interface DefaultModelWarning {
   /** Which setting level holds the problematic reference. */
-  scope: "shared" | AgentType;
+  scope: WarningScope;
   /** The raw configured value as written in settings. */
   reference: string;
   /** Why the reference could not be used. */
