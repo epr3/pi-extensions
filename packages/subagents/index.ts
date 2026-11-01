@@ -14,7 +14,7 @@ import {
 } from "./discovery.ts";
 import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts";
 import { resolveDefinitionToolset } from "./toolset.ts";
-import { AgentManager, type AgentRecord } from "./manager.ts";
+import { AgentManager, type AgentRecord, type StopOutcome } from "./manager.ts";
 import {
   resolveTypeDefaultModel,
   resolveDefaultModel,
@@ -192,10 +192,79 @@ export const resultParams = Type.Object({
   wait: Type.Optional(Type.Boolean({ description: "Block until the agent finishes" })),
 });
 
+export const stopParams = Type.Object({
+  agent_id: Type.String({
+    description: "Subagent id returned by a background Agent launch (details.agent_id)",
+  }),
+});
+
 function settledText(rec: AgentRecord): string {
-  return rec.status === "completed"
-    ? `\u2713 ${rec.type} (${rec.description}) \u2014 ${rec.toolUses} tool uses`
-    : `\u2717 ${rec.type} (${rec.description}) ${rec.status}: ${rec.error ?? ""}`;
+  if (rec.status === "completed")
+    return `\u2713 ${rec.type} (${rec.description}) \u2014 ${rec.toolUses} tool uses`;
+  if (rec.status === "stopped") return `\u23f9 ${rec.type} (${rec.description}) stopped`;
+  return `\u2717 ${rec.type} (${rec.description}) ${rec.status}: ${rec.error ?? ""}`;
+}
+
+/** Boolean that the run produced no partial assistant text. */
+function partialBlock(rec: AgentRecord): string {
+  return rec.partialText
+    ? `\n\nPartial assistant output (incomplete):\n${rec.partialText}`
+    : "\n\nNo partial assistant output is available.";
+}
+
+/**
+ * Compose the parent-facing text for an explicit background retrieval.
+ * Completed runs return their result; stopped and failed runs name the
+ * outcome, include any available partial assistant text as clearly marked
+ * incomplete (or state explicitly that none is available), and — for
+ * failures — the failure reason. The truncation notice inside the partial
+ * text was composed by the manager outside the result-text limit.
+ */
+export function retrievalText(rec: AgentRecord): string {
+  if (rec.status === "completed") return rec.result ?? "(no output)";
+  const head =
+    rec.status === "stopped"
+      ? `stopped \u2014 ${rec.stopReason ?? "stopped by request"}`
+      : rec.status === "failed"
+        ? `failed: ${rec.error}`
+        : `status: ${rec.status}`;
+  return `${head}${partialBlock(rec)}`;
+}
+
+/** Compose the parent-facing response for a stop request. */
+export function stopResultText(outcome: StopOutcome): string {
+  const rec = outcome.record;
+  if (outcome.action === "unchanged") {
+    const why =
+      rec.status === "completed"
+        ? "already completed before the stop request"
+        : rec.status === "failed"
+          ? `already failed with: ${rec.error}`
+          : "was already stopped";
+    return `Subagent ${rec.id} (${rec.type}, ${rec.description}) ${why}. The stop did not change the outcome.`;
+  }
+  const head = `Stopped ${rec.type} (${rec.description}) \u2014 ${rec.stopReason ?? "stopped by request"}.`;
+  return rec.partialText
+    ? `${head}\n\nPartial assistant output (incomplete):\n${rec.partialText}`
+    : `${head} No assistant output is available.`;
+}
+
+/**
+ * Merge abort sources into one signal for a run's exec: the parent's tool
+ * cancellation (foreground only) plus the manager's stop signal.
+ */
+export function mergedAbortSignal(
+  signals: Array<AbortSignal | undefined>,
+): AbortSignal | undefined {
+  const present = signals.filter((s): s is AbortSignal => !!s);
+  if (present.length === 0) return undefined;
+  if (present.length === 1) return present[0];
+  const merged = new AbortController();
+  for (const signal of present) {
+    if (signal.aborted) merged.abort();
+    else signal.addEventListener("abort", () => merged.abort(), { once: true });
+  }
+  return merged.signal;
 }
 
 /**
@@ -419,7 +488,7 @@ export default function (pi: ExtensionAPI) {
             });
           };
 
-      const exec = () =>
+      const exec = (stopSignal: AbortSignal) =>
         runSubagent({
           type,
           ...(agentDef ? { agentDef: { ...agentDef } } : {}),
@@ -450,14 +519,23 @@ export default function (pi: ExtensionAPI) {
           ...(isBuiltin ? { excludeExtraTools: cfg.general.excludeExtraTools } : {}),
           ...(!isBuiltin && customToolset ? { ...customToolset } : {}),
           onStreamEvent,
-          abortSignal: background ? undefined : ctx.signal,
+          // Foreground: the parent's tool-call cancellation stops the run.
+          // Background: stop_subagent's per-run signal stops it.
+          abortSignal: background ? stopSignal : mergedAbortSignal([ctx.signal, stopSignal]),
         });
       // Notify only for background settles — foreground returns its result
       // inline, so a toast would be duplicate noise.
       const onSettled =
         background && ctx.hasUI
           ? (rec: AgentRecord) =>
-              ctx.ui.notify(settledText(rec), rec.status === "completed" ? "info" : "error")
+              ctx.ui.notify(
+                settledText(rec),
+                rec.status === "completed"
+                  ? "info"
+                  : rec.status === "stopped"
+                    ? "warning"
+                    : "error",
+              )
           : undefined;
 
       const { record, done } = manager.launch(
@@ -493,19 +571,53 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "stop_subagent",
+    label: "Subagent Stop",
+    description:
+      "Stop a queued or running background Subagent. A queued run never starts; a " +
+      "running run is aborted. The response reports the outcome (stopped, or why the " +
+      "stop did not apply because the run had already completed, failed, or been " +
+      "stopped) and includes any partial assistant output, clearly marked " +
+      "incomplete. Foreground runs cannot be stopped this way — cancel the Agent " +
+      "tool call instead.",
+    promptSnippet: "Stop a background Subagent run",
+    promptGuidelines: [
+      "Use stop_subagent to cancel obsolete background work. Supply the id from the background launch (details.agent_id). Already-terminal runs report their existing outcome unchanged.",
+    ],
+    parameters: stopParams,
+    async execute(_toolCallId, params) {
+      let outcome: StopOutcome;
+      try {
+        outcome = await manager.stop(params.agent_id);
+      } catch (e) {
+        // Only the unknown-id error is re-labeled; other failures (e.g. the
+        // foreground-refusal guidance) pass through unchanged.
+        const message = e instanceof Error ? e.message : String(e);
+        if (!message.startsWith("No subagent")) throw e;
+        throw new Error(
+          `Unknown Subagent id "${params.agent_id}". Use the id returned when launching ` +
+            `a Subagent with run_in_background (result details.agent_id). Nothing was stopped.`,
+          { cause: e },
+        );
+      }
+      return textResult(stopResultText(outcome), {
+        agent_id: outcome.record.id,
+        status: outcome.record.status,
+        stopRequested: true,
+        changed: outcome.action === "stopped",
+        ...(outcome.record.stopReason ? { stopReason: outcome.record.stopReason } : {}),
+      });
+    },
+  });
+
+  pi.registerTool({
     name: "get_subagent_result",
     label: "Subagent Result",
     description: "Check status / retrieve the result of a background Subagent.",
     parameters: resultParams,
     async execute(_toolCallId, params) {
       const rec = await manager.getResult(params.agent_id, params.wait ?? false);
-      const text =
-        rec.status === "completed"
-          ? (rec.result ?? "(no output)")
-          : rec.status === "failed"
-            ? `failed: ${rec.error}`
-            : `status: ${rec.status}`;
-      return textResult(text, { ...rec });
+      return textResult(retrievalText(rec), { ...rec });
     },
   });
 

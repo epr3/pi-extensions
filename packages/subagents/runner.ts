@@ -54,7 +54,10 @@ export interface SubagentSession {
  *
  * When `abortSignal` fires, the session is aborted, stream forwarding stops,
  * and the promise rejects with "Subagent aborted". Partial stream text is
- * never promoted into the returned `RunResult`.
+ * never promoted into a successful `RunResult`, but assistant text captured
+ * before an abort or failure is attached to the thrown error as
+ * `partialText` (assistant prose only — no tool transcripts, no hidden
+ * reasoning) so a parent-facing stop can expose it as clearly incomplete.
  */
 export async function runSubagentSession(opts: {
   session: SubagentSession;
@@ -66,6 +69,10 @@ export async function runSubagentSession(opts: {
 }): Promise<RunResult> {
   const { session, prompt, onStreamEvent: onStream, abortSignal } = opts;
   let toolUses = 0;
+  // Assistant text captured from deltas for error attachment. Tool lifecycle
+  // events and thinking deltas are deliberately excluded: partial output is
+  // assistant prose only.
+  const capturedText: string[] = [];
 
   const onAbort = () => {
     session.abort();
@@ -86,6 +93,7 @@ export async function runSubagentSession(opts: {
       case "message_update": {
         const msg = event.assistantMessageEvent;
         if (msg?.type === "text_delta" && msg.delta) {
+          capturedText.push(msg.delta);
           onStream?.({ type: "text_delta", delta: msg.delta });
         }
         // thinking_delta deliberately ignored — model-internal reasoning
@@ -101,15 +109,22 @@ export async function runSubagentSession(opts: {
     }
   });
 
+  const withPartial = (e: Error): Error => {
+    if (capturedText.length > 0) (e as any).partialText = capturedText.join("");
+    return e;
+  };
+
   try {
     await session.prompt(prompt);
     const text = lastAssistantText(session.messages);
     const tokens = totalTokens(session.messages);
     return { result: text, tokens, toolUses };
   } catch (e: any) {
-    // If the signal caused the abort, throw a clean error.
-    if (abortSignal?.aborted) throw new Error("Subagent aborted");
-    throw e;
+    // If the signal caused the abort, throw a clean error. Either way, hand
+    // back whatever assistant text arrived before the failure — the caller
+    // (and the manager) decides how to mark it incomplete.
+    if (abortSignal?.aborted) throw withPartial(new Error("Subagent aborted"));
+    throw withPartial(e instanceof Error ? e : new Error(String(e)));
   } finally {
     if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
     unsubscribe();

@@ -3,11 +3,17 @@ import { appendTruncationNotice } from "./result-limit.ts";
 
 // Deep module: a concurrency-limited scheduler that owns sub-agent records,
 // the queue, the running count, and lifecycle notifications. Callers see only
-// launch / getResult / list. It knows nothing about cwd, models, or Pi — the
-// caller hands it an opaque `exec` thunk — so it is unit-testable with a fake
-// exec and has no reason to change when the runner or Pi APIs change.
+// launch / stop / getResult / list. It knows nothing about cwd, models, or Pi
+// — the caller hands it an opaque `exec` thunk that accepts the job's abort
+// signal — so it is unit-testable with a fake exec and has no reason to change
+// when the runner or Pi APIs change.
 
-export type Status = "queued" | "running" | "completed" | "failed";
+export type Status = "queued" | "running" | "completed" | "failed" | "stopped";
+
+/** Terminal states: once a run reaches one, no later stop may change it. */
+export function isTerminalStatus(status: Status): boolean {
+  return status === "completed" || status === "failed" || status === "stopped";
+}
 
 export interface RunOutput {
   result: string;
@@ -21,8 +27,16 @@ export interface AgentRecord {
   type: AgentType | string;
   description: string;
   status: Status;
+  /** True when the run was launched with run_in_background. */
+  background: boolean;
   result?: string;
   error?: string;
+  /** Why the run stopped (stop_subagent); never set for completed/failed. */
+  stopReason?: string;
+  /** Assistant text captured before a stop or failure for stopped/failed
+   *  runs, already bounded with the shared result limit. Undefined when no
+   *  assistant text was available. */
+  partialText?: string;
   tokens: number;
   toolUses: number;
   /** Extension-specific warnings (e.g. unresolvable model refs). */
@@ -37,19 +51,34 @@ export interface LaunchTask {
 
 export interface ManagerOptions {
   maxConcurrency?: number;
-  /** Lifecycle bus: "created" | "started" | "completed" | "failed". */
+  /** Lifecycle bus: "created" | "started" | "completed" | "failed" | "stopped". */
   onEvent?: (name: string, record: AgentRecord) => void;
+}
+
+/** Result of a parent-facing stop of a background run. */
+export interface StopOutcome {
+  /** "stopped": the stop changed the run; "unchanged": already terminal. */
+  action: "stopped" | "unchanged";
+  record: AgentRecord;
 }
 
 interface Job {
   record: AgentRecord;
-  exec: () => Promise<RunOutput>;
+  exec: (signal: AbortSignal) => Promise<RunOutput>;
   onSettled?: (record: AgentRecord) => void;
   resolve: (record: AgentRecord) => void;
+  done: Promise<AgentRecord>;
+  /** Abort source for stop_subagent; wired into the run's exec signal. */
+  controller: AbortController;
+  /** Set once a stop request reached a not-yet-terminal job. */
+  stopRequested: boolean;
+  /** True once the first terminal outcome has been applied. */
+  terminal: boolean;
 }
 
 export class AgentManager {
   private records = new Map<string, AgentRecord>();
+  private jobs = new Map<string, Job>();
   private backgroundQueue: Job[] = [];
   private foregroundQueue: Job[] = [];
   private running = 0;
@@ -65,11 +94,12 @@ export class AgentManager {
   /**
    * Launch a sub-agent. Returns its record and a `done` promise that resolves
    * when the job settles. Foreground jobs enter a priority queue ahead of
-   * background jobs; both are subject to the same concurrency cap.
+   * background jobs; both are subject to the same concurrency cap. The exec
+   * thunk receives the job's abort signal: aborting it stops the child run.
    */
   launch(
     task: LaunchTask,
-    exec: () => Promise<RunOutput>,
+    exec: (signal: AbortSignal) => Promise<RunOutput>,
     onSettled?: (record: AgentRecord) => void,
   ): { record: AgentRecord; done: Promise<AgentRecord> } {
     const record: AgentRecord = {
@@ -77,22 +107,74 @@ export class AgentManager {
       type: task.type,
       description: task.description,
       status: "queued",
+      background: !!task.background,
       tokens: 0,
       toolUses: 0,
     };
     this.records.set(record.id, record);
     this.onEvent("created", record);
 
+    let resolveDone!: (record: AgentRecord) => void;
     const done = new Promise<AgentRecord>((resolve) => {
-      const job: Job = { record, exec, onSettled, resolve };
-      if (task.background) {
-        this.backgroundQueue.push(job);
-      } else {
-        this.foregroundQueue.push(job);
-      }
-      this.pump();
+      resolveDone = resolve;
     });
+    const job: Job = {
+      record,
+      exec,
+      onSettled,
+      resolve: resolveDone,
+      done,
+      controller: new AbortController(),
+      stopRequested: false,
+      terminal: false,
+    };
+    this.jobs.set(record.id, job);
+    if (task.background) {
+      this.backgroundQueue.push(job);
+    } else {
+      this.foregroundQueue.push(job);
+    }
+    this.pump();
     return { record, done };
+  }
+
+  /**
+   * Stop one queued or running background run. A queued run is removed from
+   * the queue and settles as stopped without ever starting; a running run's
+   * abort signal fires and its exec rejects, settling the run as stopped with
+   * any partial assistant text. Stopping an already-terminal run is a no-op
+   * that reports ("unchanged") — the first terminal outcome always wins.
+   * Foreground runs are refused: the parent's own cancellation stops them.
+   */
+  async stop(id: string): Promise<StopOutcome> {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error(`No subagent ${id}`);
+    if (!job.record.background) {
+      throw new Error(
+        `Subagent ${id} is a foreground run. Only background runs can be stopped; ` +
+          `a foreground run stops when the parent's tool call is cancelled.`,
+      );
+    }
+    if (isTerminalStatus(job.record.status)) {
+      return { action: "unchanged", record: job.record };
+    }
+    if (job.record.status === "queued") {
+      this.unqueue(job);
+      this.settleTerminal(job, {
+        status: "stopped",
+        stopReason: "Stopped by request before it started",
+      });
+      return { action: "stopped", record: job.record };
+    }
+    // Running: request the stop and let the exec's rejection (or an already
+    // resolved completion) settle the record — whichever lands first wins.
+    job.stopRequested = true;
+    job.controller.abort();
+    const record = await job.done;
+    return {
+      action: record.status === "stopped" ? "stopped" : "unchanged",
+      record,
+    };
   }
 
   async getResult(id: string, wait = false): Promise<AgentRecord> {
@@ -110,32 +192,61 @@ export class AgentManager {
     return [...this.records.values()];
   }
 
+  private unqueue(job: Job): void {
+    this.backgroundQueue = this.backgroundQueue.filter((j) => j !== job);
+    this.foregroundQueue = this.foregroundQueue.filter((j) => j !== job);
+  }
+
+  /** Apply the first terminal outcome; later candidates are ignored. */
+  private settleTerminal(job: Job, patch: Partial<AgentRecord> & { status: Status }): void {
+    if (job.terminal) return;
+    job.terminal = true;
+    Object.assign(job.record, patch);
+    // The status string doubles as the lifecycle event name, keeping the
+    // "completed" and "failed" names already in use.
+    this.onEvent(patch.status, job.record);
+    job.onSettled?.(job.record);
+    job.resolve(job.record);
+    this.pump();
+  }
+
   private async run(job: Job): Promise<void> {
     this.running++;
     job.record.status = "running";
     this.onEvent("started", job.record);
     try {
-      const out = await job.exec();
+      const out = await job.exec(job.controller.signal);
       // Bound result text here, once, so every consumer of the record —
       // foreground return, explicit retrieval, and later automatic delivery —
       // sees the same bounded text. The truncation notice is composed outside
       // the limit; failure reasons are never bounded.
-      Object.assign(job.record, {
-        ...out,
-        result: appendTruncationNotice(out?.result ?? ""),
+      this.settleTerminal(job, {
         status: "completed" satisfies Status,
+        result: appendTruncationNotice(out?.result ?? ""),
+        tokens: out?.tokens ?? 0,
+        toolUses: out?.toolUses ?? 0,
       });
-      this.onEvent("completed", job.record);
     } catch (e: any) {
-      Object.assign(job.record, {
-        error: e?.message ?? String(e),
-        status: "failed" satisfies Status,
-      });
-      this.onEvent("failed", job.record);
+      // Assistant text captured before the failure becomes the stopped/failed
+      // partial output, bounded with the shared limit like any result text.
+      const partial = typeof e?.partialText === "string" ? e.partialText : undefined;
+      const partialPatch = partial ? { partialText: appendTruncationNotice(partial) } : {};
+      if (job.stopRequested) {
+        // The stop request won: the first terminal outcome is "stopped".
+        this.settleTerminal(job, {
+          status: "stopped" satisfies Status,
+          stopReason: "Stopped by request while running",
+          ...partialPatch,
+        });
+      } else {
+        this.settleTerminal(job, {
+          status: "failed" satisfies Status,
+          error: e?.message ?? String(e),
+          ...partialPatch,
+        });
+      }
     } finally {
       this.running--;
-      job.onSettled?.(job.record);
-      job.resolve(job.record);
       this.pump();
     }
   }

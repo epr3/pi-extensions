@@ -352,10 +352,11 @@ describe("read-only and safety boundaries", () => {
     expect(exploreToolset(["read"])).toEqual(CORE_READ_TOOLS);
   });
 
-  it("safety excludes unchanged", () => {
-    expect(SAFETY_EXCLUDES).toEqual(["Agent", "get_subagent_result", "question"]);
+  it("safety excludes the delegation, retrieval, and stop tools", () => {
+    expect(SAFETY_EXCLUDES).toEqual(["Agent", "get_subagent_result", "stop_subagent", "question"]);
     expect(SAFETY_EXCLUDES).toContain("Agent");
     expect(SAFETY_EXCLUDES).toContain("get_subagent_result");
+    expect(SAFETY_EXCLUDES).toContain("stop_subagent");
     expect(SAFETY_EXCLUDES).toContain("question");
   });
 

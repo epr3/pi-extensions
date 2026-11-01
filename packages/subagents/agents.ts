@@ -19,8 +19,9 @@ import type { CustomTypeDiscovery } from "./discovery.ts";
 /** Read-only built-ins — the floor of the explore toolset. */
 export const CORE_READ_TOOLS = ["read", "grep", "find", "ls"];
 
-/** Always excluded from sub-sessions: no recursion, no questions without a user. */
-export const SAFETY_EXCLUDES = ["Agent", "get_subagent_result", "question"];
+/** Always excluded from sub-sessions: no recursion, no stopping, and no
+ *  questions without a user — only the parent launches, retrieves, stops. */
+export const SAFETY_EXCLUDES = ["Agent", "get_subagent_result", "stop_subagent", "question"];
 
 /** The explore allowlist: core + configured grants + env extras, deduped. */
 export function exploreToolset(

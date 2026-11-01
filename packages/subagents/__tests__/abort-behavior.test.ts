@@ -159,6 +159,72 @@ describe("runner abort behavior", () => {
     expect(session.disposed).toBe(true);
   });
 
+  it("attaches captured assistant text as partial output on abort", async () => {
+    const session = createFakeSession();
+    const controller = new AbortController();
+
+    const promise = runSubagentSession({
+      session,
+      prompt: "test",
+      abortSignal: controller.signal,
+    });
+
+    session.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "Working on it… " },
+    });
+    session.emit({ type: "tool_execution_start", toolName: "read" });
+    session.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "found the bug" },
+    });
+    controller.abort();
+
+    const err: any = await promise.catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("Subagent aborted");
+    expect(err.partialText).toBe("Working on it… found the bug");
+  });
+
+  it("attaches partial output to a non-abort failure too", async () => {
+    const session = createFakeSession();
+    const controller = new AbortController();
+
+    const promise = runSubagentSession({
+      session,
+      prompt: "test",
+      abortSignal: controller.signal,
+    });
+
+    session.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "partial findings" },
+    });
+    session.reject(new Error("model exploded"));
+
+    const err: any = await promise.catch((e) => e);
+    expect(err.message).toBe("model exploded");
+    expect(err.partialText).toBe("partial findings");
+  });
+
+  it("omits partial output when no assistant text was captured", async () => {
+    const session = createFakeSession();
+    const controller = new AbortController();
+
+    const promise = runSubagentSession({
+      session,
+      prompt: "test",
+      abortSignal: controller.signal,
+    });
+
+    session.emit({ type: "tool_execution_start", toolName: "read" });
+    controller.abort();
+
+    const err: any = await promise.catch((e) => e);
+    expect(err.message).toBe("Subagent aborted");
+    expect(err.partialText).toBeUndefined();
+  });
+
   it("forwards non-abort errors unchanged", async () => {
     const session = createFakeSession();
     const controller = new AbortController();

@@ -102,13 +102,14 @@ describe("subagent_type surface", () => {
 // ---------------------------------------------------------------------------
 
 describe("SAFETY_EXCLUDES", () => {
-  it("has the expected three tools", () => {
-    expect(SAFETY_EXCLUDES).toEqual(["Agent", "get_subagent_result", "question"]);
+  it("has the parent-facing delegation tools and stops, plus question", () => {
+    expect(SAFETY_EXCLUDES).toEqual(["Agent", "get_subagent_result", "stop_subagent", "question"]);
   });
 
-  it("prevents recursion into Agent and get_subagent_result", () => {
+  it("prevents recursion into Agent, retrieval, and stopping", () => {
     expect(SAFETY_EXCLUDES).toContain("Agent");
     expect(SAFETY_EXCLUDES).toContain("get_subagent_result");
+    expect(SAFETY_EXCLUDES).toContain("stop_subagent");
     expect(SAFETY_EXCLUDES).toContain("question");
   });
 });

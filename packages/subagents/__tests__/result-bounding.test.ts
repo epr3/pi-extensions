@@ -167,7 +167,10 @@ describe("bounded results at the get_subagent_result seam", () => {
       agent_id: started.details.agent_id,
       wait: true,
     });
-    expect(contentText(res)).toBe("failed: boom");
+    // Failure reason outside the limit, plus the explicit no-partial
+    // statement so absence of output is not ambiguous.
+    expect(contentText(res)).toContain("failed: boom");
+    expect(contentText(res)).toContain("No partial assistant output is available.");
     expect(res.details.status).toBe("failed");
   });
 });
