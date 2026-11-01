@@ -277,6 +277,7 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Use subagent_type='explore' to gather codebase context and 'general' for off-context work that writes.",
       "For independent delegated tasks of the same subagent type, issue multiple foreground Agent calls in the same assistant turn (same-turn fan-out) — one call per task, each with its own prompt and description. Do not use a batch parameter or aggregate result API; each call returns its own result.",
+      "Subagent result text is limited to 20,000 bytes. When a Subagent's deliverable is a large document, artifact, or dataset, instruct it to write the full content to a file and return a concise summary plus the file path — omitted result text is not otherwise recoverable.",
     ],
     renderCall: renderAgentCall,
     renderResult: renderAgentResult,

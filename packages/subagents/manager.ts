@@ -1,4 +1,5 @@
 import type { AgentType } from "./agents.ts";
+import { appendTruncationNotice } from "./result-limit.ts";
 
 // Deep module: a concurrency-limited scheduler that owns sub-agent records,
 // the queue, the running count, and lifecycle notifications. Callers see only
@@ -115,7 +116,15 @@ export class AgentManager {
     this.onEvent("started", job.record);
     try {
       const out = await job.exec();
-      Object.assign(job.record, { ...out, status: "completed" satisfies Status });
+      // Bound result text here, once, so every consumer of the record —
+      // foreground return, explicit retrieval, and later automatic delivery —
+      // sees the same bounded text. The truncation notice is composed outside
+      // the limit; failure reasons are never bounded.
+      Object.assign(job.record, {
+        ...out,
+        result: appendTruncationNotice(out?.result ?? ""),
+        status: "completed" satisfies Status,
+      });
       this.onEvent("completed", job.record);
     } catch (e: any) {
       Object.assign(job.record, {

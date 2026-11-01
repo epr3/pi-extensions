@@ -46,6 +46,12 @@ _Avoid_: Thinking budget, parent thinking, model preset.
 **External web research**: Source-gathering workflow performed by the parent Pi coding agent through web Extension tools, not by a built-in **Subagent type**.
 _Avoid_: Researcher subagent, web subagent.
 
+**Result-text limit**: Fixed, non-configurable cap of 20,000 UTF-8 bytes on a **Subagent run**'s result text, keeping the beginning and never splitting a character.
+_Avoid_: Output budget, truncation cutoff, context cap.
+
+**Bounded result text**: Result output delivered under the **Result-text limit**, with a truncation report carrying original and retained byte counts; run status and failure reason stay outside it.
+_Avoid_: Clipped result, shortened output, trimmed result.
+
 ## Relationships
 
 - **Subagents Extension package** registers `Agent` and `get_subagent_result` tools.
@@ -63,6 +69,8 @@ _Avoid_: Researcher subagent, web subagent.
 - A **Subagent type** from a **Custom Subagent definition** inherits the available Subagent tools minus the safety exclusions until optional frontmatter fields are implemented.
 - **External web research** uses web Extension tools directly from the parent Pi coding agent rather than a dedicated built-in **Subagent type**.
 - **Subagent** cannot recursively launch child **Subagents** because subagent tools are excluded from sub-sessions.
+- Every **Subagent run** delivers **Bounded result text** — foreground returns, explicit `get_subagent_result` retrieval, and (later) automatic completions and failed/stopped partials — so the parent never sees an unbounded answer.
+- Omitted **Bounded result text** is not recoverable; a large deliverable is instead written to a file by the **Subagent**.
 
 ## Example dialogue
 

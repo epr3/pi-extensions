@@ -54,11 +54,30 @@ The sub-session uses the same resource loader as the parent, so it discovers eve
 
 ## Tools
 
-- `Agent({ subagent_type, prompt, description, run_in_background? })` — foreground blocks + returns the result; background returns an id. `subagent_type` accepts the two built-ins or any valid custom type name (discovered names and descriptions are listed in the tool description; definitions are re-read at every launch).
-- `get_subagent_result({ agent_id, wait? })` — poll/retrieve a background agent.
+- `Agent({ subagent_type, prompt, description, run_in_background? })` — foreground blocks + returns the bounded result; background returns an id. `subagent_type` accepts the two built-ins or any valid custom type name (discovered names and descriptions are listed in the tool description; definitions are re-read at every launch).
+- `get_subagent_result({ agent_id, wait? })` — poll/retrieve a background agent's bounded result.
 - `/subagents` — list subagents and status.
 
 Background agents run through a concurrency queue (default 4, `PI_SUBAGENT_CONCURRENCY`).
+
+## Bounded result text
+
+Subagent result text is truncated to a fixed **20,000 UTF-8 bytes** on every delivery
+path: foreground `Agent` results and explicit `get_subagent_result` retrieval (the same
+bound covers automatic background completions and failed/stopped partial output as those
+arrive in later slices).
+
+- The limit is fixed and non-configurable — no setting or environment variable overrides it.
+- The beginning of the text is kept, and the cut never splits a UTF-8 character.
+- When text is truncated, the result ends with a truncation report stating the original
+  and retained byte counts. Run status, failure reasons, and that report sit **outside**
+  the limit and are never truncated.
+- This deliberately changes previous behavior: foreground `Agent` results used to be
+  unbounded.
+- There is **no dedicated recovery mechanism** for omitted text — it is not retrievable
+  from the run afterwards. For large deliverables (documents, artifacts, datasets),
+  instruct the Subagent to write the full content to a file and return a concise summary
+  plus the file path. The `Agent` tool's model guidance carries the same instruction.
 
 ## Same-turn fan-out
 
@@ -68,8 +87,9 @@ each with its own `subagent_type`, `prompt`, and `description`. This is called *
 fan-out**.
 
 Each `Agent` call returns its own independent result, with its own `agent_id`, status,
-token count, tool-use count, warnings, and result text. You synthesize across sibling
-results in normal conversation context.
+token count, tool-use count, warnings, and bounded result text (see [Bounded result
+text](#bounded-result-text)). You synthesize across sibling results in normal
+conversation context.
 
 ```typescript
 // Same-turn fan-out: multiple Agent calls in one turn, independent prompts.
