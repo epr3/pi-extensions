@@ -6,11 +6,19 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { resolveAgentType, exploreToolset } from "./agents.ts";
+import { resolveAgentType, resolveTypeRequest, exploreToolset } from "./agents.ts";
+import {
+  discoverCustomSubagents,
+  customSubagentScopes,
+  type CustomTypeDiscovery,
+} from "./discovery.ts";
 import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts";
 import { AgentManager, type AgentRecord } from "./manager.ts";
-import { resolveTypeDefaultModel, checkDefaultModelWarnings } from "./model-ref.ts";
+import {
+  resolveTypeDefaultModel,
+  resolveDefaultModel,
+  checkDefaultModelWarnings,
+} from "./model-ref.ts";
 import { resolveTypeThinkingLevel } from "./thinking-level.ts";
 import type { AgentWarning } from "./warnings.ts";
 import { readFileSync } from "node:fs";
@@ -19,6 +27,25 @@ import path from "node:path";
 
 function textResult(text: string, details?: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text }], details: details ?? {} };
+}
+
+/**
+ * Resolve the requested Subagent type against built-ins plus the custom
+ * definitions discovered right now. Unknown or invalid types fail with an
+ * actionable message — never a silent fallback to `general` — and, when the
+ * requested name exists as a definition but is unusable (invalid fields,
+ * conflict, shadowing), the diagnosing message is appended.
+ */
+export function resolveTypeRequestOrThrow(requested: string, discovery: CustomTypeDiscovery) {
+  try {
+    return resolveTypeRequest(requested, discovery);
+  } catch (e) {
+    const diag = discovery.diagnostics.find((d) => d.name === requested);
+    if (diag) {
+      throw new Error(`${(e as Error).message} (${diag.message})`, { cause: e });
+    }
+    throw e;
+  }
 }
 
 // ─── Foreground stream rendering ───────────────────────────────────────────
@@ -112,8 +139,32 @@ export function renderAgentResult(
  * tools to it and supplies the env-bound exec thunk.
  */
 
+/**
+ * The Agent tool's Subagent type surface. Built-ins stay enumerated; custom
+ * types are discovered from the agent definition directories at registration
+ * time (names + descriptions appear in the tool description) and re-read at
+ * every launch, so edits and additions apply to subsequent launches without
+ * re-registering.
+ */
+export function agentTypeDescription(custom: CustomTypeDiscovery): string {
+  const lines = [...custom.valid.values()].map(
+    (d) => `'${d.name}' — ${d.description} (custom, from ${d.sourcePath})`,
+  );
+  return (
+    "Subagent type. Built-ins: 'explore' (read-only codebase discovery), " +
+    "'general' (scoped read/write work off the main context)." +
+    (lines.length
+      ? " Custom types: " + lines.join("; ") + "."
+      : " Custom types are defined as Markdown frontmatter files (required name + " +
+        "description; the body is the Subagent's system prompt) under .pi/agents " +
+        "directories — see the extension README.")
+  );
+}
+
 export const agentParams = Type.Object({
-  subagent_type: StringEnum(["explore", "general"] as const),
+  subagent_type: Type.String({
+    description: agentTypeDescription(discoverCustomSubagents(customSubagentScopes(process.cwd()))),
+  }),
   prompt: Type.String({ description: "The task for the subagent" }),
   description: Type.String({ description: "Short 3-5 word summary shown in UI" }),
   run_in_background: Type.Optional(
@@ -222,7 +273,7 @@ export default function (pi: ExtensionAPI) {
       "subagent_type='explore' is read-only codebase discovery (read/grep/find/ls); 'general' has full tools. " +
       "Foreground (default) blocks and returns the result; run_in_background:true returns an id you " +
       "poll with get_subagent_result.",
-    promptSnippet: "Run an explore (read-only) or general Subagent in an isolated context",
+    promptSnippet: "Run a Subagent in an isolated context",
     promptGuidelines: [
       "Use subagent_type='explore' to gather codebase context and 'general' for off-context work that writes.",
       "For independent delegated tasks of the same subagent type, issue multiple foreground Agent calls in the same assistant turn (same-turn fan-out) — one call per task, each with its own prompt and description. Do not use a batch parameter or aggregate result API; each call returns its own result.",
@@ -231,27 +282,51 @@ export default function (pi: ExtensionAPI) {
     renderResult: renderAgentResult,
     parameters: agentParams,
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
-      const type = resolveAgentType(params.subagent_type);
+      // Re-read custom definitions on every launch: edits and additions apply
+      // to subsequent launches; a running Subagent keeps its launch-time
+      // definition snapshot.
+      const discovery = discoverCustomSubagents(customSubagentScopes(ctx.cwd));
       const background = !!params.run_in_background;
+
+      // Surface definition diagnostics (malformed, conflicts, reserved names,
+      // shadowing) without disabling the valid types.
+      const defDiagnostics = discovery.diagnostics.map((d) => d.message);
+      if (defDiagnostics.length > 0 && ctx.hasUI) {
+        ctx.ui.notify(`Subagent definitions:\n${defDiagnostics.join("\n")}`, "warning");
+      }
+
+      const resolved = resolveTypeRequestOrThrow(params.subagent_type, discovery);
+      const isBuiltin = resolved.kind === "builtin";
+      const type = isBuiltin ? resolved.type : resolved.name; // display/record identity
+      const agentDef = resolved.kind === "custom" ? discovery.valid.get(resolved.name) : undefined;
+
       // Resolve model: type-specific override → shared default → parent model.
       // Each level: unconfigured, invalid syntax, or registry miss → fall through.
-      const model = resolveTypeDefaultModel(
-        {
-          explore: cfg.explore.defaultModel,
-          general: cfg.general.defaultModel,
-        },
-        type,
-        cfg.defaultModel,
-        (provider, modelId) => ctx.modelRegistry.find(provider, modelId),
-        ctx.model,
-      );
+      // Custom definitions cannot carry a model yet (rejected at parse time),
+      // so they resolve shared default → parent model only.
+      const findModel = (provider: string, modelId: string) =>
+        ctx.modelRegistry.find(provider, modelId);
+      const model = isBuiltin
+        ? resolveTypeDefaultModel(
+            {
+              explore: cfg.explore.defaultModel,
+              general: cfg.general.defaultModel,
+            },
+            resolved.type,
+            cfg.defaultModel,
+            findModel,
+            ctx.model,
+          )
+        : resolveDefaultModel(cfg.defaultModel, findModel, ctx.model);
       // Compute warnings for any configured-but-broken model refs.
-      const modelWarnings = checkDefaultModelWarnings(
-        cfg[type].defaultModel,
-        cfg.defaultModel,
-        (provider, modelId) => ctx.modelRegistry.find(provider, modelId),
-        type,
-      );
+      const modelWarnings = isBuiltin
+        ? checkDefaultModelWarnings(
+            cfg[resolved.type].defaultModel,
+            cfg.defaultModel,
+            findModel,
+            resolved.type,
+          )
+        : checkDefaultModelWarnings(undefined, cfg.defaultModel, findModel, "shared");
       // Emit UI toast for each warning when the TUI is active.
       if (modelWarnings.length > 0 && ctx.hasUI) {
         for (const w of modelWarnings) {
@@ -262,7 +337,13 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      const thinking = resolveTypeThinkingLevel(cfg[type].thinkingLevel, cfg.thinkingLevel, type);
+      const thinking = isBuiltin
+        ? resolveTypeThinkingLevel(
+            cfg[resolved.type].thinkingLevel,
+            cfg.thinkingLevel,
+            resolved.type,
+          )
+        : resolveTypeThinkingLevel(undefined, cfg.thinkingLevel, "shared");
 
       const warnings: AgentWarning[] = [...modelWarnings, ...thinking.warnings];
       for (const w of thinking.warnings) {
@@ -296,6 +377,7 @@ export default function (pi: ExtensionAPI) {
       const exec = () =>
         runSubagent({
           type,
+          ...(agentDef ? { agentDef: { ...agentDef } } : {}),
           prompt: params.prompt,
           cwd: ctx.cwd,
           model,
@@ -317,8 +399,10 @@ export default function (pi: ExtensionAPI) {
                 "warning",
               );
           },
-          ...(type === "explore" ? { tools: exploreTools } : {}),
-          excludeExtraTools: cfg.general.excludeExtraTools,
+          ...(resolved.kind === "builtin" && resolved.type === "explore"
+            ? { tools: exploreTools }
+            : {}),
+          ...(isBuiltin ? { excludeExtraTools: cfg.general.excludeExtraTools } : {}),
           onStreamEvent,
           abortSignal: background ? undefined : ctx.signal,
         });
@@ -344,6 +428,7 @@ export default function (pi: ExtensionAPI) {
             agent_id: record.id,
             status: record.status,
             ...(warnings.length > 0 ? { warnings } : {}),
+            ...(defDiagnostics.length > 0 ? { definitionDiagnostics: defDiagnostics } : {}),
           },
         );
       }
@@ -356,6 +441,7 @@ export default function (pi: ExtensionAPI) {
         tokens: rec.tokens,
         toolUses: rec.toolUses,
         ...(warnings.length > 0 ? { warnings } : {}),
+        ...(defDiagnostics.length > 0 ? { definitionDiagnostics: defDiagnostics } : {}),
       });
     },
   });

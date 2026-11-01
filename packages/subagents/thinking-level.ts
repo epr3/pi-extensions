@@ -2,6 +2,10 @@ import type { CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent"
 import type { AgentType } from "./agents.ts";
 import type { WarningScope } from "./warnings.ts";
 
+/** A per-type scope or the shared scope — custom Subagent types have no
+ *  per-type settings of their own yet, so they resolve at shared scope. */
+export type AgentTypeOrShared = AgentType | "shared";
+
 /**
  * Pure Subagent thinking-level resolver.
  *
@@ -63,7 +67,7 @@ export function thinkingSetting(scope: WarningScope): string {
 export function resolveTypeThinkingLevel(
   typeRaw: unknown,
   sharedRaw: unknown,
-  type: AgentType,
+  type: AgentTypeOrShared,
 ): ThinkingResolution {
   const warnings: ThinkingWarning[] = [];
 

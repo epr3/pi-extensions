@@ -10,8 +10,14 @@ _Avoid_: Agents package, worker plugin, task extension.
 **Subagent**: Child worker spawned by the parent Pi coding agent to handle a delegated task in an isolated run context.
 _Avoid_: Agent, worker, child session.
 
-**Subagent type**: Built-in profile defining a **Subagent** role and tool boundary.
+**Subagent type**: Built-in or custom definition of a **Subagent** role and tool boundary.
 _Avoid_: Agent type, profile, mode.
+
+**Custom Subagent definition**: Markdown file with YAML frontmatter `name` and `description` whose body is a **Subagent**'s system prompt, read fresh on every launch so edits apply to subsequent **Subagent runs** while a running run keeps its launch-time snapshot.
+_Avoid_: Agent file, pi-agent markdown, prompt template.
+
+**Subagent definitions directory**: `.pi/agents` directory in a project scope (from the working directory up to the Git root inclusive; outside Git only the working directory) or the `agents` directory in Pi's user agent config dir, scanned recursively for **Custom Subagent definitions**.
+_Avoid_: Agents folder, claude agents dir.
 
 **Subagent run**: Single execution instance of a **Subagent** for one delegated task.
 _Avoid_: Agent record, child session, job.
@@ -52,6 +58,9 @@ _Avoid_: Researcher subagent, web subagent.
 - Foreground **Subagent runs** launched through **Same-turn fan-out** obey the configured subagent concurrency cap rather than bypassing it.
 - **Subagent run** uses its **Subagent type**'s **Default Subagent model** first, then the shared **Default Subagent model**, then the **Parent model**; an unresolvable configured reference is treated as absent but warned.
 - `explore` is a **Read-only subagent**; `general` can write.
+- `explore` and `general` are reserved **Subagent type** names that **Custom Subagent definitions** cannot shadow.
+- **Definition scope precedence** is per-name and never merges: the nearest **Subagent definitions directory** that mentions a name decides whether it is valid, invalid, or conflicted, beating farther project scopes and the user scope; two same-name definitions in one scope make the name unusable, and an invalid nearer definition shadows valid lower-priority ones.
+- A **Subagent type** from a **Custom Subagent definition** inherits the available Subagent tools minus the safety exclusions until optional frontmatter fields are implemented.
 - **External web research** uses web Extension tools directly from the parent Pi coding agent rather than a dedicated built-in **Subagent type**.
 - **Subagent** cannot recursively launch child **Subagents** because subagent tools are excluded from sub-sessions.
 
@@ -80,3 +89,6 @@ _Avoid_: Researcher subagent, web subagent.
 - "add web tools to subagents" could mean `researcher.extraTools`, a new **Subagent type**, or globally loaded Extension packages; originally resolved with a dedicated researcher allowlist, then superseded: **External web research** is direct parent-agent tool use and the **Subagents Extension package** has no built-in web-research type.
 - "prefer `llms.txt`" was specific to the retired researcher workflow; resolved: source-selection rules belong with research skills or web tool guidance, not the **Subagents Extension package** glossary.
 - Removing `researcher` could mean an alias, a disabled mode, or deleting the API value; resolved: remove it as a built-in **Subagent type**, fail fast on `subagent_type: "researcher"`, and update repo-owned docs/config references in the same change.
+- "expl" was a speculative prefix alias that could capture a distinct custom name such as `Explorer`; resolved: exact matches against valid custom **Subagent type** names win before built-in aliasing, so the `expl` alias still applies (`expl`, `EXPLORE`, …) but never eats an exact custom name.
+- "merge definitions across scopes" could mean per-name precedence or combining fields from multiple **Subagent definitions directories**; resolved: per-name precedence without merging, so a nearer scope cannot silently inherit a farther scope's prompt.
+- "unknown type" could mean silently delegating to `general` or failing; resolved: unknown, invalid, and shadowed requested types fail with an actionable error that names the currently valid custom types.

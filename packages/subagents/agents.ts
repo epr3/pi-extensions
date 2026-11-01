@@ -14,6 +14,8 @@
 
 export type AgentType = "explore" | "general";
 
+import type { CustomTypeDiscovery } from "./discovery.ts";
+
 /** Read-only built-ins — the floor of the explore toolset. */
 export const CORE_READ_TOOLS = ["read", "grep", "find", "ls"];
 
@@ -73,6 +75,49 @@ export function resolveAgentType(requested: string): AgentType {
       : "";
   throw new Error(
     `Unsupported subagent_type "${requested}". Supported types: "explore" (read-only ` +
-      `discovery) and "general" (read/write).${retired}`,
+      `discovery), "general" (read/write), or a custom type defined in your agent ` +
+      `definition directories (.pi/agents).${retired}`,
+  );
+}
+
+// ─── Custom type resolution ─────────────────────────────────────────────────┼
+
+export type ResolvedRequest =
+  | { kind: "builtin"; type: AgentType }
+  | { kind: "custom"; name: string };
+
+/**
+ * Resolve a `subagent_type` request against built-ins and currently discovered
+ * custom definitions.
+ *
+ * Exact matches against valid custom names win FIRST, before any built-in
+ * alias: a custom type named e.g. "Explorer" must not be captured by the
+ * speculative `expl` prefix alias for `explore`. (Compatibility change: that
+ * alias previously swallowed any "expl…" input; it still applies, but only
+ * when no exact custom name matches.) `explore`/`general` are reserved and
+ * can never appear as custom names, so built-in requests keep working.
+ *
+ * Unknown or invalid requested types fail — no silent fallback to `general`.
+ */
+export function resolveTypeRequest(
+  requested: string,
+  custom: CustomTypeDiscovery,
+): ResolvedRequest {
+  const exact = custom.valid.get(requested);
+  if (exact) return { kind: "custom", name: exact.name };
+
+  const s = String(requested).toLowerCase();
+  if (s.startsWith("expl")) return { kind: "builtin", type: "explore" };
+  if (s === "general") return { kind: "builtin", type: "general" };
+  const retired =
+    s === "researcher"
+      ? ` The "researcher" type was retired — use the parent agent's web_search / web_fetch ` +
+        `tools directly for web research.`
+      : "";
+  throw new Error(
+    `Unsupported subagent_type "${requested}". Supported types: "explore" (read-only ` +
+      `discovery), "general" (read/write), or one of the currently valid custom ` +
+      `types${custom.valid.size ? `: ${[...custom.valid.keys()].map((n) => `"${n}"`).join(", ")}` : " (none are defined right now)"}. That custom name may be invalid, conflicted, ` +
+      `or shadowed — see the definition diagnostics emitted at launch.${retired}`,
   );
 }

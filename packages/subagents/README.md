@@ -1,4 +1,4 @@
-# subagents — explore + general subagents (Pi extension, TypeScript)
+# subagents — explore + general + custom Subagent types (Pi extension, TypeScript)
 
 Adds two subagent types for context hygiene. The `Agent` tool surface follows the conventions of [`@tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents).
 
@@ -9,7 +9,39 @@ Adds two subagent types for context hygiene. The `Agent` tool surface follows th
 | `explore` | read, grep, find, ls by default; **extra read-only tools are granted in settings** (the shipped `settings.json` grants the `lsp_*` set) | yes       | codebase discovery — the suite's default for context-gathering |
 | `general` | everything discovered: all built-ins **and all installed extension tools** (lsp, todo, …), minus the exclusions below                   | no        | off-context work that writes (e.g. parallel interface designs) |
 
-No `Plan` agent, no steering, no resume, no custom `.pi/agents` — deliberately omitted. **External web research** is also deliberately outside this package: the parent Pi coding agent uses web Extension tools such as `web_search` and `web_fetch` directly, not through a built-in Subagent type.
+No `Plan` agent, no steering, no resume, no nested delegation — deliberately omitted. Custom Subagent types are supported via `.pi/agents` definition files (see below). **External web research** is also deliberately outside this package: the parent Pi coding agent uses web Extension tools such as `web_search` and `web_fetch` directly, not through a built-in Subagent type.
+
+## Custom Subagent types
+
+Specialized Subagent types are defined as Pi-scoped Markdown definition files, read fresh on every launch — edits apply to subsequent launches, and a run in progress keeps its launch-time definition.
+
+### Definition format
+
+```markdown
+---
+name: code-reviewer
+description: Reviews diffs with extra care for API changes
+---
+
+You are a code review Subagent. The Markdown body is the Subagent's system prompt.
+```
+
+- Required frontmatter: `name` (identity, matched exactly as `subagent_type`) and `description` (surfaced to the parent so it can pick a type).
+- The body is the system prompt. Markdown without frontmatter or without a `name` is documentation and is ignored.
+- Frontmatter accepts only `name` and `description`. `tools`, `disallowedTools`, `model`, and `skills` are **rejected explicitly** until their tickets land, as are unknown fields — never silently ignored, so unimplemented settings are never mistaken for guarantees.
+- `explore` and `general` are reserved names and cannot be redefined.
+
+### Discovery locations and precedence
+
+- Project scopes: `.pi/agents` directories from the working directory up to the Git repository root inclusive. Outside Git, only the working directory's project scope is inspected. `.claude/agents` is never discovered.
+- User scope: the `agents` directory inside Pi's agent config dir (e.g. `~/.pi/agent/agents`, respecting `PI_CODING_AGENT_DIR`).
+- Precedence is per-name and never merges: the nearest project scope that mentions a name decides it, beating farther project scopes and the user scope. Two definitions of the same name in one scope conflict; the name becomes unusable and both paths are diagnosed. An invalid nearer definition shadows valid lower-priority ones. Valid types stay usable while unrelated invalid ones are diagnosed.
+
+### Type matching and alias compatibility change
+
+Custom names are matched **exactly first**, then the built-in aliases apply. The speculative `expl` prefix alias for `explore` still works (`expl`, `EXPLORE`, …), so existing calls are unaffected — but it no longer swallows an input that exactly matches a valid custom name, such as a custom type named `Explorer`. Compatibility change: before this, any `expl…` input resolved to the built-in `explore`; if you relied on such an input resolving there but have since defined a custom type with that exact name, the custom type now wins. Unknown or invalid requested types fail with an actionable error — never a silent fallback to `general`.
+
+A custom type without its own fields behaves like `general` tool-wise: it inherits every available Subagent tool, including write and shell tools, minus the fixed safety exclusions (`Agent`, `get_subagent_result`, `question`). Per-project resource loading and the one-level-deep boundary apply exactly as for the built-ins.
 
 ## Extension tools inside subagents
 
@@ -22,7 +54,7 @@ The sub-session uses the same resource loader as the parent, so it discovers eve
 
 ## Tools
 
-- `Agent({ subagent_type, prompt, description, run_in_background? })` — foreground blocks + returns the result; background returns an id.
+- `Agent({ subagent_type, prompt, description, run_in_background? })` — foreground blocks + returns the result; background returns an id. `subagent_type` accepts the two built-ins or any valid custom type name (discovered names and descriptions are listed in the tool description; definitions are re-read at every launch).
 - `get_subagent_result({ agent_id, wait? })` — poll/retrieve a background agent.
 - `/subagents` — list subagents and status.
 

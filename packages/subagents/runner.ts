@@ -8,7 +8,14 @@ import {
   type CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
-import { AGENTS, CORE_READ_TOOLS, SAFETY_EXCLUDES, type AgentType } from "./agents.ts";
+import {
+  AGENTS,
+  CORE_READ_TOOLS,
+  SAFETY_EXCLUDES,
+  type AgentDef,
+  type AgentType,
+} from "./agents.ts";
+import type { CustomSubagentDef } from "./discovery.ts";
 
 type AnyModel = Model<any>;
 
@@ -127,14 +134,18 @@ export async function runSubagentSession(opts: {
  * is aborted and the promise rejects with the abort reason.
  */
 export async function runSubagent(opts: {
-  type: AgentType;
+  type: AgentType | string;
+  /** Custom Subagent definition (exact resolved match); overrides `AGENTS[type]`. */
+  agentDef?: CustomSubagentDef;
   prompt: string;
   cwd: string;
   model?: AnyModel;
   thinkingLevel?: CreateAgentSessionOptions["thinkingLevel"];
   /** Observe Pi's effective level after session creation and capability adaptation. */
   onThinkingLevel?: (effective: NonNullable<CreateAgentSessionOptions["thinkingLevel"]>) => void;
-  /** Allowlist for the sub-session (explore). Undefined = everything discovered (general). */
+  /** Allowlist for the sub-session (explore). Custom Subagent types pass no
+   *  allowlist: they inherit the available tools like `general`, minus the
+   *  safety exclusions. */
   tools?: string[];
   /** Extra exclusions on top of SAFETY_EXCLUDES. */
   excludeExtraTools?: string[];
@@ -143,7 +154,8 @@ export async function runSubagent(opts: {
   /** When set, the child session is aborted if this signal fires. */
   abortSignal?: AbortSignal;
 }): Promise<RunResult> {
-  const def = AGENTS[opts.type];
+  const def = opts.agentDef ?? (AGENTS as Record<string, AgentDef | undefined>)[opts.type];
+  if (!def) throw new Error(`Unknown Subagent type "${opts.type}"`);
 
   const modelRuntime = await ModelRuntime.create();
 
@@ -176,7 +188,7 @@ export async function runSubagent(opts: {
     // The explore allowlist names lsp_* tools that may not be installed. If
     // this harness version rejects unknown allowlist names rather than
     // ignoring them, degrade to the core read-only tools instead of failing.
-    if (!def.readOnly) throw e;
+    if (!("readOnly" in def) || !def.readOnly) throw e;
     ({ session } = await makeSession(CORE_READ_TOOLS));
   }
 

@@ -20,12 +20,15 @@ describe("Agent param shape", () => {
 
   it("has correct types for each property", () => {
     const props = agentParams.properties;
+    // subagent_type is a documented string: fixed two-value enums cannot
+    // address custom Subagent types, so valid custom names are surfaced in the
+    // parameter description and validated at launch time instead.
     expect(props.subagent_type.type).toBe("string");
-    // subagent_type is an enum/oneOf
-    const hasEnum =
-      Array.isArray((props.subagent_type as any).oneOf) ||
-      Array.isArray((props.subagent_type as any).enum);
-    expect(hasEnum).toBe(true);
+    const stDescription = (props.subagent_type as any).description;
+    expect(typeof stDescription).toBe("string");
+    expect(stDescription).toContain("explore");
+    expect(stDescription).toContain("general");
+    expect(stDescription).toContain("Custom");
     expect(props.prompt.type).toBe("string");
     expect(props.description.type).toBe("string");
     expect(props.run_in_background.type).toBe("boolean");
@@ -78,22 +81,19 @@ describe("result params", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Subagent type enum — exactly 3 values
+// Subagent type surface — built-ins documented, custom types not enumerable
+// in the schema (they are discovered from agent definition directories and
+// validated at launch time)
 // ---------------------------------------------------------------------------
 
-describe("subagent_type enum", () => {
-  it("has exactly 2 values: explore, general", () => {
+describe("subagent_type surface", () => {
+  it("documents the built-in types and custom-type discovery", () => {
     const st = agentParams.properties.subagent_type;
-    const values: string[] = [];
-    if ((st as any).enum) {
-      values.push(...(st as any).enum);
-    } else if ((st as any).oneOf) {
-      for (const s of (st as any).oneOf) values.push(s.const ?? s.enum?.[0]);
-    }
-    expect(values).toHaveLength(2);
-    expect(values).toContain("explore");
-    expect(values).toContain("general");
-    expect(values).not.toContain("researcher");
+    const stDescription = String((st as any).description ?? "");
+    expect(stDescription).toContain("explore");
+    expect(stDescription).toContain("general");
+    // No retired built-in is represented as a valid value.
+    expect(stDescription.toLowerCase()).not.toContain("'researcher'");
   });
 });
 

@@ -16,7 +16,8 @@ export interface RunOutput {
 
 export interface AgentRecord {
   id: string;
-  type: AgentType;
+  /** Built-in name (explore/general) or a resolved custom Subagent type name. */
+  type: AgentType | string;
   description: string;
   status: Status;
   result?: string;
@@ -28,7 +29,7 @@ export interface AgentRecord {
 }
 
 export interface LaunchTask {
-  type: AgentType;
+  type: AgentType | string;
   description: string;
   background?: boolean;
 }

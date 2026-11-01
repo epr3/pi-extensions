@@ -2,6 +2,9 @@ import type { Model } from "@earendil-works/pi-ai";
 import type { AgentType } from "./agents.ts";
 import type { WarningScope } from "./warnings.ts";
 
+/** Any per-type scope or the shared scope. */
+export type AgentTypeOrShared = AgentType | "shared";
+
 /**
  * Pure model reference parser for exact `provider/model` strings.
  *
@@ -128,7 +131,7 @@ export function checkDefaultModelWarnings(
   typeRef: string | undefined,
   sharedRef: string | undefined,
   findModel: (provider: string, modelId: string) => Model<any> | undefined,
-  type: AgentType,
+  type: AgentTypeOrShared,
 ): DefaultModelWarning[] {
   const warnings: DefaultModelWarning[] = [];
 
