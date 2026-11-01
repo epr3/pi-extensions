@@ -1,33 +1,17 @@
 import { describe, it, expect } from "vitest";
 import type { StreamEvent, StreamCallback } from "../runner.ts";
-import type { StreamEntry } from "../index.ts";
+import { formatExpandedStream, type StreamEntry } from "../index.ts";
 
 // ---------------------------------------------------------------------------
-// Simulate the stream logic from index.ts execute handler.
+// Mirror the stream logic from index.ts execute handler: same accumulator,
+// the real formatExpandedStream (expanded tail, omission indicator). These
+// updates are UI-only; content is re-rendered from details and never becomes
+// the model-facing tool result.
 // ---------------------------------------------------------------------------
 
 interface PartialToolResult {
   content: Array<{ type: "text"; text: string }>;
   details: Record<string, unknown>;
-}
-
-function formatExpandedStream(entries: StreamEntry[]): string {
-  const lines: string[] = [];
-  let textBuffer = "";
-  for (const e of entries) {
-    if (e.type === "text") {
-      textBuffer += e.text;
-      continue;
-    }
-    if (textBuffer) {
-      lines.push(textBuffer);
-      textBuffer = "";
-    }
-    const marker = e.type === "tool_start" ? "▶" : e.error ? "✗" : "✓";
-    lines.push(`${marker} ${e.name}`);
-  }
-  if (textBuffer) lines.push(textBuffer);
-  return lines.join("\n");
 }
 
 function createStreamSetup(background: boolean) {
@@ -108,7 +92,7 @@ describe("foreground stream callback", () => {
     onStreamEvent!({ type: "tool_start", name: "read" });
 
     expect(updates).toHaveLength(1);
-    expect(updates[0].content[0].text).toContain("▶ read");
+    expect(updates[0].content[0].text).toContain("▶ started read");
     const entries = updates[0].details.streamEntries as StreamEntry[];
     expect(entries).toEqual([{ type: "tool_start", name: "read" }]);
   });
@@ -119,7 +103,7 @@ describe("foreground stream callback", () => {
     onStreamEvent!({ type: "tool_end", name: "read", error: false });
 
     expect(updates).toHaveLength(1);
-    expect(updates[0].content[0].text).toContain("✓ read");
+    expect(updates[0].content[0].text).toContain("✓ finished read");
     const entries = updates[0].details.streamEntries as StreamEntry[];
     expect(entries).toEqual([{ type: "tool_end", name: "read", error: false }]);
   });
@@ -130,7 +114,7 @@ describe("foreground stream callback", () => {
     onStreamEvent!({ type: "tool_end", name: "bash", error: true });
 
     expect(updates).toHaveLength(1);
-    expect(updates[0].content[0].text).toContain("✗ bash");
+    expect(updates[0].content[0].text).toContain("✗ failed bash");
     const entries = updates[0].details.streamEntries as StreamEntry[];
     expect(entries).toEqual([{ type: "tool_end", name: "bash", error: true }]);
   });

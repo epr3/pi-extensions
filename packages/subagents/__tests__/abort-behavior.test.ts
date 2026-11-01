@@ -6,7 +6,7 @@ import {
   type SubagentSession,
 } from "../runner.ts";
 import { AgentManager } from "../manager.ts";
-import type { StreamEntry } from "../index.ts";
+import { formatExpandedStream, type StreamEntry } from "../index.ts";
 
 // ---------------------------------------------------------------------------
 // Fake session for runner-level abort tests
@@ -245,25 +245,6 @@ describe("runner abort behavior", () => {
 // ---------------------------------------------------------------------------
 // Tool-wiring abort tests (replicate index.ts stream callback logic)
 // ---------------------------------------------------------------------------
-
-function formatExpandedStream(entries: StreamEntry[]): string {
-  const lines: string[] = [];
-  let textBuffer = "";
-  for (const e of entries) {
-    if (e.type === "text") {
-      textBuffer += e.text;
-      continue;
-    }
-    if (textBuffer) {
-      lines.push(textBuffer);
-      textBuffer = "";
-    }
-    const marker = e.type === "tool_start" ? "▶" : e.error ? "✗" : "✓";
-    lines.push(`${marker} ${e.name}`);
-  }
-  if (textBuffer) lines.push(textBuffer);
-  return lines.join("\n");
-}
 
 function createForegroundStreamSetup(signal: AbortSignal) {
   const updates: Array<{

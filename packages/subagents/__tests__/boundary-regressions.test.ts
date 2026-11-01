@@ -3,6 +3,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import { AgentManager, type AgentRecord } from "../manager.ts";
 import { checkDefaultModelWarnings } from "../model-ref.ts";
 import { CORE_READ_TOOLS, SAFETY_EXCLUDES, exploreToolset } from "../agents.ts";
+import { formatExpandedStream } from "../index.ts";
 import type { StreamEvent, StreamCallback } from "../runner.ts";
 import type { StreamEntry } from "../index.ts";
 
@@ -57,22 +58,7 @@ function createStreamSetup(background: boolean, signal?: AbortSignal) {
         } else if (event.type === "tool_end") {
           streamEntries.push({ type: "tool_end", name: event.name, error: !!event.error });
         }
-        const lines: string[] = [];
-        let textBuffer = "";
-        for (const e of streamEntries) {
-          if (e.type === "text") {
-            textBuffer += e.text;
-            continue;
-          }
-          if (textBuffer) {
-            lines.push(textBuffer);
-            textBuffer = "";
-          }
-          const marker = e.type === "tool_start" ? "▶" : e.error ? "✗" : "✓";
-          lines.push(`${marker} ${e.name}`);
-        }
-        if (textBuffer) lines.push(textBuffer);
-        const streamText = lines.join("\n");
+        const streamText = formatExpandedStream(streamEntries);
         onUpdate({
           content: [{ type: "text", text: streamText }],
           details: { streamText, streamEntries: [...streamEntries] },

@@ -1,3 +1,5 @@
+import type { MessageRenderOptions, Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import type { AgentRecord } from "./manager.ts";
 
 /**
@@ -183,4 +185,78 @@ export class CompletionDelivery {
       }
     }
   }
+}
+// ─── Rendering the attributed completion ────────────────────────────────────
+
+/**
+ * Compact headline for one attributed completion — the authoritative visible
+ * outcome in a single line: type, short task, run id, and the terminal status
+ * in words (status never rides on color or symbols alone). Failed/stopped runs
+ * also surface the reason in the headline so the compact row is usable without
+ * expanding; the reason is bounded so a long error cannot flood the line.
+ */
+export function outcomeHeadline(message: {
+  content: string | Array<{ type: string; text?: string }>;
+  details?: unknown;
+}): string {
+  const details = (message.details ?? {}) as Record<string, unknown>;
+  const type = typeof details.type === "string" ? details.type : "";
+  const description = typeof details.description === "string" ? details.description : "";
+  const status = typeof details.status === "string" ? details.status : "";
+  const id = typeof details.agentId === "string" ? details.agentId : "";
+  const reason =
+    typeof details.error === "string"
+      ? details.error
+      : typeof details.stopReason === "string"
+        ? details.stopReason
+        : "";
+  const boundedReason = reason ? (reason.length > 60 ? `${reason.slice(0, 60)}…` : reason) : "";
+  const parts = [
+    "Subagent outcome",
+    [type, description ? `"${description}"` : ""].filter(Boolean).join(" "),
+    id ? `[run ${id}]` : "",
+    status + (boundedReason ? ` (${boundedReason})` : ""),
+  ].filter(Boolean);
+  return parts.join(" — ");
+}
+
+/**
+ * TUI renderer for the `subagent-outcome` custom message. Compact: the one
+ * attributable line. Expanded: the full authoritative content (the bounded
+ * result or the clearly marked partial/missing output) under the same line.
+ * Renders from the message's own content and details only — no live activity,
+ * tool transcripts, or hidden reasoning ever reach this row, whatever a
+ * stashed details payload claims to contain.
+ */
+/** The message passed to a registered message renderer for this extension's
+ *  custom type — structurally the `CustomMessage` Pi hands the renderer. */
+interface OutcomeRenderMessage {
+  customType: string;
+  content: string | Array<{ type: string; text?: string }>;
+  display?: boolean;
+  details?: unknown;
+}
+
+export function renderOutcomeMessage(
+  message: OutcomeRenderMessage,
+  options: MessageRenderOptions,
+  theme: Theme,
+): Text {
+  const content =
+    typeof message.content === "string"
+      ? message.content
+      : message.content
+          .filter((c): c is { type: "text"; text: string } => c?.type === "text" && !!c.text)
+          .map((c) => c.text)
+          .join("\n");
+  // Normal messages always carry typed details; render the content's own
+  // first line when they are missing so the attribution statement stays
+  // readable rather than collapsing to a bare "Subagent outcome" stub.
+  const details = message.details as Record<string, unknown> | undefined;
+  const head =
+    details && (details.status !== undefined || details.agentId !== undefined)
+      ? outcomeHeadline(message)
+      : (content.split("\n", 1)[0] ?? "Subagent outcome");
+  const text = options.expanded ? `${head}\n\n${content}` : head;
+  return new Text(theme.fg("toolOutput", text), options.outputPad, 0);
 }

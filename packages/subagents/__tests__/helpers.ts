@@ -21,12 +21,19 @@ export type CapturedHandlers = Map<string, (event: any, ctx?: any) => any>;
  */
 export function makeFakeApi(
   captured: ToolDefinition[],
-  o?: { sends?: CapturedSend[]; handlers?: CapturedHandlers },
+  o?: {
+    sends?: CapturedSend[];
+    handlers?: CapturedHandlers;
+    messageRenderers?: Map<string, Function>;
+  },
 ): ExtensionAPI {
   return {
     registerTool: (tool) => captured.push(tool as ToolDefinition),
     on: (event: string, handler: (e: unknown, ctx?: unknown) => unknown) => {
       o?.handlers?.set(event, handler);
+    },
+    registerMessageRenderer: (customType: string, renderer: Function) => {
+      o?.messageRenderers?.set(customType, renderer);
     },
     registerCommand: () => {},
     sendMessage: (message: never, options?: never) => {

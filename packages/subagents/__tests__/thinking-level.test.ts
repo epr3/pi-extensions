@@ -33,6 +33,7 @@ function harness(hasUI = true, parentModel = parent) {
   const updates = vi.fn();
   extension({
     registerTool: (tool: any) => tools.set(tool.name, tool),
+    registerMessageRenderer: () => {},
     registerCommand: () => {},
     on: () => {},
     events: { emit: () => {} },

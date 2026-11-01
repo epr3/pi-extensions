@@ -224,6 +224,75 @@ Persistence of outcomes for later session revisit is separate behavior and not
 implemented yet; a delivered completion is an ordinary message on the branch that
 contains it.
 
+- The completion renders through a message renderer registered for the
+  `subagent-outcome` custom type: the collapsed row is one attributable line
+  (`Subagent outcome — general "task" [run sa_x] — completed`; failed/stopped
+  headlines also carry the reason), and the expanded row adds the full
+  authoritative content — the bounded result, or the clearly marked partial
+  output, or the explicit no-partial statement.
+
+## Run presentation
+
+Runs are presented inline in the parent conversation — no separate dashboard, no
+per-row stop control — using compact tool rows for identity and state, an
+expanded activity tail for inspection, and distinct outcome rows.
+
+### Compact rows (identity and state)
+
+- The `Agent` call row shows `Agent <type>  <description>` plus
+  `(background)` when launched with `run_in_background`. The displayed type is
+  what the parent requested — **custom names are never rewritten to a built-in
+  they resemble**: a custom type named `explorer` is displayed as `explorer`,
+  not `explore` (only exact built-in names canonicalize, case-insensitively).
+  Launch-time validation still rejects unsupported types.
+- While a foreground run is active, its result row shows the textual running
+  state plus the latest tool lifecycle marker **in words** —
+  `running — ▶ started grep`, `running — ✓ finished read`,
+  `running — ✗ failed bash` — or the neutral `running` before any tool has
+  moved. It never shows live assistant prose: expand for the text tail instead.
+- Once the run has an id, the compact row includes it —
+  `running [run sa_1_ab] — ✓ finished read` — so sibling rows from same-turn
+  fan-out stay attributable to their own runs. Background rows (the receipt and
+  the attributed completion) always carry the run id.
+- Nothing important rides on color or symbols alone: every state and marker is
+  also stated in words, and all of it is plain text that wraps, so identity and
+  status survive narrow terminals.
+- Outcomes of completed foreground runs render inline and separate from any
+  activity. A failed foreground run surfaces its error — reason included —
+  distinctly from a completed answer; a parent-cancelled foreground run stops
+  leaking updates and its partial text follows the same partial/missing-output
+  contract as background stops. Keeping the conversation legible is the point:
+  there is deliberately no aggregate dashboard and no row-specific stop button.
+
+### Expanded activity tail (per run)
+
+- Expanding an active run shows a chronological, **UI-only** tail of the last
+  50 entries: assistant text plus tool-activity lines
+  (`▶ started bash` / `✓ finished read` / `✗ failed bash`).
+- When earlier entries were dropped, the tail opens with an explicit omission
+  indicator: `… N earlier entries not shown`.
+- Hidden reasoning is always excluded — the runner never forwards thinking
+  deltas into the tail, and partial output promoted into results is assistant
+  prose only.
+- Activity stays out of model-facing content: the tail lives in the row's
+  `details` during streaming, and the finalized row renders the clean result
+  (or the background receipt) with the activity deliberately dropped.
+
+### Background receipts and attributed completions
+
+The finalized background launch row is a **receipt**: it names the type, the
+short task description, the run id, and the textual state —
+`Started background Subagent — general "refactor the parser" [run sa_7_zzz] —
+status: queued. Retrieve the result with get_subagent_result, or stop the run
+with stop_subagent.`
+
+The authoritative visible outcome is later the **attributed completion**
+message (see [Background outcome delivery](#background-outcome-delivery)),
+associated by run id. A best-effort live update of the receipt row is
+deliberately **not** implemented — such updates could never be durable or
+cross-mode in Pi anyway; the persisted completion message, explicit retrieval,
+and the `subagents` status command are the reliable paths.
+
 ## Bounded result text
 
 Subagent result text is truncated to a fixed **20,000 UTF-8 bytes** on every delivery

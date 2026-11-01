@@ -28,6 +28,15 @@ _Avoid_: Child transcript, nested conversation, streamed result.
 **Subagent status card**: Structured partial `Agent` tool-row presentation with stable identity and compact progress markers for a foreground **Subagent run**, not live child assistant prose.
 _Avoid_: Title card, live transcript, stream panel.
 
+**Compact run row**: Collapsed inline conversation row for one **Subagent run** — Subagent type (exactly what was requested, never rewritten to a built-in it resembles), short task description, a textual state word, the latest started/finished/failed tool marker in words, and the run id once known — that never shows live assistant prose.
+_Avoid_: Dashboard, status panel, live view.
+
+**Activity tail**: Chronological, UI-only tail of at most 50 assistant-text and tool-activity entries of one **Subagent run**, shown on expansion, opening with an explicit omission indicator ("… N earlier entries not shown") whenever earlier entries were dropped, and never entering parent-model context or the run's result.
+_Avoid_: Transcript dump, activity log, activity feed.
+
+**Launch receipt**: Finalized background launch row naming the **Subagent type**, the short task description, the run id, and the textual queued state — identifiable evidence a run was started, while the **Attributed completion** stays the authoritative visible outcome.
+_Avoid_: Start notification, live updater, receipt card.
+
 **Same-turn fan-out**: Parent Pi coding agent pattern of emitting multiple foreground `Agent` tool calls in one assistant turn so sibling **Subagent runs** start concurrently.
 _Avoid_: Subagent batch, multi-agent, nested subagents.
 
@@ -80,7 +89,9 @@ _Avoid_: UI mode, with-UI capability, headless mode.
 - **Subagent** has exactly one **Subagent type**.
 - **Subagent run** records one **Subagent** execution.
 - **Subagent stream** belongs to exactly one foreground **Subagent run** and does not become parent LLM context.
-- **Subagent status card** renders the **Subagent stream** as a compact current-activity summary with stable identity, while expanded view shows a bounded readable event log.
+- **Subagent status card** renders the **Subagent stream** as the **Compact run row** (collapsed) and the **Activity tail** (expanded), with stable identity in both.
+- Status words, tool markers, and omission indicators are plain text — meaning never rides on color or symbols alone, and wrapping preserves the **Compact run row**, the **Activity tail**'s states, and every run id.
+- A background **Subagent run** departure leaves a **Launch receipt** on its launch row; the associated **Attributed completion** names the same run id and is the authoritative visible outcome, while a best-effort live row update, if ever used, is not durable or cross-mode.
 - **Same-turn fan-out** creates independent sibling **Subagent runs**, each with its own task prompt, description, stream, result, and failure status.
 - Foreground **Subagent runs** launched through **Same-turn fan-out** obey the configured subagent concurrency cap rather than bypassing it.
 - **Subagent run** uses its **Subagent type**'s **Default Subagent model** first, then the shared **Default Subagent model**, then the **Parent model**; an unresolvable configured reference is treated as absent but warned.
@@ -117,8 +128,10 @@ _Avoid_: UI mode, with-UI capability, headless mode.
 - **Default Subagent model** reference shape could mirror Pi root settings or CLI fuzzy matching; resolved: use an exact `provider/model` string in subagents settings.
 - Invalid **Default Subagent model** config could fail a **Subagent run**; resolved: treat it as absent, fall back to the **Parent model**, and surface a warning outside the subagent result text.
 - "streaming a subagent" could mean adding a child transcript to parent context; resolved: **Subagent stream** is UI-only progress, while the final subagent result remains the parent-context payload.
-- "title card" could mean the fixed `Agent` tool title, a live title line, or a transcript panel; resolved: use a **Subagent status card** that keeps the title stable and renders compact progress plus a bounded expanded event log.
-- "streaming the title card" could mean live assistant prose in the collapsed card or compact run progress; resolved: collapsed **Subagent status card** shows stable identity plus tool/progress markers only, because assistant prose is unreadable while streaming.
+- "title card" could mean the fixed `Agent` tool title, a live title line, or a transcript panel; resolved: use a **Subagent status card** that keeps the title stable and renders the **Compact run row** plus the bounded **Activity tail**.
+- "streaming the title card" could mean live assistant prose in the collapsed card or compact run progress; resolved: the **Compact run row** shows stable identity plus textual state and tool markers only, because assistant prose is unreadable while streaming.
+- "a custom type's row" could show a built-in the name resembles (e.g. a custom `explorer` displayed as `explore`); resolved: rows display the requested type exactly, with only exact built-in names canonicalized, because rendering cannot read the definition directories without making redraws nondeterministic and launch-time validation already rejects unsupported names.
+- "receipt row" could mean a live-updated background sheet; resolved: the finalized launch row is a static **Launch receipt** and the **Attributed completion** is the authoritative outcome — live row updates are best-effort at best and never promised.
 - "multiple subagents of the same type" could mean a new batch API, nested delegation, many background runs, or same-turn tool parallelism; resolved: use **Same-turn fan-out** with repeated foreground `Agent` calls, not a `tasks` batch parameter and not recursive child spawning.
 - "aggregate result" could mean an extension-level group record; resolved: each **Subagent run** returns its own result and the parent Pi coding agent synthesizes across sibling results in normal conversation context.
 - "Sub-agent" appeared in user-facing labels and descriptions; resolved: keep the compatibility tool name `Agent`, but use **Subagent** prose in tool labels, descriptions, and UX copy.

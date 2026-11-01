@@ -191,8 +191,8 @@ describe("renderAgentResult — partial expanded", () => {
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: true, isPartial: true });
     expect(text).toContain("Looking...");
-    expect(text).toContain("▶ read");
-    expect(text).toContain("✓ read");
+    expect(text).toContain("▶ started read");
+    expect(text).toContain("✓ finished read");
     expect(text).toContain("Found it.");
   });
 
@@ -219,8 +219,8 @@ describe("renderAgentResult — partial expanded", () => {
     expect(text).toContain("Final analysis: all tests pass.");
 
     // Last tool markers in bounded tail
-    expect(text).toMatch(/▶ tool_50\b/);
-    expect(text).toMatch(/✓ tool_50\b/);
+    expect(text).toMatch(/▶ started tool_50\b/);
+    expect(text).toMatch(/✓ finished tool_50\b/);
   });
 
   it("fewer than limit shows all", () => {
@@ -238,12 +238,12 @@ describe("renderAgentResult — partial expanded", () => {
       { expanded: true, isPartial: true },
     );
 
-    expect(text).toMatch(/▶ read\b/);
-    expect(text).toMatch(/✓ read\b/);
-    expect(text).toMatch(/▶ grep\b/);
-    expect(text).toMatch(/✓ grep\b/);
-    expect(text).toMatch(/▶ bash\b/);
-    expect(text).toMatch(/✗ bash\b/);
+    expect(text).toMatch(/▶ started read\b/);
+    expect(text).toMatch(/✓ finished read\b/);
+    expect(text).toMatch(/▶ started grep\b/);
+    expect(text).toMatch(/✓ finished grep\b/);
+    expect(text).toMatch(/▶ started bash\b/);
+    expect(text).toMatch(/✗ failed bash\b/);
   });
 
   it("bounded to tail when exceeding limit", () => {
@@ -263,8 +263,8 @@ describe("renderAgentResult — partial expanded", () => {
     expect(text).not.toMatch(/✓ tool_1(?!\d)/);
 
     // Last tool included
-    expect(text).toMatch(/▶ tool_100\b/);
-    expect(text).toMatch(/✓ tool_100\b/);
+    expect(text).toMatch(/▶ started tool_100\b/);
+    expect(text).toMatch(/✓ finished tool_100\b/);
 
     // Fewer markers than total entries
     const markers = (text.match(/[▶✓✗]/g) || []).length;
@@ -278,9 +278,9 @@ describe("renderAgentResult — partial expanded", () => {
       { type: "tool_end", name: "bash", error: true },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: true, isPartial: true });
-    expect(text).toContain("▶ bash");
-    expect(text).toContain("✗ bash");
-    expect(text).not.toContain("✓ bash");
+    expect(text).toContain("▶ started bash");
+    expect(text).toContain("✗ failed bash");
+    expect(text).not.toContain("finished bash");
   });
 
   it("tolerates unknown entry types", () => {
@@ -300,56 +300,70 @@ describe("renderAgentResult — partial expanded", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderAgentResult — partial collapsed", () => {
-  it("shows latest tool start", () => {
+  it("shows latest tool start with a textual running state", () => {
     const entries: StreamEntry[] = [
       { type: "text", text: "Starting search." },
       { type: "tool_start", name: "grep" },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("▶ grep");
+    expect(text.trim()).toBe("running — ▶ started grep");
+    expect(text).not.toContain("Starting search");
   });
 
-  it("shows latest tool end (success)", () => {
+  it("shows latest tool end (success) with a textual running state", () => {
     const entries: StreamEntry[] = [
       { type: "tool_start", name: "read" },
       { type: "tool_end", name: "read", error: false },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("✓ read");
+    expect(text.trim()).toBe("running — ✓ finished read");
   });
 
-  it("shows latest tool error", () => {
+  it("shows latest tool error with distinct failure wording", () => {
     const entries: StreamEntry[] = [
       { type: "tool_start", name: "bash" },
       { type: "tool_end", name: "bash", error: true },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("✗ bash");
+    expect(text.trim()).toBe("running — ✗ failed bash");
   });
 
-  it("ignores trailing text — shows latest tool marker", () => {
+  it("ignores trailing text — shows latest tool marker, never assistant prose", () => {
     const entries: StreamEntry[] = [
       { type: "tool_start", name: "read" },
       { type: "tool_end", name: "read", error: false },
       { type: "text", text: "Almost done." },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("✓ read");
+    expect(text.trim()).toBe("running — ✓ finished read");
+    expect(text).not.toContain("Almost done");
   });
 
-  it("shows neutral running status when only text entries exist", () => {
+  it("shows the neutral running state when only text entries exist", () => {
     const entries: StreamEntry[] = [{ type: "text", text: "Thinking..." }];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("⟳ running…");
+    expect(text.trim()).toBe("running");
+    expect(text).not.toContain("Thinking");
   });
 
-  it("shows neutral status for multiple text-only entries", () => {
+  it("shows the neutral running state for multiple text-only entries", () => {
     const entries: StreamEntry[] = [
       { type: "text", text: "Let me think about this..." },
       { type: "text", text: "Still working..." },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("⟳ running…");
+    expect(text.trim()).toBe("running");
+  });
+
+  it("includes the run id when known so concurrent runs stay distinguishable", () => {
+    const entries: StreamEntry[] = [
+      { type: "tool_start", name: "read" },
+      { type: "tool_end", name: "read", error: false },
+    ];
+    const result = makePartialResult(entries);
+    result.details.agentId = "sa_1_ab";
+    const text = renderResultText(result, { expanded: false, isPartial: true });
+    expect(text.trim()).toBe("running [run sa_1_ab] — ✓ finished read");
   });
 
   it("renders empty text when no entries", () => {

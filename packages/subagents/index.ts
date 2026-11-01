@@ -6,7 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { resolveAgentType, resolveTypeRequest, exploreToolset } from "./agents.ts";
+import { resolveTypeRequest, exploreToolset } from "./agents.ts";
 import {
   discoverCustomSubagents,
   customSubagentScopes,
@@ -16,10 +16,12 @@ import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts"
 import { resolveDefinitionToolset } from "./toolset.ts";
 import { AgentManager, type AgentRecord, type StopOutcome } from "./manager.ts";
 import {
+  OUTCOME_MESSAGE_TYPE,
   CompletionDelivery,
   ParentBusyTracker,
   modeDeliveryDiagnostic,
   partialOutputBlock,
+  renderOutcomeMessage,
   type OutcomeMessage,
 } from "./delivery.ts";
 import {
@@ -85,17 +87,29 @@ export type StreamEntry =
 export interface AgentStreamDetails {
   streamEntries?: StreamEntry[];
   streamText?: string;
+  /** Run id of the streaming run, set once the record exists — ride along so
+   *  compact active rows can attribute concurrent runs by id. */
+  agentId?: string;
 }
 
-function toolMarker(entry: Extract<StreamEntry, { type: "tool_start" | "tool_end" }>): string {
-  return entry.type === "tool_start" ? "▶" : entry.error ? "✗" : "✓";
+/** Latest tool lifecycle marker with its word — status never rides on a
+ *  symbol or color alone. */
+function toolMarkerText(entry: Extract<StreamEntry, { type: "tool_start" | "tool_end" }>): string {
+  if (entry.type === "tool_start") return `▶ started ${entry.name}`;
+  return entry.error ? `✗ failed ${entry.name}` : `✓ finished ${entry.name}`;
 }
 
-function formatExpandedStream(entries: StreamEntry[]): string {
-  // Keep only the tail of the stream to avoid unbounded rendering
+/**
+ * Expanded UI-only activity tail: at most the last 50 assistant-text and
+ * tool-activity entries, chronologically, with an explicit omission indicator
+ * when earlier entries were dropped. Hidden reasoning never reaches this list
+ * (the runner never forwards thinking deltas). Display-only.
+ */
+export function formatExpandedStream(entries: StreamEntry[]): string {
   const tail = entries.length > EXPANDED_TAIL_LIMIT ? entries.slice(-EXPANDED_TAIL_LIMIT) : entries;
-
   const lines: string[] = [];
+  const dropped = entries.length - tail.length;
+  if (dropped > 0) lines.push(`… ${dropped} earlier entries not shown`);
   let textBuffer = "";
   for (const e of tail) {
     if (e.type === "text") {
@@ -106,21 +120,46 @@ function formatExpandedStream(entries: StreamEntry[]): string {
       lines.push(textBuffer);
       textBuffer = "";
     }
-    lines.push(`${toolMarker(e)} ${e.name}`);
+    if (!("name" in e) || typeof e.name !== "string") continue; // tolerate unknown entries
+    lines.push(toolMarkerText(e));
   }
   if (textBuffer) lines.push(textBuffer);
   return lines.join("\n");
 }
 
-function formatCollapsedStream(entries: StreamEntry[]): string {
-  // Show only tool lifecycle markers — no assistant text.
+/**
+ * Compact active row: the textual run state plus the latest progress marker —
+ * never live assistant prose. The run id is included when it is known so
+ * concurrent runs stay attributable, following the "run identifier where
+ * needed, especially for background runs" boundary.
+ */
+export function formatCollapsedStream(entries: StreamEntry[], runId?: string): string {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
-    if (e.type === "tool_start") return `▶ ${e.name}`;
-    if (e.type === "tool_end") return e.error ? `✗ ${e.name}` : `✓ ${e.name}`;
+    if (e.type === "tool_start" || e.type === "tool_end") {
+      const head = runId ? `running [run ${runId}]` : "running";
+      return `${head} — ${toolMarkerText(e)}`;
+    }
   }
-  // No tool entries yet: compact neutral status instead of assistant prose.
-  return "⟳ running…";
+  // No tool activity yet: compact neutral status instead of assistant prose.
+  return "running";
+}
+
+/**
+ * The background launch result's receipt line. The finalized row stays an
+ * identifiable receipt — type, short task, run id, and the textual queued
+ * state — while the separately attributed completion message is the
+ * authoritative visible outcome.
+ */
+export function backgroundReceiptText(
+  run: { type: string; description: string; id: string },
+  modeDiagnostic?: string,
+): string {
+  return (
+    `Started background Subagent — ${run.type} "${run.description}" [run ${run.id}] — status: queued. ` +
+    "Retrieve the result with get_subagent_result, or stop the run with stop_subagent." +
+    (modeDiagnostic ? ` ${modeDiagnostic}` : "")
+  );
 }
 
 function isTextContent(c: any): c is { type: "text"; text: string } {
@@ -140,6 +179,9 @@ export function renderAgentResult(
   _ctx: unknown,
 ): Text {
   if (!options.isPartial) {
+    // The finalized row is the clean model-facing result (or the receipt for
+    // background launches) — never an activity tail. Activity stays UI-only
+    // in the partial details and is deliberately dropped here.
     const text = result.content
       .filter(isTextContent)
       .map((c) => c.text)
@@ -148,7 +190,9 @@ export function renderAgentResult(
   }
   const entries = result.details?.streamEntries;
   if (!entries || entries.length === 0) return new Text("", 0, 0);
-  const text = options.expanded ? formatExpandedStream(entries) : formatCollapsedStream(entries);
+  const text = options.expanded
+    ? formatExpandedStream(entries)
+    : formatCollapsedStream(entries, result.details?.agentId);
   return new Text(theme.fg("toolOutput", text), 0, 0);
 }
 
@@ -269,25 +313,35 @@ export function mergedAbortSignal(
 }
 
 /**
+ * The Subagent type shown on the run row. Built-in names resolve to their
+ * canonical label case-insensitively; anything else — a resolved custom type,
+ * a legacy alias input, or an unsupported request — is displayed exactly as
+ * requested. Crucially, a custom name such as "explorer" is never rewritten
+ * to the built-in `explore` it merely resembles: rendering cannot read the
+ * definition directories (no filesystem access here) without making every
+ * redraw nondeterministic, and displaying what the parent asked for is
+ * accurate for launch-time validation, which rejects unsupported types.
+ */
+export function displayAgentTypeName(requested: string): string {
+  const s = String(requested).toLowerCase();
+  if (s === "explore" || s === "general") return s;
+  return requested;
+}
+
+/**
  * Render the Agent tool call row, showing the subagent type and description.
  * Exported for testing with a fake theme.
  */
 export function renderAgentCall(
-  args: { subagent_type: string; description: string },
+  args: { subagent_type: string; description: string; run_in_background?: boolean },
   theme: Theme,
 ): Text {
-  let type: string;
-  try {
-    type = resolveAgentType(args.subagent_type);
-  } catch {
-    // Unsupported type: show it as requested. `execute` rejects it with the
-    // actionable error; rendering must not throw.
-    type = args.subagent_type;
-  }
+  const type = displayAgentTypeName(args.subagent_type);
   const text =
     theme.fg("toolTitle", theme.bold("Agent ")) +
     theme.fg("accent", type) +
-    theme.fg("muted", `  ${args.description}`);
+    theme.fg("muted", `  ${args.description}`) +
+    theme.fg("muted", args.run_in_background ? "  (background)" : "");
   return new Text(text, 0, 0);
 }
 
@@ -332,6 +386,13 @@ function toPiMessage(msg: OutcomeMessage) {
 }
 
 export default function (pi: ExtensionAPI) {
+  // Attributed background completions render through a message renderer: the
+  // compact row is one attributable line, the expanded row adds the full
+  // authoritative content (bounded result or marked partial/missing output).
+  // This keeps the 0014 custom message legible in the TUI without putting
+  // activity into model-facing content.
+  pi.registerMessageRenderer(OUTCOME_MESSAGE_TYPE, renderOutcomeMessage);
+
   const raw = settingsKey();
   const cfg = {
     maxConcurrency: Number(raw.maxConcurrency) > 0 ? Number(raw.maxConcurrency) : 4,
@@ -529,7 +590,12 @@ export default function (pi: ExtensionAPI) {
 
       // Foreground runs stream child assistant text and compact tool activity
       // via onUpdate. Background runs skip streaming — only start-id + poll.
+      // Streaming updates are tool rows: UI-only. Content re-renders in the
+      // component and `details` carries the tail; neither enters the
+      // model-facing tool result (the run's short task is in details.agentId
+      // once the record exists, so concurrent rows stay attributable).
       const streamEntries: StreamEntry[] = [];
+      let streamRunId: string | undefined;
       const onStreamEvent: StreamCallback | undefined = background
         ? undefined
         : (event: StreamEvent) => {
@@ -547,7 +613,11 @@ export default function (pi: ExtensionAPI) {
             const streamText = formatExpandedStream(streamEntries);
             onUpdate?.({
               content: [{ type: "text", text: streamText }],
-              details: { streamText, streamEntries: [...streamEntries] },
+              details: {
+                streamText,
+                streamEntries: [...streamEntries],
+                ...(streamRunId ? { agentId: streamRunId } : {}),
+              },
             });
           };
 
@@ -618,16 +688,19 @@ export default function (pi: ExtensionAPI) {
         exec,
         onSettled,
       );
+      // Attribute late streaming updates to the launched run id.
+      streamRunId = record.id;
 
       if (background) {
         record.warnings = warnings;
         // Explicit diagnostic where the Pi mode cannot promise the later
         // continuation (print/json): keyed off ctx.mode, never off hasUI.
         const modeDiag = background ? modeDeliveryDiagnostic(ctx.mode) : undefined;
+        // The finalized launch row is an identifiable receipt (type, short
+        // task, run id, textual queued state); the separately attributed
+        // completion message is the authoritative visible outcome.
         return textResult(
-          `Started ${type} Subagent ${record.id} (background). ` +
-            "Poll with get_subagent_result." +
-            (modeDiag ? ` ${modeDiag}` : ""),
+          backgroundReceiptText({ type, description: params.description, id: record.id }, modeDiag),
           {
             agent_id: record.id,
             status: record.status,
