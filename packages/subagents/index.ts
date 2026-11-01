@@ -29,6 +29,7 @@ import {
   checkDefaultModelWarnings,
 } from "./model-ref.ts";
 import { resolveTypeThinkingLevel } from "./thinking-level.ts";
+import { resolveSkillPreloads, type PreloadedSkill } from "./skills.ts";
 import type { AgentWarning } from "./warnings.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -428,6 +429,26 @@ export default function (pi: ExtensionAPI) {
       const type = isBuiltin ? resolved.type : resolved.name; // display/record identity
       const agentDef = resolved.kind === "custom" ? discovery.valid.get(resolved.name) : undefined;
 
+      // Resolve the definition's `skills` list through normal Pi skill
+      // discovery. A missing or unreadable skill makes that launch fail with
+      // an actionable error — a run must not start with incomplete required
+      // instructions — while unrelated definitions stay usable. Skill edits
+      // are re-read on every launch, like definitions.
+      let preloadedSkills: PreloadedSkill[] | undefined;
+      if (agentDef && agentDef.skills.length > 0) {
+        const skillPreload = await resolveSkillPreloads({
+          cwd: ctx.cwd,
+          skillNames: agentDef.skills,
+        });
+        if (skillPreload.problems.length > 0) {
+          throw new Error(
+            `Cannot launch Subagent type "${type}" — skill preloading failed: ` +
+              `${skillPreload.problems.map((p) => p.message).join("; ")}.`,
+          );
+        }
+        preloadedSkills = skillPreload.skills;
+      }
+
       // Custom capability selection: allowlist/denials are validated against
       // the parent session's actual active tool names (availableTools, the
       // extension boundary). Unknown or unavailable names are rejected —
@@ -534,6 +555,7 @@ export default function (pi: ExtensionAPI) {
         runSubagent({
           type,
           ...(agentDef ? { agentDef: { ...agentDef } } : {}),
+          ...(preloadedSkills ? { preloadedSkills } : {}),
           prompt: params.prompt,
           cwd: ctx.cwd,
           model,

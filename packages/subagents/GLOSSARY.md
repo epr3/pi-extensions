@@ -55,6 +55,9 @@ _Avoid_: Default toolset, general tools, read-only default.
 **External web research**: Source-gathering workflow performed by the parent Pi coding agent through web Extension tools, not by a built-in **Subagent type**.
 _Avoid_: Researcher subagent, web subagent.
 
+**Skill preloading**: Launch-time resolution of a **Custom Subagent definition**'s `skills` frontmatter names through Pi's normal skill discovery and precedence, reading each complete SKILL.md into the **Subagent run**'s initial context; a missing or unreadable skill fails that launch only.
+_Avoid_: Skill allowlist, skill injection, skill restriction.
+
 **Result-text limit**: Fixed, non-configurable cap of 20,000 UTF-8 bytes on a **Subagent run**'s result text, keeping the beginning and never splitting a character.
 _Avoid_: Output budget, truncation cutoff, context cap.
 
@@ -90,6 +93,8 @@ _Avoid_: UI mode, with-UI capability, headless mode.
 - **External web research** uses web Extension tools directly from the parent Pi coding agent rather than a dedicated built-in **Subagent type**.
 - **Subagent** cannot recursively launch child **Subagents** because subagent tools are excluded from sub-sessions.
 - Every **Subagent run** delivers **Bounded result text** — foreground returns, explicit `get_subagent_result` retrieval, and automatic completions and failed/stopped partials — so the parent never sees an unbounded answer.
+- **Skill preloading** resolves names the same way the **Subagent run**'s own skill discovery does, so a preloaded skill and an on-demand read of the same name come from the same file; preloading adds startup instructions, never permissions — other skills stay discoverable and readable.
+- A missing or unreadable skill makes only the declaring **Custom Subagent definition**'s launch fail; unrelated valid **Subagent types** stay usable.
 - Omitted **Bounded result text** is not recoverable; a large deliverable is instead written to a file by the **Subagent**.
 - A background **Subagent run** belongs to its **Originating session**; an **Attributed completion** is delivered there at most once during normal operation, queued as a non-interrupting follow-up while the parent is busy and delivered as a turn-starting message when idle.
 - **Originating session** shutdown or replacement stops queued and running **Subagent runs**, deactivates delivery, and never lets a replacement session receive an **Attributed completion** it did not own.
@@ -126,5 +131,7 @@ _Avoid_: UI mode, with-UI capability, headless mode.
 - "expl" was a speculative prefix alias that could capture a distinct custom name such as `Explorer`; resolved: exact matches against valid custom **Subagent type** names win before built-in aliasing, so the `expl` alias still applies (`expl`, `EXPLORE`, …) but never eats an exact custom name.
 - "merge definitions across scopes" could mean per-name precedence or combining fields from multiple **Subagent definitions directories**; resolved: per-name precedence without merging, so a nearer scope cannot silently inherit a farther scope's prompt.
 - "unknown type" could mean silently delegating to `general` or failing; resolved: unknown, invalid, and shadowed requested types fail with an actionable error that names the currently valid custom types.
+- "skills" on a **Custom Subagent definition** could mean a preload list or a skill-access allowlist; resolved: **Skill preloading** only puts the listed skills' complete instructions into the initial context — it is not an access restriction, and listing skills is exactly as safe as the Subagent reading them itself.
+- "matching a skill" could mean directory name or resolved skill name; resolved: names match Pi's resolved skill names (frontmatter `name`, falling back to the directory name) under Pi's own precedence, with project scope beating user scope for collided names.
 - "automatic completion" could mean the parent learns a background outcome with no assurance at all; resolved: one **Attributed completion** per run during normal operation, explicitly not promised through queue clearing, shutdown, replacement, or crashes, with explicit retrieval kept.
 - "can the parent still receive results" could be inferred from `ctx.hasUI`; resolved: **Delivery-capable mode** is judged from the Pi mode (`tui`/`rpc` can continue; `print`/`json` cannot), never from UI availability.

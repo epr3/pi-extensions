@@ -16,6 +16,8 @@ import {
   type AgentType,
 } from "./agents.ts";
 import type { CustomSubagentDef } from "./discovery.ts";
+import type { PreloadedSkill } from "./skills.ts";
+import { composeCustomSystemPrompt } from "./skills-prompt.ts";
 
 type AnyModel = Model<any>;
 
@@ -152,6 +154,8 @@ export async function runSubagent(opts: {
   type: AgentType | string;
   /** Custom Subagent definition (exact resolved match); overrides `AGENTS[type]`. */
   agentDef?: CustomSubagentDef;
+  /** Skills resolved and read at launch; preloaded into the initial context. */
+  preloadedSkills?: PreloadedSkill[];
   prompt: string;
   cwd: string;
   model?: AnyModel;
@@ -172,12 +176,19 @@ export async function runSubagent(opts: {
   const def = opts.agentDef ?? (AGENTS as Record<string, AgentDef | undefined>)[opts.type];
   if (!def) throw new Error(`Unknown Subagent type "${opts.type}"`);
 
+  // A custom definition's body plus any preloaded skills form the initial
+  // context. Built-ins (and skill-less bodies) keep the normal prompt.
+  const composeIfNeeded =
+    def.systemPrompt || opts.preloadedSkills?.length
+      ? () => composeCustomSystemPrompt(def.systemPrompt, opts.preloadedSkills)
+      : undefined;
+
   const modelRuntime = await ModelRuntime.create();
 
   const loader = new DefaultResourceLoader({
     cwd: opts.cwd,
     agentDir: getAgentDir(),
-    ...(def.systemPrompt ? { systemPromptOverride: () => def.systemPrompt! } : {}),
+    ...(composeIfNeeded ? { systemPromptOverride: () => composeIfNeeded() } : {}),
   });
   await loader.reload();
 

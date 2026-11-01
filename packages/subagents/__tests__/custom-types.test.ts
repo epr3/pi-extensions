@@ -176,13 +176,14 @@ describe("definitions are re-read on subsequent launches", () => {
 // ─── Field and type rejection at the launch boundary ────────────────────────
 
 describe("unsupported fields are rejected at the launch boundary", () => {
-  // tools / disallowedTools / model are implemented from ticket 0010 on and
-  // are exercised in custom-tools-model.test.ts; `skills` remains unimplemented.
-  it("rejects a skills field without launching a session", async () => {
-    projectAgent("scoped.md", withField("scoped", "skills: whatever"));
+  // tools / disallowedTools / model (from ticket 0010 on) are exercised in
+  // custom-tools-model.test.ts, and `skills` in skill-preloading.test.ts.
+
+  it("rejects a malformed skills field without launching a session", async () => {
+    projectAgent("skilled.md", withField("skilled", "skills: plainly-not-a-list"));
     const agent = registerAgent();
 
-    await expect(callAgent(agent, "scoped")).rejects.toThrow(/skills/);
+    await expect(callAgent(agent, "skilled")).rejects.toThrow(/skills.*list/s);
     expect(runSubagentMock).not.toHaveBeenCalled();
   });
 

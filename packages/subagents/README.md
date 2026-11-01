@@ -28,7 +28,7 @@ You are a code review Subagent. The Markdown body is the Subagent's system promp
 
 - Required frontmatter: `name` (identity, matched exactly as `subagent_type`) and `description` (surfaced to the parent so it can pick a type).
 - The body is the system prompt. Markdown without frontmatter or without a `name` is documentation and is ignored.
-- Frontmatter accepts `name`, `description`, `tools`, `disallowedTools`, and `model` (see below). `skills` is **rejected explicitly** as not yet implemented, as are unknown fields — never silently ignored, so unimplemented settings are never mistaken for guarantees.
+- Frontmatter accepts `name`, `description`, `skills` (a YAML list of Pi skill names to preload — see [Skill preloading](#skill-preloading)), plus `tools`, `disallowedTools`, and `model` (see below). Unknown fields are **rejected explicitly** — never silently ignored, so unimplemented settings are never mistaken for guarantees.
 - `explore` and `general` are reserved names and cannot be redefined.
 
 ### Discovery locations and precedence
@@ -61,7 +61,7 @@ Body.
 
 - **Omitted `tools` inherits everything** the Subagent session would otherwise have — all
   built-ins, all installed extension tools, write and shell tools included — minus
-  `disallowedTools` and the fixed safety exclusions. An omitted allowlist is *not*
+  `disallowedTools` and the fixed safety exclusions. An omitted allowlist is _not_
   read-only: if you want a read-only Subagent, say so explicitly with a read-only
   `tools` list.
 - **`disallowedTools` narrows** the allowlisted or inherited set. Denials never touch the
@@ -126,6 +126,46 @@ Definitions written for Claude Code must be adapted; compatibility is deliberate
 Custom names are matched **exactly first**, then the built-in aliases apply. The speculative `expl` prefix alias for `explore` still works (`expl`, `EXPLORE`, …), so existing calls are unaffected — but it no longer swallows an input that exactly matches a valid custom name, such as a custom type named `Explorer`. Compatibility change: before this, any `expl…` input resolved to the built-in `explore`; if you relied on such an input resolving there but have since defined a custom type with that exact name, the custom type now wins. Unknown or invalid requested types fail with an actionable error — never a silent fallback to `general`.
 
 A custom type without its own fields behaves like `general` tool-wise: it inherits every available Subagent tool, including write and shell tools, minus the fixed safety exclusions (`Agent`, `get_subagent_result`, `question`). Per-project resource loading and the one-level-deep boundary apply exactly as for the built-ins.
+
+### Skill preloading
+
+A definition may list Pi skills to start with:
+
+```markdown
+---
+name: code-reviewer
+description: Reviews diffs with extra care for API changes
+skills:
+  - code-review
+  - house-style
+---
+
+You are a code review Subagent. The body is the system prompt; the listed
+skills' complete instructions are preloaded into your initial context.
+```
+
+- Names resolve through **normal Pi skill discovery and precedence** — the
+  same skill loader the sub-session uses: default locations (user skills
+  such as `~/.pi/agent/skills` and project `<cwd>/.pi/skills`) plus
+  settings-, CLI-, and package-derived skill paths, matched against Pi's
+  resolved skill names (the skill's frontmatter `name`, not its directory
+  name) with Pi's own precedence for collided names.
+- Each resolved skill's **complete `SKILL.md`** (frontmatter included) is
+  preloaded into the Subagent's initial system-prompt context. Skill files are
+  re-read on every launch, like definitions, so edits apply to subsequent runs.
+- A **missing or unreadable** skill makes that launch fail with an actionable
+  error naming the skill (and its path, when found but unreadable) before any
+  session starts. Unrelated definitions — and definitions without a `skills`
+  list — stay fully usable.
+- **Preloading is not an access restriction.** The sub-session still runs the
+  normal skill loader, so any other installed skill remains discoverable and
+  readable on demand. Preloaded content is a startup convenience (the
+  Subagent starts with complete instructions instead of reading them
+  mid-task), not a permission boundary; it neither grants nor removes tool
+  access.
+- `skills` must be a YAML list of non-empty names; anything else (a plain
+  string, a non-string entry) is a definition error diagnosed at discovery,
+  and the definition cannot launch.
 
 ## Extension tools inside subagents
 

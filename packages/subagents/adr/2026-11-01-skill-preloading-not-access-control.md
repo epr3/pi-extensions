@@ -1,0 +1,3 @@
+# Skill Preloading Is Not Access Control
+
+A custom Subagent definition's `skills` frontmatter preloads the listed skills' complete SKILL.md into the run's initial context. The sub-session still runs Pi's normal skill loader, so any other installed skill stays discoverable and readable on demand; preloading only replaces a mid-task read with startup instructions and neither grants nor removes tool access. Consequence: a definition listing skills is exactly as capability-safe as one where the Subagent reads them itself, so preload failure must be treated as an availability problem (fail that launch with an actionable diagnostic), never as a security control.

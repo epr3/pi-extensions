@@ -16,11 +16,20 @@ import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { parseModelRef } from "./model-ref.ts";
 
-/** Fields the frontmatter grammar accepts. `skills` is still rejected
- *  explicitly until its ticket implements it — never silently ignored, so
- *  unimplemented settings are never mistaken for guarantees. */
-export const SUPPORTED_FIELDS = ["name", "description", "tools", "disallowedTools", "model"] as const;
-export const PLANNED_FIELDS = ["skills"] as const;
+/** Fields the frontmatter grammar accepts. No fields are merely planned
+ *  anymore (none are rejected explicitly pending a ticket) — unknown fields
+ *  still are, so unimplemented settings are never mistaken for guarantees.
+ *  `skills` is the frontmatter list of Pi skill names to preload into the
+ *  Subagent's initial context. */
+export const SUPPORTED_FIELDS = [
+  "name",
+  "description",
+  "skills",
+  "tools",
+  "disallowedTools",
+  "model",
+] as const;
+export const PLANNED_FIELDS = [] as const;
 
 /** The explicit parent-model sentinel for the `model` frontmatter field. */
 export const MODEL_INHERIT = "inherit";
@@ -34,6 +43,10 @@ export interface CustomSubagentDef {
   description: string;
   /** The file's Markdown body. */
   systemPrompt: string;
+  /** Frontmatter `skills`: Pi skill names to preload into the run's initial
+   *  context, deduped in list order. Resolved against normal Pi skill
+   *  discovery at launch; an empty list means no preloading. */
+  skills: string[];
   sourcePath: string;
 
   /** Explicit tool allowlist (bare Pi tool names, YAML list or comma-joined
@@ -159,6 +172,32 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
     return fail("unknown-field", `unsupported frontmatter field \`${field}\``);
   }
 
+  // `skills` must be a YAML list of non-empty skill names. Resolution against
+  // actual Pi skills happens at launch (a missing skill fails that run, not
+  // the parse), so here we only enforce the field's shape.
+  let skills: string[] | undefined;
+  const skillsValue = frontmatter["skills"];
+  if ("skills" in frontmatter) {
+    if (!Array.isArray(skillsValue)) {
+      return fail(
+        "invalid-definition",
+        "field `skills` must be a YAML list of skill names (e.g. `skills:\n  - code-review`)",
+      );
+    }
+    const names: string[] = [];
+    for (const entry of skillsValue) {
+      if (typeof entry !== "string" || entry.trim() === "") {
+        return fail(
+          "invalid-definition",
+          "field `skills` must be a YAML list of non-empty skill names",
+        );
+      }
+      const trimmed = entry.trim();
+      if (!names.includes(trimmed)) names.push(trimmed);
+    }
+    skills = names;
+  }
+
   if ((RESERVED_NAMES as readonly string[]).includes(name.toLowerCase())) {
     return fail(
       "reserved-name",
@@ -168,7 +207,14 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
 
   return {
     kind: "valid",
-    def: { name, description: descriptionValue, systemPrompt: body, sourcePath: filePath, ...custom },
+    def: {
+      name,
+      description: descriptionValue,
+      systemPrompt: body,
+      skills: skills ?? [],
+      sourcePath: filePath,
+      ...custom,
+    },
   };
 }
 
@@ -187,10 +233,7 @@ const TOOL_NAME_FORBIDDEN = /[()*:*]/;
  * patterns and wildcards (`Bash(...)`, `Edit:*`, `Edit*`), and entries that
  * become empty after trimming.
  */
-export function parseToolListField(
-  value: unknown,
-  field: string,
-): string[] | string {
+export function parseToolListField(value: unknown, field: string): string[] | string {
   let names: string[];
   if (typeof value === "string") {
     names = value.split(",").map((s) => s.trim());
@@ -211,9 +254,11 @@ export function parseToolListField(
       }`;
     }
     if (TOOL_NAME_FORBIDDEN.test(raw)) {
-      return `\`${field}\` entry "${raw}" is not a bare Pi tool name — scoped patterns ` +
+      return (
+        `\`${field}\` entry "${raw}" is not a bare Pi tool name — scoped patterns ` +
         `and wildcards (like Bash(git*:*), Configure:*, or Browser(*)) are not supported; ` +
-        `write the exact Pi tool name, e.g. "bash"`;
+        `write the exact Pi tool name, e.g. "bash"`
+      );
     }
     if (!out.includes(raw)) out.push(raw);
   }
@@ -228,9 +273,7 @@ export function parseToolListField(
  * value returns an error message — unlike the configured defaults, an
  * explicit definition model never falls back silently.
  */
-export function parseModelField(
-  value: unknown,
-): { value?: string; error?: string } {
+export function parseModelField(value: unknown): { value?: string; error?: string } {
   if (typeof value !== "string" || value.trim() === "") {
     return { error: "`model` must be a string — an exact `provider/model` reference or `inherit`" };
   }
@@ -238,7 +281,8 @@ export function parseModelField(
   if (trimmed === MODEL_INHERIT) return { value: trimmed };
   if (!parseModelRef(trimmed)) {
     return {
-      error: `\`model\` value "${trimmed}" is not an exact \`provider/model\` reference ` +
+      error:
+        `\`model\` value "${trimmed}" is not an exact \`provider/model\` reference ` +
         `(e.g. "anthropic/claude-sonnet-4-20250514") or \`inherit\` — bare model ` +
         `aliases are not supported`,
     };

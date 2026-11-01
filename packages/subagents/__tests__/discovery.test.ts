@@ -137,10 +137,11 @@ describe("frontmatter field validation", () => {
     expect(d.diagnostics).toHaveLength(0);
   });
 
-  it("malformed fields and scoped patterns are rejected; skills is diagnosed as unimplemented", () => {
+  it("malformed field values and scoped patterns are rejected", () => {
+    // tools / disallowedTools / model are supported (ticket 0010); skills is
+    // supported since ticket 0011 and exercised in the describe below.
     const cases: Array<[string, string, RegExp, string]> = [
       ["model", "whatever", /provider\/model/, "invalid-definition"],
-      ["skills", "whatever", /skills/, "unsupported-field"], // unimplemented, diagnosed by ticket 0011
       ["tools", "Bash(git*)", /scoped patterns/, "invalid-definition"],
       ["disallowedTools", "read,", /empty tool name/, "invalid-definition"],
     ];
@@ -157,6 +158,64 @@ describe("frontmatter field validation", () => {
       expect(d.diagnostics[0].kind, `${field}: ${value}`).toBe(kind);
       expect(d.diagnostics[0].message, `${field}: ${value}`).toMatch(pattern);
     }
+  });
+
+  describe("skills frontmatter field", () => {
+    it("accepts a YAML list of skill names and records them on the definition", () => {
+      const scopes = [dir("agents")];
+      def(
+        scopes[0],
+        "with-skills.md",
+        "---\nname: briefed\ndescription: D\nskills:\n  - code-review\n  - dept-style\n---\nBody.\n",
+      );
+
+      const d = discoverCustomSubagents(scopes);
+      expect(d.valid.get("briefed")).toMatchObject({ skills: ["code-review", "dept-style"] });
+      expect(d.diagnostics).toHaveLength(0);
+    });
+
+    it("rejects a non-list value with a shape-diagnosing message", () => {
+      const scopes = [dir("agents")];
+      def(scopes[0], "bad.md", "---\nname: bad\ndescription: D\nskills: code-review\n---\nBody.\n");
+
+      const d = discoverCustomSubagents(scopes);
+      expect(d.valid.size).toBe(0);
+      expect(d.diagnostics[0].kind).toBe("invalid-definition");
+      expect(d.diagnostics[0].message).toMatch(/skills.*list/s);
+    });
+
+    it("rejects non-string entries and empty names", () => {
+      const scopes = [dir("agents")];
+      def(
+        scopes[0],
+        "numeric.md",
+        "---\nname: numeric\ndescription: D\nskills:\n  - 42\n---\nBody.\n",
+      );
+      def(scopes[0], "empty.md", '---\nname: empty\ndescription: D\nskills:\n  - ""\n---\nBody.\n');
+
+      const d = discoverCustomSubagents(scopes);
+      expect(d.valid.size).toBe(0);
+      expect(d.diagnostics).toHaveLength(2);
+      for (const diag of d.diagnostics) {
+        expect(diag.kind).toBe("invalid-definition");
+        expect(diag.message).toMatch(/skills/);
+      }
+    });
+
+    it("treats an empty list as no preloading and dedupes names preserving order", () => {
+      const scopes = [dir("agents")];
+      def(
+        scopes[0],
+        "dupe.md",
+        "---\nname: dupe\ndescription: D\nskills:\n  - b\n  - a\n  - b\n  - a\n---\nBody.\n",
+      );
+      def(scopes[0], "none.md", "---\nname: none\ndescription: D\nskills: []\n---\nBody.\n");
+
+      const d = discoverCustomSubagents(scopes);
+      expect(d.valid.get("dupe")).toMatchObject({ skills: ["b", "a"] });
+      expect(d.valid.get("none")).toMatchObject({ skills: [] });
+      expect(d.diagnostics).toHaveLength(0);
+    });
   });
 
   it("accepts a definition that only sets name and description", () => {
