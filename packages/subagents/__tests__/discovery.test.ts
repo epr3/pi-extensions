@@ -123,7 +123,7 @@ describe("frontmatter field validation", () => {
     expect(d.diagnostics[0].message).toMatch(/when_to_use/);
   });
 
-  it("explicitly rejects the tools field until its ticket implements it", () => {
+  it("accepts a YAML-list tools field with a bare Pi tool name", () => {
     const scopes = [dir("agents")];
     def(
       scopes[0],
@@ -132,24 +132,30 @@ describe("frontmatter field validation", () => {
     );
 
     const d = discoverCustomSubagents(scopes);
-    expect(d.valid.has("with-tools")).toBe(false);
-    expect(d.diagnostics[0].kind).toBe("unsupported-field");
-    expect(d.diagnostics[0].message).toMatch(/tools/);
+    expect(d.valid.has("with-tools")).toBe(true);
+    expect(d.valid.get("with-tools")!.tools).toEqual(["read"]);
+    expect(d.diagnostics).toHaveLength(0);
   });
 
-  it("explicitly rejects disallowedTools, model, and skills fields", () => {
-    for (const field of ["disallowedTools", "model", "skills"]) {
+  it("malformed fields and scoped patterns are rejected; skills is diagnosed as unimplemented", () => {
+    const cases: Array<[string, string, RegExp, string]> = [
+      ["model", "whatever", /provider\/model/, "invalid-definition"],
+      ["skills", "whatever", /skills/, "unsupported-field"], // unimplemented, diagnosed by ticket 0011
+      ["tools", "Bash(git*)", /scoped patterns/, "invalid-definition"],
+      ["disallowedTools", "read,", /empty tool name/, "invalid-definition"],
+    ];
+    for (const [field, value, pattern, kind] of cases) {
       const s = dir(`agents-${field}-${n++}`);
       def(
         s,
         "unsupported.md",
-        `---\nname: unsupported\ndescription: D\n${field}: whatever\n---\nBody.\n`,
+        `---\nname: unsupported\ndescription: D\n${field}: ${value}\n---\nBody.\n`,
       );
 
       const d = discoverCustomSubagents([s]);
-      expect(d.valid.size).toBe(0);
-      expect(d.diagnostics[0].kind).toBe("unsupported-field");
-      expect(d.diagnostics[0].message).toMatch(new RegExp(field));
+      expect(d.valid.size, `${field}: ${value}`).toBe(0);
+      expect(d.diagnostics[0].kind, `${field}: ${value}`).toBe(kind);
+      expect(d.diagnostics[0].message, `${field}: ${value}`).toMatch(pattern);
     }
   });
 

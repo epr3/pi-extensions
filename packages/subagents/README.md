@@ -28,7 +28,7 @@ You are a code review Subagent. The Markdown body is the Subagent's system promp
 
 - Required frontmatter: `name` (identity, matched exactly as `subagent_type`) and `description` (surfaced to the parent so it can pick a type).
 - The body is the system prompt. Markdown without frontmatter or without a `name` is documentation and is ignored.
-- Frontmatter accepts only `name` and `description`. `tools`, `disallowedTools`, `model`, and `skills` are **rejected explicitly** until their tickets land, as are unknown fields — never silently ignored, so unimplemented settings are never mistaken for guarantees.
+- Frontmatter accepts `name`, `description`, `tools`, `disallowedTools`, and `model` (see below). `skills` is **rejected explicitly** as not yet implemented, as are unknown fields — never silently ignored, so unimplemented settings are never mistaken for guarantees.
 - `explore` and `general` are reserved names and cannot be redefined.
 
 ### Discovery locations and precedence
@@ -36,6 +36,90 @@ You are a code review Subagent. The Markdown body is the Subagent's system promp
 - Project scopes: `.pi/agents` directories from the working directory up to the Git repository root inclusive. Outside Git, only the working directory's project scope is inspected. `.claude/agents` is never discovered.
 - User scope: the `agents` directory inside Pi's agent config dir (e.g. `~/.pi/agent/agents`, respecting `PI_CODING_AGENT_DIR`).
 - Precedence is per-name and never merges: the nearest project scope that mentions a name decides it, beating farther project scopes and the user scope. Two definitions of the same name in one scope conflict; the name becomes unusable and both paths are diagnosed. An invalid nearer definition shadows valid lower-priority ones. Valid types stay usable while unrelated invalid ones are diagnosed.
+
+### Tools: `tools` and `disallowedTools`
+
+A definition can shape the Subagent tool boundary. Both fields accept a YAML list or a
+comma-separated string of **exact Pi tool names** (`read`, `bash`, `grep`, `lsp_definition`, …):
+
+```markdown
+---
+name: code-reader
+description: Read-only inspection
+# YAML list:
+tools:
+  - read
+  - grep
+  - find
+  - ls
+# equivalently: tools: read, grep, find, ls
+disallowedTools: write, bash
+---
+
+Body.
+```
+
+- **Omitted `tools` inherits everything** the Subagent session would otherwise have — all
+  built-ins, all installed extension tools, write and shell tools included — minus
+  `disallowedTools` and the fixed safety exclusions. An omitted allowlist is *not*
+  read-only: if you want a read-only Subagent, say so explicitly with a read-only
+  `tools` list.
+- **`disallowedTools` narrows** the allowlisted or inherited set. Denials never touch the
+  fixed safety exclusions (those are always removed anyway).
+- **Availability is exact.** Every allowlisted or denied name must be a tool that actually
+  exists and is active in the launching session (Pi built-ins plus registered extension
+  tools). Unknown or currently unavailable names fail the launch — they are never
+  silently dropped, so nothing widens or narrows by accident.
+- **Scoped patterns are rejected.** Claude-style patterns such as `Bash(git*:*)`,
+  `WebFetch(domain:example.com)`, or wildcards like `Edit*` / `Edit:*` are not supported and
+  make the definition invalid; write the bare Pi tool names instead. Claude tool names are
+  not translated — a definition listing `Bash` or `Edit` fails as unavailable.
+- **Empty results are rejected.** If the effective set — allowlist (or inheritance) minus
+  denials minus the safety exclusions — is empty, the launch fails with an actionable
+  message instead of running a tool-less Subagent.
+- **Safety boundaries always win.** Even if a definition explicitly allowlists `Agent`,
+  `get_subagent_result`, or `question`, those tools are removed from the Subagent session:
+  no custom type can gain nested delegation, result retrieval, or blocking questions.
+
+### Model: `model`
+
+A definition can pin its model:
+
+- **Exact reference** — `model: anthropic/claude-sonnet-4-20250514` sets the model for the
+  type's runs, overriding the configured shared `subagents.defaultModel`. The reference must
+  be an exact `provider/model` entry of the model registry; an unknown or unavailable model
+  **fails the launch** rather than silently running on a different model.
+- **`model: inherit`** — explicitly uses the launching session's model.
+- **Omitted** — the existing behavior stands: `subagents.defaultModel` when configured,
+  then the launching session's model. A configured default that cannot be resolved still
+  warns and falls back as before (this never hard-fails, unlike an explicit definition
+  model).
+- Bare aliases (`haiku`, `opus`, …) are rejected at discovery: write the exact
+  `provider/model` value; Pi does no alias translation here.
+- When a definition model is set (or `inherit`), the `subagents.defaultModel` setting is not
+  consulted for that launch and produces no model warning for it. Thinking-level settings
+  keep applying independently of the model choice.
+
+### Claude compatibility limitations
+
+Definitions written for Claude Code must be adapted; compatibility is deliberately partial:
+
+- **Locations:** only Pi locations are discovered (`.pi/agents/` project scopes from the
+  working directory to the Git root, and Pi's user `agents/` directory). `.claude/agents/`
+  is never read.
+- **Tool names:** Pi tool names only. There is no Claude tool-name translation, and scoped
+  permission patterns (`Bash(git*:*)`, `WebFetch(domain:…)`, wildcards) are rejected — add
+  Pi denial entries per exact tool instead.
+- **Write/shell implications:** an omitted `tools` list inherits write and shell tools
+  (`write`, `bash`). Claude habits like relying on a narrower default permission profile do
+  not transfer; state read-only intentions with an explicit read-only allowlist.
+- **Strict field validation:** unknown fields and unimplemented fields (`skills`) make the
+  definition invalid rather than ignored — remove or adapt them when migrating.
+- **Model identifiers:** exact `provider/model` strings or `inherit` only; Claude aliases
+  such as `sonnet` or `opus` are invalid.
+- **Safety boundaries take precedence over any frontmatter value:** subagents cannot
+  delegate, retrieve results, block on questions, or otherwise bypass the single-level
+  boundary, no matter what their files say.
 
 ### Type matching and alias compatibility change
 

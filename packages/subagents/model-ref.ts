@@ -1,6 +1,7 @@
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentType } from "./agents.ts";
 import type { WarningScope } from "./warnings.ts";
+import { MODEL_INHERIT } from "./discovery.ts";
 
 /** Any per-type scope or the shared scope. */
 export type AgentTypeOrShared = AgentType | "shared";
@@ -154,4 +155,43 @@ export function checkDefaultModelWarnings(
   }
 
   return warnings;
+}
+// ─── Definition frontmatter model ─────────────────────────────────────────
+
+/**
+ * Resolve a custom definition's frontmatter `model` value, which — unlike
+ * the configured defaults — never falls back silently:
+ *
+ * - `"inherit"` resolves to the parent session's model; if the parent has no
+ *   model the run fails with an actionable error;
+ * - an exact `provider/model` reference resolves through the registry; an
+ *   unknown or unavailable reference makes the run fail rather than proceed
+ *   with a different model.
+ *
+ * Syntax validity was already checked at discovery (parseModelField); this
+ * function handles the registry/parent lookups known only at launch time.
+ *
+ * Returns `{ model }` or `{ error }` carrying an actionable message.
+ */
+export function resolveDefinitionModel(
+  ref: string,
+  findModel: (provider: string, modelId: string) => Model<any> | undefined,
+  parentModel: Model<any> | undefined,
+): { model?: Model<any> } | { error: string } {
+  if (ref === MODEL_INHERIT) {
+    return parentModel
+      ? { model: parentModel }
+      : { error: "`model: inherit` explicitly requests the parent model, but this session has no model — launch the Subagent from a session with an active model" };
+  }
+  const parsed = parseModelRef(ref);
+  if (!parsed) return { error: `model "${ref}" is not an exact \`provider/model\` reference` };
+  const found = findModel(parsed.provider, parsed.modelId);
+  return found
+    ? { model: found }
+    : {
+        error:
+          `model "${ref}" is not available in this session's model registry — ` +
+          `use an exact registered \`provider/model\` reference or remove the field; ` +
+          `the run does not fall back to another model`,
+      };
 }

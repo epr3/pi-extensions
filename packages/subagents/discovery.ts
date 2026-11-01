@@ -14,13 +14,16 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
+import { parseModelRef } from "./model-ref.ts";
 
-/** Fields the frontmatter grammar accepts. `tools`, `disallowedTools`,
- *  `model`, and `skills` are rejected explicitly until their tickets
- *  implement them — never silently ignored, so unimplemented settings are
- *  never mistaken for guarantees. */
-export const SUPPORTED_FIELDS = ["name", "description"] as const;
-export const PLANNED_FIELDS = ["tools", "disallowedTools", "model", "skills"] as const;
+/** Fields the frontmatter grammar accepts. `skills` is still rejected
+ *  explicitly until its ticket implements it — never silently ignored, so
+ *  unimplemented settings are never mistaken for guarantees. */
+export const SUPPORTED_FIELDS = ["name", "description", "tools", "disallowedTools", "model"] as const;
+export const PLANNED_FIELDS = ["skills"] as const;
+
+/** The explicit parent-model sentinel for the `model` frontmatter field. */
+export const MODEL_INHERIT = "inherit";
 
 /** Built-in Subagent names; custom definitions cannot shadow them. */
 export const RESERVED_NAMES = ["explore", "general"] as const;
@@ -32,6 +35,21 @@ export interface CustomSubagentDef {
   /** The file's Markdown body. */
   systemPrompt: string;
   sourcePath: string;
+
+  /** Explicit tool allowlist (bare Pi tool names, YAML list or comma-joined
+   *  string, deduped). Omitted means: inherit the available Subagent tools
+   *  (write and shell included). Shapes and pattern syntax are validated
+   *  here; tool availability against the live session is checked at launch
+   *  — see packages/subagents/toolset.ts. */
+  tools?: string[];
+  /** Tool names removed from the run's toolset (allowlisted or inherited)
+   *  after the fixed safety exclusions. Same format rules as `tools`. */
+  disallowedTools?: string[];
+  /** Exact `"provider/model"` reference, or `"inherit"` to explicitly use
+   *  the parent session's model. Omitted keeps the existing configured-"
+   *  defaults then parent model fallback. Syntax is validated here; the
+   *  registry lookup happens at launch and a miss fails the run. */
+  model?: string;
 }
 
 export type DefinitionDiagnosticKind =
@@ -110,6 +128,25 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
     return fail("invalid-definition", "missing or empty required field `description`");
   }
 
+  // Optional capability fields: validated in declaration order so an error
+  // always points at the first offending field.
+  const custom: { tools?: string[]; disallowedTools?: string[]; model?: string } = {};
+  if ("tools" in frontmatter) {
+    const parsed = parseToolListField(frontmatter["tools"], "tools");
+    if (typeof parsed === "string") return fail("invalid-definition", parsed);
+    custom.tools = parsed;
+  }
+  if ("disallowedTools" in frontmatter) {
+    const parsed = parseToolListField(frontmatter["disallowedTools"], "disallowedTools");
+    if (typeof parsed === "string") return fail("invalid-definition", parsed);
+    custom.disallowedTools = parsed;
+  }
+  if ("model" in frontmatter) {
+    const parsed = parseModelField(frontmatter["model"]);
+    if (parsed.error) return fail("invalid-definition", parsed.error);
+    custom.model = parsed.value;
+  }
+
   for (const field of Object.keys(frontmatter)) {
     if ((SUPPORTED_FIELDS as readonly string[]).includes(field)) continue;
     if ((PLANNED_FIELDS as readonly string[]).includes(field)) {
@@ -131,8 +168,82 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
 
   return {
     kind: "valid",
-    def: { name, description: descriptionValue, systemPrompt: body, sourcePath: filePath },
+    def: { name, description: descriptionValue, systemPrompt: body, sourcePath: filePath, ...custom },
   };
+}
+
+// ─── Optional frontmatter field grammars ───────────────────────────────────
+
+/** Characters that mark a scoped pattern, wildcard, or mapping-like form.
+ *  Pi tool names are plain identifiers; anything else in a tool field is
+ *  rejected rather than translated. */
+const TOOL_NAME_FORBIDDEN = /[()*:*]/;
+
+/**
+ * Validate a `tools` / `disallowedTools` frontmatter value.
+ * Accepted: a YAML list of strings, or a comma-separated string — both of
+ * bare Pi tool names (trimmed, empties dropped, deduped). Returns an error
+ * message for: non-string/non-array shapes, non-string entries, scoped
+ * patterns and wildcards (`Bash(...)`, `Edit:*`, `Edit*`), and entries that
+ * become empty after trimming.
+ */
+export function parseToolListField(
+  value: unknown,
+  field: string,
+): string[] | string {
+  let names: string[];
+  if (typeof value === "string") {
+    names = value.split(",").map((s) => s.trim());
+  } else if (Array.isArray(value)) {
+    if (value.some((v) => typeof v !== "string")) {
+      return `\`${field}\` entries must all be tool names (strings)`;
+    }
+    names = (value as unknown[]).map((v) => String(v).trim());
+  } else {
+    return `\`${field}\` must be a YAML list of tool names or a comma-separated string`;
+  }
+
+  const out: string[] = [];
+  for (const raw of names) {
+    if (raw === "") {
+      return `\`${field}\` contains an empty tool name${
+        typeof value === "string" ? " — separate names with commas" : ""
+      }`;
+    }
+    if (TOOL_NAME_FORBIDDEN.test(raw)) {
+      return `\`${field}\` entry "${raw}" is not a bare Pi tool name — scoped patterns ` +
+        `and wildcards (like Bash(git*:*), Configure:*, or Browser(*)) are not supported; ` +
+        `write the exact Pi tool name, e.g. "bash"`;
+    }
+    if (!out.includes(raw)) out.push(raw);
+  }
+  return out;
+}
+
+/**
+ * Validate a `model` frontmatter value.
+ * Accepted: an exact `provider/model` reference (see model-ref.ts), or the
+ * literal `"inherit"` to explicitly use the parent session's model. A bare
+ * alias ("haiku"), missing slash, empty provider/model id, or a non-string
+ * value returns an error message — unlike the configured defaults, an
+ * explicit definition model never falls back silently.
+ */
+export function parseModelField(
+  value: unknown,
+): { value?: string; error?: string } {
+  if (typeof value !== "string" || value.trim() === "") {
+    return { error: "`model` must be a string — an exact `provider/model` reference or `inherit`" };
+  }
+  const trimmed = value.trim();
+  if (trimmed === MODEL_INHERIT) return { value: trimmed };
+  if (!parseModelRef(trimmed)) {
+    return {
+      error: `\`model\` value "${trimmed}" is not an exact \`provider/model\` reference ` +
+        `(e.g. "anthropic/claude-sonnet-4-20250514") or \`inherit\` — bare model ` +
+        `aliases are not supported`,
+    };
+  }
+  return { value: trimmed };
 }
 
 // ─── Scope walking ──────────────────────────────────────────────────────────

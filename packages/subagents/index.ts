@@ -13,10 +13,12 @@ import {
   type CustomTypeDiscovery,
 } from "./discovery.ts";
 import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts";
+import { resolveDefinitionToolset } from "./toolset.ts";
 import { AgentManager, type AgentRecord } from "./manager.ts";
 import {
   resolveTypeDefaultModel,
   resolveDefaultModel,
+  resolveDefinitionModel,
   checkDefaultModelWarnings,
 } from "./model-ref.ts";
 import { resolveTypeThinkingLevel } from "./thinking-level.ts";
@@ -27,6 +29,19 @@ import path from "node:path";
 
 function textResult(text: string, details?: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text }], details: details ?? {} };
+}
+
+/** The parent session's actually active tool names — the availability source
+ *  for custom definitions' `tools` / `disallowedTools`. Returns undefined
+ *  when the boundary cannot report a tool set (test seams), in which case
+ *  only shape-level checks apply. */
+function getActiveToolNamesFrom(pi: ExtensionAPI): string[] | undefined {
+  try {
+    const names = (pi as { getActiveTools?: () => unknown }).getActiveTools?.();
+    return Array.isArray(names) ? names.map(String) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -283,6 +298,7 @@ export default function (pi: ExtensionAPI) {
     renderResult: renderAgentResult,
     parameters: agentParams,
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+      const availableTools = getActiveToolNamesFrom(pi);
       // Re-read custom definitions on every launch: edits and additions apply
       // to subsequent launches; a running Subagent keeps its launch-time
       // definition snapshot.
@@ -301,33 +317,61 @@ export default function (pi: ExtensionAPI) {
       const type = isBuiltin ? resolved.type : resolved.name; // display/record identity
       const agentDef = resolved.kind === "custom" ? discovery.valid.get(resolved.name) : undefined;
 
-      // Resolve model: type-specific override → shared default → parent model.
-      // Each level: unconfigured, invalid syntax, or registry miss → fall through.
-      // Custom definitions cannot carry a model yet (rejected at parse time),
-      // so they resolve shared default → parent model only.
+      // Custom capability selection: allowlist/denials are validated against
+      // the parent session's actual active tool names (availableTools, the
+      // extension boundary). Unknown or unavailable names are rejected —
+      // never silently dropped — and the fixed safety exclusions always win,
+      // so no custom definition can be granted nested delegation or related
+      // bypasses. Built-in explore/general boundaries are unchanged.
+      const customToolset = agentDef
+        ? resolveDefinitionToolset(agentDef, availableTools)
+        : undefined;
+
+      // Resolve model: an explicit definition model sets the run's model and
+      // never falls back silently (invalid or unavailable references fail the
+      // launch). Without one: type-specific override → shared default →
+      // parent model, each falling through when unconfigured, invalid, or
+      // missed in the registry.
       const findModel = (provider: string, modelId: string) =>
         ctx.modelRegistry.find(provider, modelId);
-      const model = isBuiltin
-        ? resolveTypeDefaultModel(
-            {
-              explore: cfg.explore.defaultModel,
-              general: cfg.general.defaultModel,
-            },
-            resolved.type,
-            cfg.defaultModel,
-            findModel,
-            ctx.model,
-          )
-        : resolveDefaultModel(cfg.defaultModel, findModel, ctx.model);
-      // Compute warnings for any configured-but-broken model refs.
-      const modelWarnings = isBuiltin
-        ? checkDefaultModelWarnings(
-            cfg[resolved.type].defaultModel,
-            cfg.defaultModel,
-            findModel,
-            resolved.type,
-          )
-        : checkDefaultModelWarnings(undefined, cfg.defaultModel, findModel, "shared");
+      const defModelRef = !isBuiltin && agentDef?.model !== undefined ? agentDef.model : undefined;
+      let model = defModelRef
+        ? undefined // set below via resolveDefinitionModel
+        : isBuiltin
+          ? resolveTypeDefaultModel(
+              {
+                explore: cfg.explore.defaultModel,
+                general: cfg.general.defaultModel,
+              },
+              resolved.type,
+              cfg.defaultModel,
+              findModel,
+              ctx.model,
+            )
+          : resolveDefaultModel(cfg.defaultModel, findModel, ctx.model);
+      let modelFailure: string | undefined;
+      if (defModelRef) {
+        const resolvedDefModel = resolveDefinitionModel(defModelRef, findModel, ctx.model);
+        if ("error" in resolvedDefModel) modelFailure = resolvedDefModel.error;
+        else model = resolvedDefModel.model;
+      }
+      // Compute warnings for any configured-but-broken model refs. Settings
+      // defaults are warned about only when they are actually consulted: an
+      // explicit definition model does not consult them for this launch.
+      const modelWarnings =
+        modelFailure || defModelRef // settings not consulted for this launch
+          ? []
+          : isBuiltin
+            ? checkDefaultModelWarnings(
+                cfg[resolved.type].defaultModel,
+                cfg.defaultModel,
+                findModel,
+                resolved.type,
+              )
+            : checkDefaultModelWarnings(undefined, cfg.defaultModel, findModel, "shared");
+      if (modelFailure) {
+        throw new Error(`Subagent type "${type}": ${modelFailure}`);
+      }
       // Emit UI toast for each warning when the TUI is active.
       if (modelWarnings.length > 0 && ctx.hasUI) {
         for (const w of modelWarnings) {
@@ -404,6 +448,7 @@ export default function (pi: ExtensionAPI) {
             ? { tools: exploreTools }
             : {}),
           ...(isBuiltin ? { excludeExtraTools: cfg.general.excludeExtraTools } : {}),
+          ...(!isBuiltin && customToolset ? { ...customToolset } : {}),
           onStreamEvent,
           abortSignal: background ? undefined : ctx.signal,
         });

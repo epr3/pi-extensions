@@ -176,15 +176,15 @@ describe("definitions are re-read on subsequent launches", () => {
 // ─── Field and type rejection at the launch boundary ────────────────────────
 
 describe("unsupported fields are rejected at the launch boundary", () => {
-  for (const field of ["tools", "disallowedTools", "model", "skills"]) {
-    it(`rejects a ${field} field without launching a session`, async () => {
-      projectAgent("scoped.md", withField("scoped", `${field}: whatever`));
-      const agent = registerAgent();
+  // tools / disallowedTools / model are implemented from ticket 0010 on and
+  // are exercised in custom-tools-model.test.ts; `skills` remains unimplemented.
+  it("rejects a skills field without launching a session", async () => {
+    projectAgent("scoped.md", withField("scoped", "skills: whatever"));
+    const agent = registerAgent();
 
-      await expect(callAgent(agent, "scoped")).rejects.toThrow(new RegExp(field));
-      expect(runSubagentMock).not.toHaveBeenCalled();
-    });
-  }
+    await expect(callAgent(agent, "scoped")).rejects.toThrow(/skills/);
+    expect(runSubagentMock).not.toHaveBeenCalled();
+  });
 
   it("rejects unknown fields", async () => {
     projectAgent("mystery.md", withField("mystery", "mystery_field: 1"));
@@ -212,11 +212,11 @@ describe("unknown, shadowed, and reserved names at the boundary", () => {
   });
 
   it("a name shadowed by an invalid nearer definition fails with its path", async () => {
-    projectAgent("shadowed.md", withField("shadowed", "tools:\n  - read"));
+    projectAgent("shadowed.md", withField("shadowed", "mystery: true"));
     userAgent("shadowed.md", basic("shadowed", "User definition"));
     const agent = registerAgent();
 
-    await expect(callAgent(agent, "shadowed")).rejects.toThrow(/tools/);
+    await expect(callAgent(agent, "shadowed")).rejects.toThrow(/mystery/);
     await expect(callAgent(agent, "shadowed")).rejects.toThrow(/shadowed\.md/);
     expect(runSubagentMock).not.toHaveBeenCalled();
   });
