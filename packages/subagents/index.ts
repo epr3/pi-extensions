@@ -234,7 +234,7 @@ export function renderAgentResult(
   const label = (name: string) => theme.fg("muted", name);
   const output = theme.fg("toolOutput", contentText);
   if (!options.expanded) {
-    return new SubagentCardBody(theme, `${head}\n\n${label("Result")}\n${output}`);
+    return new SubagentCardBody(theme, head);
   }
   const omitted = details.streamOmitted ?? 0;
   const activity = details.streamEntries?.length
@@ -573,7 +573,7 @@ export default function (pi: ExtensionAPI) {
     label: "Subagent",
     description:
       "Launch a Subagent in an isolated session to keep the main context clean. " +
-      "subagent_type='explore' is read-only codebase discovery (read/grep/find/ls); 'general' has full tools. " +
+      "subagent_type='explore' is read-only codebase discovery (read/grep/find/ls plus codemode); 'general' has full tools. " +
       "Foreground (default) blocks and returns the result; run_in_background:true returns an id you " +
       "poll with get_subagent_result.",
     promptSnippet: "Run a Subagent in an isolated context",

@@ -101,7 +101,7 @@ _Avoid_: Cross-branch sync, global outcome, sibling completion.
 - **Subagent** has exactly one **Subagent type**.
 - **Subagent run** records one **Subagent** execution.
 - **Subagent stream** belongs to exactly one foreground **Subagent run** and does not become parent LLM context.
-- **Subagent status card** renders the **Subagent stream** as the **Compact run row** (collapsed) and the **Activity tail** (expanded), with stable identity in both.
+- **Subagent status card** renders the **Subagent stream** as the **Compact run row** (collapsed: status/stats only) and the **Activity tail** plus authoritative **Result** (expanded), with stable identity in both.
 - Status words, tool markers, and omission indicators are plain text — meaning never rides on color or symbols alone, and wrapping preserves the **Compact run row**, the **Activity tail**'s states, and every run id.
 - A background **Subagent run** departure leaves a **Launch receipt** on its launch row; the associated **Attributed completion** names the same run id and is the authoritative visible outcome, while a best-effort live row update, if ever used, is not durable or cross-mode.
 - **Same-turn fan-out** creates independent sibling **Subagent runs**, each with its own task prompt, description, stream, result, and failure status.

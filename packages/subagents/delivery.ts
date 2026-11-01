@@ -271,6 +271,11 @@ export function renderOutcomeMessage(
     return new Text(theme.fg("toolOutput", text), options.outputPad, 0);
   }
   const head = outcomeHeadline(message);
+  // The card title carries identity in the compact view; expansion reveals the
+  // authoritative body under the same headline, so collapse actually collapses.
+  if (!options.expanded) {
+    return new SubagentCard(theme, theme.fg("toolTitle", theme.bold("Subagent outcome")), head);
+  }
   // The stored content repeats the attribution line before the body. Keep
   // the authoritative body in the card and let the bordered headline carry
   // the identity, so the completion reads as one result card.

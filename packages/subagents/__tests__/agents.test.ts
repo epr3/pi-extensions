@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   AGENTS,
   CORE_READ_TOOLS,
+  DEFAULT_EXPLORE_TOOLS,
   SAFETY_EXCLUDES,
   exploreToolset,
   resolveAgentType,
@@ -30,16 +31,22 @@ describe("CORE_READ_TOOLS", () => {
   it("does not include web tools", () => {
     expect(CORE_READ_TOOLS).not.toContain("web_search");
     expect(CORE_READ_TOOLS).not.toContain("web_fetch");
+    expect(CORE_READ_TOOLS).not.toContain("codemode");
+  });
+});
+
+describe("DEFAULT_EXPLORE_TOOLS", () => {
+  it("adds codemode to the core read tools", () => {
+    expect(DEFAULT_EXPLORE_TOOLS).toEqual([...CORE_READ_TOOLS, "codemode"]);
   });
 });
 
 describe("exploreToolset()", () => {
-  it("returns core read tools by default", () => {
+  it("returns core read tools and codemode by default", () => {
     const tools = exploreToolset([]);
-    expect(tools).toContain("read");
-    expect(tools).toContain("grep");
-    expect(tools).toContain("find");
-    expect(tools).toContain("ls");
+    for (const tool of ["read", "grep", "find", "ls", "codemode"]) {
+      expect(tools).toContain(tool);
+    }
   });
 
   it("does not include web tools by default", () => {
@@ -73,6 +80,11 @@ describe("explore prompt", () => {
   it("does not mention web tools", () => {
     expect(prompt).not.toContain("web_search");
     expect(prompt).not.toContain("web_fetch");
+  });
+
+  it("mentions codemode as an allowlist-only batching tool", () => {
+    expect(prompt).toContain("codemode");
+    expect(prompt).toContain("allowlist");
   });
 });
 

@@ -4,10 +4,10 @@ Adds two subagent types for context hygiene. The `Agent` tool surface follows th
 
 ## Agent types
 
-| Type      | Tools                                                                                                                                   | Read-only | Use                                                            |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------- | -------------------------------------------------------------- |
-| `explore` | read, grep, find, ls by default; **extra read-only tools are granted in settings** (the shipped `settings.json` grants the `lsp_*` set) | yes       | codebase discovery — the suite's default for context-gathering |
-| `general` | everything discovered: all built-ins **and all installed extension tools** (lsp, todo, …), minus the exclusions below                   | no        | off-context work that writes (e.g. parallel interface designs) |
+| Type      | Tools                                                                                                                                                 | Read-only | Use                                                            |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | -------------------------------------------------------------- |
+| `explore` | read, grep, find, ls, and codemode by default; **extra read-only tools are granted in settings** (the shipped `settings.json` grants the `lsp_*` set) | yes       | codebase discovery — the suite's default for context-gathering |
+| `general` | everything discovered: all built-ins **and all installed extension tools** (lsp, todo, …), minus the exclusions below                                 | no        | off-context work that writes (e.g. parallel interface designs) |
 
 No Claude-style `plan` or `general-purpose` built-ins — the package's built-ins are exactly `explore` and `general` — no steering, no resume, no nested delegation; all deliberately omitted. Custom Subagent types are supported via `.pi/agents` definition files (see below). **External web research** is also deliberately outside this package: the parent Pi coding agent uses web Extension tools such as `web_search` and `web_fetch` directly, not through a built-in Subagent type.
 
@@ -208,7 +208,7 @@ skills' complete instructions are preloaded into your initial context.
 The sub-session uses the same resource loader as the parent, so it discovers every installed extension. The two types then differ in how tools reach the model:
 
 - **`general` needs nothing** — it passes no allowlist, so any extension you install (lsp, todo, a future one) is available to it automatically. The only subtractions are the safety exclusions: `Agent`, `get_subagent_result`, `stop_subagent`, `question`.
-- **`explore` is an allowlist by design** — that's what makes its read-only property structural rather than promised. `explore` holds the core read tools (plus `subagents.explore.extraTools` / `PI_SUBAGENT_EXPLORE_TOOLS`). Only ever grant **read-only** tools — anything that writes or executes belongs to `general`. Take tools away from `general` with `subagents.general.excludeExtraTools`; the safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`) are fixed and not configurable.
+- **`explore` is an allowlist by design** — that's what makes its read-only property structural rather than promised. `explore` holds the core read tools plus codemode (for batching/filtering those calls), and `subagents.explore.extraTools` / `PI_SUBAGENT_EXPLORE_TOOLS` adds more. Only ever grant **read-only** tools — anything that writes or executes belongs to `general`. Take tools away from `general` with `subagents.general.excludeExtraTools`; the safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`) are fixed and not configurable.
 
 **One level deep, enforced:** sub-sessions are created with `excludeTools: ["Agent", "get_subagent_result", "stop_subagent", "question"]`, so a subagent cannot recursively spawn subagents (the resource loader would otherwise hand it this very extension), retrieve or stop runs, or block on a question no user will see. Foreground runs return their result inline; background settles deliver one attributed completion message (see [Background outcome delivery](#background-outcome-delivery)).
 
@@ -320,11 +320,12 @@ delivery:
   indistinguishable from a run that never showed a completion.
 
 - The completion renders through a message renderer registered for the
-  `subagent-outcome` custom type as a bordered result card. Its headline names
-  the run (`Subagent outcome — general "task" [run sa_x] — completed`) with
-  tool/token stats; the body carries the authoritative content — the bounded
-  result, or the clearly marked partial output, or the explicit no-partial
-  statement. Failed/stopped headlines also carry the reason.
+  `subagent-outcome` custom type as a bordered result card. Its collapsed
+  headline names the run and its tool/token stats
+  (`Subagent outcome — general "task" [run sa_x] — completed`); expanding the
+  same card reveals the authoritative body — the bounded result, or the clearly
+  marked partial output, or the explicit no-partial statement. Failed/stopped
+  headlines also carry the reason.
 
 ## Run presentation
 
@@ -354,12 +355,13 @@ expanded activity tail for inspection, and distinct outcome rows.
   also stated in words, and all of it is plain text that wraps, so identity and
   status survive narrow terminals.
 - Outcomes of completed foreground runs render inline in the same card:
-  `✓ completed · N tool uses · N tok`, then `Activity` (on expansion) and
-  `Result`. A failed foreground run surfaces its error — reason included —
-  distinctly from a completed answer; a parent-cancelled foreground run stops
-  leaking updates and its partial text follows the same partial/missing-output
-  contract as background stops. Keeping the conversation legible is the point:
-  there is deliberately no aggregate dashboard and no row-specific stop button.
+  collapsed shows `✓ completed · N tool uses · N tok`; expanding adds
+  `Activity` and `Result`. A failed foreground run surfaces its error — reason
+  included — distinctly from a completed answer; a parent-cancelled foreground
+  run stops leaking updates and its partial text follows the same
+  partial/missing-output contract as background stops. Keeping the conversation
+  legible is the point: there is deliberately no aggregate dashboard and no
+  row-specific stop button.
 
 ### Expanded activity tail (per run)
 

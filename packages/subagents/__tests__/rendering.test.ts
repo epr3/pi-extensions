@@ -120,12 +120,26 @@ describe("renderAgentCall", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderAgentResult — final", () => {
-  it("renders the result card with the clean answer and compact activity markers", () => {
+  it("collapsed: only the status/stats row, with the result behind expansion", () => {
     const result = {
       content: [{ type: "text" as const, text: "Clean final answer." }],
       details: { agent_id: "sa_abc", status: "completed", tokens: 10, toolUses: 1 },
     };
     const text = renderResultText(result, { expanded: false, isPartial: false });
+    expect(text).toContain("completed");
+    expect(text).toContain("1 tool use");
+    expect(text).not.toContain("Result");
+    expect(text).not.toContain("Clean final answer.");
+    expect(text).not.toContain("▶");
+    expect(text).not.toContain("streamText");
+  });
+
+  it("expanded: the clean answer under Result, with no activity markers", () => {
+    const result = {
+      content: [{ type: "text" as const, text: "Clean final answer." }],
+      details: { agent_id: "sa_abc", status: "completed", tokens: 10, toolUses: 1 },
+    };
+    const text = renderResultText(result, { expanded: true, isPartial: false });
     expect(text).toContain("Clean final answer.");
     expect(text).toContain("Result");
     expect(text).toContain("1 tool use");
@@ -151,8 +165,9 @@ describe("renderAgentResult — final", () => {
       },
     };
     const text = renderResultText(result, { expanded: false, isPartial: false });
-    expect(text).toContain("Clean answer.");
-    expect(text).toContain("Result");
+    expect(text).toContain("completed");
+    expect(text).not.toContain("Clean answer.");
+    expect(text).not.toContain("Result");
     expect(text).not.toContain("▶");
     expect(text).not.toContain("✗");
     expect(text).not.toContain("leaked stream");
@@ -170,7 +185,7 @@ describe("renderAgentResult — final", () => {
         content: [{ type: "text" as const, text: answer }],
         details: { agent_id: "sa_x", status: "completed" as const, tokens: 1, toolUses: 0 },
       };
-      const rendered = renderResultText(result, { expanded: false, isPartial: false });
+      const rendered = renderResultText(result, { expanded: true, isPartial: false });
       expect(rendered).toContain(answer);
       expect(rendered).toContain("Result");
       expect(rendered).not.toContain("▶");

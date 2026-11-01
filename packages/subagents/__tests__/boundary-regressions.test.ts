@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import type { Model } from "@earendil-works/pi-ai";
 import { AgentManager, type AgentRecord } from "../manager.ts";
 import { checkDefaultModelWarnings } from "../model-ref.ts";
-import { CORE_READ_TOOLS, SAFETY_EXCLUDES, exploreToolset } from "../agents.ts";
+import {
+  CORE_READ_TOOLS,
+  DEFAULT_EXPLORE_TOOLS,
+  SAFETY_EXCLUDES,
+  exploreToolset,
+} from "../agents.ts";
 import { formatExpandedStream } from "../index.ts";
 import type { StreamEvent, StreamCallback } from "../runner.ts";
 import type { StreamEntry } from "../index.ts";
@@ -332,10 +337,14 @@ describe("foreground final return shape", () => {
 // ---------------------------------------------------------------------------
 
 describe("read-only and safety boundaries", () => {
-  it("explore toolset unchanged", () => {
-    expect(exploreToolset([])).toEqual(CORE_READ_TOOLS);
-    expect(exploreToolset(["lsp_definition"])).toEqual([...CORE_READ_TOOLS, "lsp_definition"]);
-    expect(exploreToolset(["read"])).toEqual(CORE_READ_TOOLS);
+  it("explore toolset adds codemode and configured extras", () => {
+    expect(exploreToolset([])).toEqual(DEFAULT_EXPLORE_TOOLS);
+    expect(exploreToolset(["lsp_definition"])).toEqual([
+      ...DEFAULT_EXPLORE_TOOLS,
+      "lsp_definition",
+    ]);
+    expect(exploreToolset(["read"])).toEqual(DEFAULT_EXPLORE_TOOLS);
+    expect(exploreToolset([])).toEqual([...CORE_READ_TOOLS, "codemode"]);
   });
 
   it("safety excludes the delegation, retrieval, and stop tools", () => {

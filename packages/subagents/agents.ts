@@ -19,6 +19,11 @@ import type { CustomTypeDiscovery } from "./discovery.ts";
 /** Read-only built-ins — the floor of the explore toolset. */
 export const CORE_READ_TOOLS = ["read", "grep", "find", "ls"];
 
+/** Default explore toolset: core reads plus codemode, which lets the model batch
+ *  and filter calls to the tools active in the child session. codemode is not
+ *  itself read-only, so the allowlist still has to keep write/execute tools out. */
+export const DEFAULT_EXPLORE_TOOLS = [...CORE_READ_TOOLS, "codemode"];
+
 /** Always excluded from sub-sessions: no recursion, no stopping, and no
  *  questions without a user — only the parent launches, retrieves, stops. */
 export const SAFETY_EXCLUDES = ["Agent", "get_subagent_result", "stop_subagent", "question"];
@@ -32,7 +37,7 @@ export function exploreToolset(
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  return [...new Set([...CORE_READ_TOOLS, ...extraTools, ...envExtra])];
+  return [...new Set([...DEFAULT_EXPLORE_TOOLS, ...extraTools, ...envExtra])];
 }
 
 export interface AgentDef {
@@ -47,13 +52,14 @@ export const AGENTS: Record<AgentType, AgentDef> = {
     readOnly: true,
     systemPrompt:
       "You are a read-only exploration sub-agent. Investigate the assigned question using only " +
-      "your read-only tools: read, grep, find, ls, plus any additional read-only tools you have " +
-      "been granted (e.g. lsp_definition, lsp_references, lsp_hover, lsp_document_symbols, " +
-      "lsp_diagnostics). When the lsp_* tools are present, prefer them over grep for typed " +
-      "languages: they answer definition/reference questions precisely. You cannot edit, write, " +
-      "or run commands. Return the relevant file paths with a one-line summary each, then the " +
-      "answer to the question. Cap any raw quoted code at ~30 lines and summarize the rest. Do " +
-      "not attempt to spawn further sub-agents.",
+      "your read-only tools: read, grep, find, ls, plus codemode for batching/filtering those " +
+      "calls and any additional read-only tools you have been granted (e.g. lsp_definition, " +
+      "lsp_references, lsp_hover, lsp_document_symbols, lsp_diagnostics). When the lsp_* tools are " +
+      "present, prefer them over grep for typed languages: they answer definition/reference " +
+      "questions precisely. Use codemode only to call tools inside this allowlist. You cannot " +
+      "edit, write, or run commands. Return the relevant file paths with a one-line summary each, " +
+      "then the answer to the question. Cap any raw quoted code at ~30 lines and summarize the " +
+      "rest. Do not attempt to spawn further sub-agents.",
     description: "Read-only codebase discovery",
   },
   general: {

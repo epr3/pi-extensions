@@ -473,10 +473,10 @@ describe("renderOutcomeMessage — authoritative attributed completion", () => {
     expect(text).toContain("completed");
     expect(text).toContain("2 tool uses");
     expect(text).toContain("4 tok");
-    expect(text).toContain("the bounded answer");
+    expect(text).not.toContain("the bounded answer");
   });
 
-  it("shows the authoritative result body in the completion card", () => {
+  it("expands the authoritative result body behind the headline", () => {
     const msg = outcomeMessage({
       ...base,
       status: "completed",
@@ -486,7 +486,7 @@ describe("renderOutcomeMessage — authoritative attributed completion", () => {
       toolUses: 2,
     });
     const compact = renderOutcome(msg, false);
-    expect(compact).toContain("the bounded answer body");
+    expect(compact).not.toContain("the bounded answer body");
     const expanded = renderOutcome(msg, true);
     expect(expanded).toContain("the bounded answer body");
     expect(expanded).toContain("sa_1_out");
@@ -670,7 +670,7 @@ describe("extension registration — subagent-outcome message renderer", () => {
     const expandedText = expanded.render(80).join("\n");
     expect(compactText).toContain("general");
     expect(compactText).toContain("sa_5_rr");
-    expect(compactText).toContain("schema wired");
+    expect(compactText).not.toContain("schema wired");
     expect(expandedText).toContain("schema wired");
   });
 });
