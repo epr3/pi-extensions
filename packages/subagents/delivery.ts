@@ -51,10 +51,11 @@ export function modeDeliveryDiagnostic(mode?: string): string | undefined {
 /**
  * The parent-facing partial-output block for stopped/failed runs: assistant
  * text clearly marked incomplete, or an explicit statement that none is
- * available. Shared by explicit retrieval and automatic completions so both
- * use identical wording.
+ * available. Shared by explicit retrieval, automatic completions, stop
+ * responses, and foreground failure errors so all use identical wording.
+ * Takes any record-shaped value — only `partialText` is read.
  */
-export function partialOutputBlock(rec: AgentRecord): string {
+export function partialOutputBlock(rec: { partialText?: string }): string {
   return rec.partialText
     ? `\n\nPartial assistant output (incomplete):\n${rec.partialText}`
     : "\n\nNo partial assistant output is available.";

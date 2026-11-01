@@ -578,6 +578,45 @@ describe("extension wiring — foreground interruption preserved, background abo
     await expect(call).rejects.toThrow(/Subagent failed: Subagent aborted/);
   });
 
+  it("a foreground failure carries any captured partial assistant text, marked incomplete", async () => {
+    const agent = toolsRef!.get("Agent")!;
+    runSubagentMock.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          const err = new Error("Model stream failed");
+          (err as any).partialText = "half-written answer";
+          reject(err);
+        }),
+    );
+    const call = agent.execute(
+      "call-2",
+      { subagent_type: "general", prompt: "work", description: "task" },
+      undefined,
+      undefined,
+      fakeCtx(),
+    );
+    await expect(call).rejects.toThrow(/Subagent failed: Model stream failed/);
+    // Shared wording: the partial text is clearly marked incomplete, and an
+    // absent partial is stated explicitly rather than left ambiguous.
+    await expect(call).rejects.toThrow(
+      new RegExp("Partial assistant output \\(incomplete\\):\nhalf-written answer", "s"),
+    );
+  });
+
+  it("a foreground failure without partial output says none is available", async () => {
+    const agent = toolsRef!.get("Agent")!;
+    runSubagentMock.mockImplementation(() => Promise.reject(new Error("boom before any text")));
+    const call = agent.execute(
+      "call-3",
+      { subagent_type: "general", prompt: "work", description: "task" },
+      undefined,
+      undefined,
+      fakeCtx(),
+    );
+    await expect(call).rejects.toThrow(/failed: boom before any text/);
+    await expect(call).rejects.toThrow(/No partial assistant output is available\./);
+  });
+
   it("gives background runs an abort signal stop_subagent can fire", async () => {
     const observed: Array<AbortSignal | undefined> = [];
     await launchBackground((opts: any) => {

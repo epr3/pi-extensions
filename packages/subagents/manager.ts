@@ -11,7 +11,10 @@ import { appendTruncationNotice } from "./result-limit.ts";
 export type Status = "queued" | "running" | "completed" | "failed" | "stopped";
 
 /** Terminal states: once a run reaches one, no later stop may change it. */
-export function isTerminalStatus(status: Status): boolean {
+export type TerminalStatus = "completed" | "failed" | "stopped";
+
+/** Type predicate — narrows a Status to its terminal members. */
+export function isTerminalStatus(status: Status): status is TerminalStatus {
   return status === "completed" || status === "failed" || status === "stopped";
 }
 

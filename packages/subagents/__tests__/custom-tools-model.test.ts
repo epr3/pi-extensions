@@ -177,7 +177,7 @@ describe("custom Subagent tool allowlists", () => {
     );
     const agent = registerAgent();
 
-    await expect(callAgent(agent, "hollow")).rejects.toThrow(/no tools/si);
+    await expect(callAgent(agent, "hollow")).rejects.toThrow(/no tools/is);
     expect(runSubagentMock).not.toHaveBeenCalled();
   });
 
@@ -185,7 +185,7 @@ describe("custom Subagent tool allowlists", () => {
     projectAgent("empty.md", `---\nname: empty\ndescription: D\ntools: []\n---\nBody.\n`);
     const agent = registerAgent();
 
-    await expect(callAgent(agent, "empty")).rejects.toThrow(/no tools/si);
+    await expect(callAgent(agent, "empty")).rejects.toThrow(/no tools/is);
     expect(runSubagentMock).not.toHaveBeenCalled();
   });
 
@@ -213,14 +213,8 @@ describe("custom Subagent tool allowlists", () => {
   });
 
   it("wildcard and colon patterns are rejected like scoped patterns", async () => {
-    projectAgent(
-      "wildcard.md",
-      `---\nname: wildcard\ndescription: D\ntools: Edit:*\n---\nBody.\n`,
-    );
-    projectAgent(
-      "star.md",
-      `---\nname: star\ndescription: D\ntools:\n  - Edit*\n---\nBody.\n`,
-    );
+    projectAgent("wildcard.md", `---\nname: wildcard\ndescription: D\ntools: Edit:*\n---\nBody.\n`);
+    projectAgent("star.md", `---\nname: star\ndescription: D\ntools:\n  - Edit*\n---\nBody.\n`);
     const agent = registerAgent();
 
     await expect(callAgent(agent, "wildcard")).rejects.toThrow(/Edit:\*/);
@@ -281,7 +275,7 @@ describe("custom Subagent disallowedTools", () => {
     );
     const agent = registerAgent();
 
-    await expect(callAgent(agent, "stalled")).rejects.toThrow(/no tools/si);
+    await expect(callAgent(agent, "stalled")).rejects.toThrow(/no tools/is);
     expect(runSubagentMock).not.toHaveBeenCalled();
   });
 
@@ -319,10 +313,7 @@ describe("custom Subagent definition model", () => {
 
   it("`inherit` explicitly selects the parent model even when defaults are configured", async () => {
     projectSettings({ defaultModel: "google/gemini-2.0" });
-    projectAgent(
-      "inherit.md",
-      `---\nname: inherit\ndescription: D\nmodel: inherit\n---\nBody.\n`,
-    );
+    projectAgent("inherit.md", `---\nname: inherit\ndescription: D\nmodel: inherit\n---\nBody.\n`);
     const agent = registerAgent();
 
     await callAgent(agent, "inherit", parentCtx);

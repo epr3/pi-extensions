@@ -425,6 +425,10 @@ describe("background launch receipt", () => {
     )) as any;
     const text = res.content[0].text as string;
     expect(res.details.agent_id).toBeTypeOf("string");
+    // Structured receipt identity rides in details (dual result contract):
+    // type and description duplicate no display-text parsing.
+    expect(res.details.type).toBe("general");
+    expect(res.details.description).toBe("long task");
     expect(text).toContain("general");
     expect(text).toContain("long task");
     expect(text).toContain(res.details.agent_id);

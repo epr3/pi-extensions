@@ -46,7 +46,12 @@ function buildSessionWithOutcome() {
     toolCallId: "c1",
     toolName: "Agent",
     content: [{ type: "text", text: RECEIPT_TEXT }],
-    details: { agent_id: "sa_1_ab", status: "queued" },
+    details: {
+      agent_id: "sa_1_ab",
+      type: "general",
+      description: "refactor the parser",
+      status: "queued",
+    },
   } as unknown as any);
   // 2. Terminal outcome settles → persistence appends the record entry.
   sm.appendCustomEntry(OUTCOME_RECORD_TYPE, RECORD);
@@ -68,6 +73,7 @@ describe("branch-local revisit over Pi's real session APIs", () => {
     const runs = reconstructBranchRuns(sm.getBranch());
     expect(runs).toHaveLength(1);
     expect(runs[0].receipt?.runId).toBe("sa_1_ab");
+    expect(runs[0].receipt?.type).toBe("general");
     expect(runs[0].record?.status).toBe("completed");
     expect(runs[0].record?.result).toBe("the answer");
     expect(runs[0].delivered).toBe(true);

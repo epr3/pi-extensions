@@ -181,7 +181,10 @@ export function resolveDefinitionModel(
   if (ref === MODEL_INHERIT) {
     return parentModel
       ? { model: parentModel }
-      : { error: "`model: inherit` explicitly requests the parent model, but this session has no model — launch the Subagent from a session with an active model" };
+      : {
+          error:
+            "`model: inherit` explicitly requests the parent model, but this session has no model — launch the Subagent from a session with an active model",
+        };
   }
   const parsed = parseModelRef(ref);
   if (!parsed) return { error: `model "${ref}" is not an exact \`provider/model\` reference` };

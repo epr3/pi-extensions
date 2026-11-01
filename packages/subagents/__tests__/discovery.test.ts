@@ -3,7 +3,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { discoverCustomSubagents, customSubagentScopes, validNames } from "../discovery.ts";
+import {
+  discoverCustomSubagents,
+  customSubagentScopes,
+  validNames,
+  parseToolListField,
+} from "../discovery.ts";
 import type { CustomTypeDiscovery } from "../discovery.ts";
 
 // ─── Fixture plumbing ───────────────────────────────────────────────────────
@@ -326,6 +331,37 @@ describe("scope precedence", () => {
     expect(shadowed).toBeDefined();
     expect(shadowed!.name).toBe("shadowed");
     expect(shadowed!.message).toMatch(/broken\.md/);
+  });
+
+  it("the shadow diagnostic cites the nearest lower-priority valid definition", () => {
+    const near = dir("shadow-near", ".pi", "agents");
+    const mid = dir("shadow-mid", ".pi", "agents");
+    const far = dir("shadow-far", ".pi", "agents");
+    def(near, "broken.md", "---\nname: dup\ndescription: D\nmystery_field: oops\n---\nBody.\n");
+    def(mid, "dup.md", basic("dup", "Nearest shadowed definition"));
+    def(far, "dup.md", basic("dup", "Farther shadowed definition"));
+
+    const d = discoverCustomSubagents([near, mid, far]);
+    expect(d.valid.has("dup")).toBe(false);
+    const shadowed = d.diagnostics.find((x) => x.kind === "shadowed");
+    expect(shadowed).toBeDefined();
+    // The one actually shadowed is the nearest usable definition below the
+    // invalid winner, not the farthest one that happens to match the name.
+    expect(shadowed!.message).toMatch(/shadow-mid[^ ]*dup\.md/);
+    expect(shadowed!.message).not.toMatch(/shadow-far/);
+  });
+
+  it("parseToolListField returns the shared discriminated result shape", () => {
+    // Same { value?, error? } shape as parseModelField — no error-as-string
+    // overloading of the return value.
+    expect(parseToolListField(["read", "bash"], "tools")).toEqual({ value: ["read", "bash"] });
+    expect(parseToolListField("read, bash", "tools")).toEqual({ value: ["read", "bash"] });
+    expect(parseToolListField("Read:*", "tools")).toEqual({
+      error: expect.stringMatching(/scoped patterns/),
+    });
+    expect(parseToolListField(42, "disallowedTools")).toEqual({
+      error: expect.stringMatching(/YAML list/),
+    });
   });
 
   it("conflicting same-name definitions in one scope invalidate the name with both paths diagnosed", () => {

@@ -573,20 +573,18 @@ describe("extension wiring — mode diagnostics on background launches", () => {
       ["tui", false],
       ["rpc", true],
     ] as const) {
-      const res = (await seam.tools
-        .get("Agent")!
-        .execute(
-          "call-x",
-          {
-            subagent_type: "general",
-            prompt: "work",
-            description: "task",
-            run_in_background: true,
-          },
-          undefined,
-          undefined,
-          fakeCtx({ mode, hasUI }),
-        )) as any;
+      const res = (await seam.tools.get("Agent")!.execute(
+        "call-x",
+        {
+          subagent_type: "general",
+          prompt: "work",
+          description: "task",
+          run_in_background: true,
+        },
+        undefined,
+        undefined,
+        fakeCtx({ mode, hasUI }),
+      )) as any;
       expect(res.details.delivery).toBeUndefined();
       expect(String(res.content[0].text)).not.toMatch(/not promised|cannot/i);
       await seam.tools
@@ -619,20 +617,18 @@ describe("extension wiring — session shutdown stops runs and never delivers", 
     fire("session_shutdown", { type: "session_shutdown", reason: "new" });
     runSubagentMock.mockImplementation(async () => ({ result: "r", tokens: 1, toolUses: 0 }));
     await expect(
-      seam.tools
-        .get("Agent")!
-        .execute(
-          "call-1",
-          {
-            subagent_type: "general",
-            prompt: "work",
-            description: "task",
-            run_in_background: true,
-          },
-          undefined,
-          undefined,
-          fakeCtx(),
-        ),
+      seam.tools.get("Agent")!.execute(
+        "call-1",
+        {
+          subagent_type: "general",
+          prompt: "work",
+          description: "task",
+          run_in_background: true,
+        },
+        undefined,
+        undefined,
+        fakeCtx(),
+      ),
     ).rejects.toThrow(/shutdown|replacement/i);
     expect(seam.sends).toHaveLength(0);
   });

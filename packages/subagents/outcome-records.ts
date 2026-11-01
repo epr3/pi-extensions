@@ -5,6 +5,7 @@ import { isTerminalStatus } from "./manager.ts";
 import type { ActivitySnapshot } from "./activity.ts";
 import type { StreamEntry } from "./activity.ts";
 import { isStaleContextError, OUTCOME_MESSAGE_TYPE, partialOutputBlock } from "./delivery.ts";
+import type { TerminalStatus } from "./manager.ts";
 
 /**
  * Persisted background outcomes for session revisit (ticket 0016).
@@ -27,8 +28,9 @@ import { isStaleContextError, OUTCOME_MESSAGE_TYPE, partialOutputBlock } from ".
 /** Session custom-entry type for persisted terminal background outcomes. */
 export const OUTCOME_RECORD_TYPE = "subagent-outcome-record";
 
-/** The terminal statuses used in persisted records. */
-export type PersistedStatus = "completed" | "failed" | "stopped";
+/** The terminal statuses used in persisted records — the manager's terminal
+ *  members of the Status union. */
+export type PersistedStatus = TerminalStatus;
 
 /**
  * The persisted record for one terminal background outcome. Shaped for
@@ -75,14 +77,13 @@ export function buildOutcomeRecord(rec: AgentRecord, activity: ActivitySnapshot)
     throw new Error(`Run ${rec.id} is ${rec.status}; only terminal outcomes are persisted.`);
   }
   const { entries, omitted } = activity;
-  // Terminal checked above; isTerminalStatus has no type predicate over the
-  // Status union, so the narrowing is stated explicitly here.
-  const persistedStatus = rec.status as PersistedStatus;
+  // Terminal checked above; isTerminalStatus is a type predicate, so
+  // rec.status is already narrowed here.
   return {
     runId: rec.id,
     type: rec.type,
     description: rec.description,
-    status: persistedStatus,
+    status: rec.status,
     ...(rec.status === "completed" && rec.result !== undefined ? { result: rec.result } : {}),
     ...(rec.error ? { error: rec.error } : {}),
     ...(rec.stopReason ? { stopReason: rec.stopReason } : {}),
@@ -120,19 +121,26 @@ export interface BranchRunView {
 
 type TerminalToolResult = ToolResultMessage<{ agent_id?: unknown }>;
 
-/** Pull the run identity out of a persisted Agent tool result (the receipt). */
+/** The launch receipt's structured fields as the Agent launch result writes
+ *  them: run id plus the type/description identity (dual result contract). */
+interface ReceiptDetails {
+  agent_id?: unknown;
+  type?: unknown;
+  description?: unknown;
+}
+
+/** Pull the run identity out of a persisted Agent tool result (the receipt).
+ *  Reads the structured identity the launch result carries in `details` —
+ *  never the row's display text. Details without type/description (legacy or
+ *  hand-built history) degrade to "(unknown type)" / empty rather than being
+ *  guessed; the run stays keyed by its agent_id either way. */
 function receiptFromToolResult(message: ToolResultMessage): LaunchReceiptView | undefined {
-  const details = (message.details ?? {}) as { agent_id?: unknown };
+  const details = (message.details ?? {}) as ReceiptDetails;
   if (typeof details.agent_id !== "string" || !details.agent_id) return undefined;
-  const text = message.content
-    .filter((c): c is { type: "text"; text: string } => c?.type === "text" && !!c.text)
-    .map((c) => c.text)
-    .join("\n");
-  const m = text.match(/^Started background Subagent \u2014 (\S+) "(.*)" \[run ([^\]]+)\]/);
   return {
     runId: details.agent_id,
-    type: m?.[1] ?? "(unknown type)",
-    description: m?.[2] ?? "",
+    type: typeof details.type === "string" && details.type ? details.type : "(unknown type)",
+    description: typeof details.description === "string" ? details.description : "",
   };
 }
 
@@ -286,7 +294,7 @@ export function reconstructedRetrievalText(view: BranchRunView): string {
   const body =
     rec.status === "completed"
       ? (rec.result ?? "(no output)")
-      : partialOutputBlock({ partialText: rec.partialText } as AgentRecord);
+      : partialOutputBlock({ partialText: rec.partialText });
   const omitted = rec.activityOmitted;
   const activityNote =
     rec.activity.length || omitted
@@ -304,7 +312,7 @@ export interface PersistenceDiagnostic {
 
 /**
  * Persists terminal background outcomes as append-only session entries.
- *Bound to the originating session like delivery, but distinct from it:
+ * Bound to the originating session like delivery, but distinct from it:
  * delivery may be withheld (busy queue cleared, mode, owner gone) while the
  * outcome still persists — and vice versa a crash can prevent the write.
  */

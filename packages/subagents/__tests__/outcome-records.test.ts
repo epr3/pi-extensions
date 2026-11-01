@@ -234,7 +234,7 @@ function makeEntry(e: TestEntry): SessionEntry {
   } as SessionEntry;
 }
 
-function receiptEntry(text: string, runId: string) {
+function receiptEntry(text: string, runId: string, type?: string, description?: string) {
   return makeEntry({
     type: "message",
     message: {
@@ -242,7 +242,12 @@ function receiptEntry(text: string, runId: string) {
       toolCallId: `c${entrySeq}`,
       toolName: "Agent",
       content: [{ type: "text", text }],
-      details: { agent_id: runId, status: "queued" },
+      details: {
+        agent_id: runId,
+        status: "queued",
+        ...(type ? { type } : {}),
+        ...(description ? { description } : {}),
+      },
     } as unknown as ToolResultMessage,
   });
 }
@@ -283,7 +288,7 @@ function completedRecord(): OutcomeRecord {
 describe("reconstructBranchRuns", () => {
   it("pairs a launch receipt with its persisted completion on the same branch", () => {
     const runs = reconstructBranchRuns([
-      receiptEntry(RECEIPT_TEXT, "sa_1_ab"),
+      receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
       recordEntry(completedRecord()),
     ]);
     expect(runs).toHaveLength(1);
@@ -300,7 +305,7 @@ describe("reconstructBranchRuns", () => {
 
   it("marks a run delivered when the attributed completion message is in the branch history", () => {
     const runs = reconstructBranchRuns([
-      receiptEntry(RECEIPT_TEXT, "sa_1_ab"),
+      receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
       recordEntry(completedRecord()),
       deliveredEntry("sa_1_ab"),
     ]);
@@ -309,20 +314,40 @@ describe("reconstructBranchRuns", () => {
 
   it("reads chronologically: the branch order of receipts is the view order", () => {
     const runs = reconstructBranchRuns([
-      receiptEntry(RECEIPT_TEXT, "sa_1_ab"),
+      receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
       recordEntry(completedRecord()),
       receiptEntry(
         'Started background Subagent — explore "read the docs" [run sa_2_cd] — status: queued.',
         "sa_2_cd",
+        "explore",
+        "read the docs",
       ),
     ]);
     expect(runs.map((r) => r.receipt?.runId)).toEqual(["sa_1_ab", "sa_2_cd"]);
   });
 
   it("a receipt without a persisted completion yields no record — outcome unavailable", () => {
-    const runs = reconstructBranchRuns([receiptEntry(RECEIPT_TEXT, "sa_1_ab")]);
+    const runs = reconstructBranchRuns([
+      receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
+    ]);
     expect(runs).toHaveLength(1);
     expect(runs[0].record).toBeUndefined();
+  });
+
+  it("a receipt whose details lack type/description still keys the run — graceful fallback", () => {
+    // Legacy or hand-built history may carry only details.agent_id: the run
+    // stays keyed by id and the identity fields degrade to unknown/empty
+    // instead of being reparsed from the display text.
+    const runs = reconstructBranchRuns([
+      receiptEntry(RECEIPT_TEXT, "sa_1_ab"),
+      recordEntry(completedRecord()),
+    ]);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].receipt).toEqual({
+      runId: "sa_1_ab",
+      type: "(unknown type)",
+      description: "",
+    });
   });
 
   it("ignores entries that are not this extension's receipts or records", () => {
@@ -349,7 +374,7 @@ describe("reconstructBranchRuns", () => {
 
   it("does not resurrect a completed status from a malformed record", () => {
     const runs = reconstructBranchRuns([
-      receiptEntry(RECEIPT_TEXT, "sa_1_ab"),
+      receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
       makeEntry({
         type: "custom",
         customType: OUTCOME_RECORD_TYPE,
@@ -364,7 +389,7 @@ describe("revisit presentation", () => {
   it("completed outcome lists the run, its status, and the retained activity", () => {
     const line = describeBranchRuns(
       reconstructBranchRuns([
-        receiptEntry(RECEIPT_TEXT, "sa_1_ab"),
+        receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
         recordEntry(completedRecord()),
       ]),
     );
@@ -376,7 +401,11 @@ describe("revisit presentation", () => {
   });
 
   it("a receipt-only run says outcome unavailable, never active, failed, or completed", () => {
-    const line = describeBranchRuns(reconstructBranchRuns([receiptEntry(RECEIPT_TEXT, "sa_1_ab")]));
+    const line = describeBranchRuns(
+      reconstructBranchRuns([
+        receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
+      ]),
+    );
     expect(line).toContain("outcome unavailable");
     expect(line).toContain("sa_1_ab");
     expect(line).not.toContain("completed");
@@ -387,13 +416,13 @@ describe("revisit presentation", () => {
   it("a persisted but undelivered outcome is distinguishable from a delivered one", () => {
     const undelivered = describeBranchRuns(
       reconstructBranchRuns([
-        receiptEntry(RECEIPT_TEXT, "sa_1_ab"),
+        receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
         recordEntry(completedRecord()),
       ]),
     );
     const delivered = describeBranchRuns(
       reconstructBranchRuns([
-        receiptEntry(RECEIPT_TEXT, "sa_1_ab"),
+        receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
         recordEntry(completedRecord()),
         deliveredEntry("sa_1_ab"),
       ]),
@@ -411,7 +440,10 @@ describe("revisit presentation", () => {
     const rec = completedRecord();
     rec.activityOmitted = 9;
     const line = describeBranchRuns(
-      reconstructBranchRuns([receiptEntry(RECEIPT_TEXT, "sa_1_ab"), recordEntry(rec)]),
+      reconstructBranchRuns([
+        receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
+        recordEntry(rec),
+      ]),
     );
     expect(line).toContain("9 earlier");
   });
@@ -423,7 +455,10 @@ function viewOf(entries: SessionEntry[]): BranchRunView | undefined {
 
 describe("reconstructedRetrievalText (model-facing, explicit retrieval only)", () => {
   it("returns the bounded result text for a persisted completed outcome", () => {
-    const view = viewOf([receiptEntry(RECEIPT_TEXT, "sa_1_ab"), recordEntry(completedRecord())]);
+    const view = viewOf([
+      receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
+      recordEntry(completedRecord()),
+    ]);
     const text = reconstructedRetrievalText(view);
     expect(text).toContain("completed");
     expect(text).toContain("the answer");
@@ -436,7 +471,10 @@ describe("reconstructedRetrievalText (model-facing, explicit retrieval only)", (
     Object.assign(failed, { status: "failed", error: "boom", partialText: "half" });
     delete (failed as { result?: string }).result;
     const text = reconstructedRetrievalText(
-      viewOf([receiptEntry(RECEIPT_TEXT, "sa_1_ab"), recordEntry(failed)]),
+      viewOf([
+        receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
+        recordEntry(failed),
+      ]),
     );
     expect(text).toContain("failed");
     expect(text).toContain("boom");
@@ -446,14 +484,19 @@ describe("reconstructedRetrievalText (model-facing, explicit retrieval only)", (
     Object.assign(stopped, { status: "stopped", stopReason: "Stopped by request" });
     delete (stopped as { result?: string }).result;
     const text2 = reconstructedRetrievalText(
-      viewOf([receiptEntry(RECEIPT_TEXT, "sa_1_ab"), recordEntry(stopped)]),
+      viewOf([
+        receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser"),
+        recordEntry(stopped),
+      ]),
     );
     expect(text2).toContain("stopped");
     expect(text2).toContain("No partial assistant output is available.");
   });
 
   it("a run with only a receipt answers unavailable without implying active or failed", () => {
-    const text = reconstructedRetrievalText(viewOf([receiptEntry(RECEIPT_TEXT, "sa_1_ab")]));
+    const text = reconstructedRetrievalText(
+      viewOf([receiptEntry(RECEIPT_TEXT, "sa_1_ab", "general", "refactor the parser")]),
+    );
     expect(text).toContain("outcome unavailable");
     expect(text).toContain("sa_1_ab");
     expect(text).not.toContain("failed");

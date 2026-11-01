@@ -203,21 +203,25 @@ export function renderAgentResult(
 }
 
 /**
- * Subagent extension. Two types for context hygiene — `explore` (read-only
- * discovery) and `general` (scoped read/write). The Agent tool surface follows
- * @tintinweb/pi-subagents loosely (not verbatim): Agent + get_subagent_result +
- * a concurrency queue; no Plan agent, steering, resume, or custom .pi/agents.
+ * Subagent extension. Two built-in types for context hygiene — `explore`
+ * (read-only discovery) and `general` (scoped read/write) — plus custom types
+ * discovered from `.pi/agents` definition files (discovery.ts). The Agent tool
+ * surface follows @tintinweb/pi-subagents loosely (not verbatim): Agent +
+ * get_subagent_result + stop_subagent + a concurrency queue; no Plan agent,
+ * steering, resume, or nested delegation.
  *
  * Scheduling/records/concurrency live in AgentManager; this file only wires Pi
  * tools to it and supplies the env-bound exec thunk.
  */
 
 /**
- * The Agent tool's Subagent type surface. Built-ins stay enumerated; custom
- * types are discovered from the agent definition directories at registration
- * time (names + descriptions appear in the tool description) and re-read at
- * every launch, so edits and additions apply to subsequent launches without
- * re-registering.
+ * The Agent tool's Subagent type surface. Built-ins stay enumerated; this
+ * description is a static snapshot computed once at module import — the
+ * custom names and descriptions listed here reflect the definition
+ * directories as of import time and refresh on the next session. Every
+ * launch re-reads the definitions (see the Agent execute handler), so edits
+ * and additions apply to subsequent launches even when this snapshot is
+ * stale; only the tool description's own list lags until then.
  */
 export function agentTypeDescription(custom: CustomTypeDiscovery): string {
   const lines = [...custom.valid.values()].map(
@@ -295,9 +299,9 @@ export function stopResultText(outcome: StopOutcome): string {
     return `Subagent ${rec.id} (${rec.type}, ${rec.description}) ${why}. The stop did not change the outcome.`;
   }
   const head = `Stopped ${rec.type} (${rec.description}) \u2014 ${rec.stopReason ?? "stopped by request"}.`;
-  return rec.partialText
-    ? `${head}\n\nPartial assistant output (incomplete):\n${rec.partialText}`
-    : `${head} No assistant output is available.`;
+  // Shared partial block: marked incomplete, or an explicit "none available"
+  // — identical wording to explicit retrieval and automatic completions.
+  return `${head}${partialOutputBlock(rec)}`;
 }
 
 /**
@@ -728,6 +732,11 @@ export default function (pi: ExtensionAPI) {
           backgroundReceiptText({ type, description: params.description, id: record.id }, modeDiag),
           {
             agent_id: record.id,
+            // Structured receipt identity (dual result contract): revisit
+            // reconstruction reads type/description from here instead of
+            // reparsing the receipt row's display text.
+            type,
+            description: params.description,
             status: record.status,
             ...(modeDiag ? { delivery: { promised: false, mode: ctx.mode, note: modeDiag } } : {}),
             ...(warnings.length > 0 ? { warnings } : {}),
@@ -737,7 +746,13 @@ export default function (pi: ExtensionAPI) {
       }
 
       const rec = await done; // foreground: block
-      if (rec.status === "failed") throw new Error(`Subagent failed: ${rec.error}`);
+      if (rec.status === "failed") {
+        // The failure reason plus any captured assistant text, clearly marked
+        // incomplete via the shared partial block (or an explicit "none
+        // available"). Pi's aborted-parent semantics are untouched: when the
+        // parent's turn was aborted the call never returns this at all.
+        throw new Error(`Subagent failed: ${rec.error}${partialOutputBlock(rec)}`);
+      }
       return textResult(rec.result ?? "(no output)", {
         agent_id: rec.id,
         status: rec.status,

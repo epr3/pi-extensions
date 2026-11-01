@@ -16,11 +16,11 @@ import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { parseModelRef } from "./model-ref.ts";
 
-/** Fields the frontmatter grammar accepts. No fields are merely planned
- *  anymore (none are rejected explicitly pending a ticket) — unknown fields
- *  still are, so unimplemented settings are never mistaken for guarantees.
- *  `skills` is the frontmatter list of Pi skill names to preload into the
- *  Subagent's initial context. */
+/** Fields the frontmatter grammar accepts. Every accepted field is
+ *  implemented; anything else is an explicitly rejected `unknown-field`, so
+ *  unimplemented settings are never mistaken for guarantees. `skills` is the
+ *  frontmatter list of Pi skill names to preload into the Subagent's initial
+ *  context. */
 export const SUPPORTED_FIELDS = [
   "name",
   "description",
@@ -29,7 +29,6 @@ export const SUPPORTED_FIELDS = [
   "disallowedTools",
   "model",
 ] as const;
-export const PLANNED_FIELDS = [] as const;
 
 /** The explicit parent-model sentinel for the `model` frontmatter field. */
 export const MODEL_INHERIT = "inherit";
@@ -59,8 +58,8 @@ export interface CustomSubagentDef {
    *  after the fixed safety exclusions. Same format rules as `tools`. */
   disallowedTools?: string[];
   /** Exact `"provider/model"` reference, or `"inherit"` to explicitly use
-   *  the parent session's model. Omitted keeps the existing configured-"
-   *  defaults then parent model fallback. Syntax is validated here; the
+   *  the parent session's model. Omitted keeps the existing configured
+   *  defaults then parent-model fallback. Syntax is validated here; the
    *  registry lookup happens at launch and a miss fails the run. */
   model?: string;
 }
@@ -69,7 +68,6 @@ export type DefinitionDiagnosticKind =
   | "malformed-frontmatter"
   | "invalid-definition"
   | "unknown-field"
-  | "unsupported-field"
   | "reserved-name"
   | "conflict"
   | "shadowed"
@@ -146,13 +144,13 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
   const custom: { tools?: string[]; disallowedTools?: string[]; model?: string } = {};
   if ("tools" in frontmatter) {
     const parsed = parseToolListField(frontmatter["tools"], "tools");
-    if (typeof parsed === "string") return fail("invalid-definition", parsed);
-    custom.tools = parsed;
+    if (parsed.error) return fail("invalid-definition", parsed.error);
+    custom.tools = parsed.value;
   }
   if ("disallowedTools" in frontmatter) {
     const parsed = parseToolListField(frontmatter["disallowedTools"], "disallowedTools");
-    if (typeof parsed === "string") return fail("invalid-definition", parsed);
-    custom.disallowedTools = parsed;
+    if (parsed.error) return fail("invalid-definition", parsed.error);
+    custom.disallowedTools = parsed.value;
   }
   if ("model" in frontmatter) {
     const parsed = parseModelField(frontmatter["model"]);
@@ -162,13 +160,6 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
 
   for (const field of Object.keys(frontmatter)) {
     if ((SUPPORTED_FIELDS as readonly string[]).includes(field)) continue;
-    if ((PLANNED_FIELDS as readonly string[]).includes(field)) {
-      return fail(
-        "unsupported-field",
-        `frontmatter field \`${field}\` is not supported yet — planned for a later ` +
-          `ticket; remove it or the definition cannot be used`,
-      );
-    }
     return fail("unknown-field", `unsupported frontmatter field \`${field}\``);
   }
 
@@ -225,44 +216,56 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
  *  rejected rather than translated. */
 const TOOL_NAME_FORBIDDEN = /[()*:*]/;
 
+/** The shared discriminated result shape for optional-field parsers, matching
+ *  parseModelField: exactly one of `value` (accepted) / `error` (rejected). */
+interface FieldParseResult<T> {
+  value?: T;
+  error?: string;
+}
+
 /**
  * Validate a `tools` / `disallowedTools` frontmatter value.
  * Accepted: a YAML list of strings, or a comma-separated string — both of
- * bare Pi tool names (trimmed, empties dropped, deduped). Returns an error
- * message for: non-string/non-array shapes, non-string entries, scoped
- * patterns and wildcards (`Bash(...)`, `Edit:*`, `Edit*`), and entries that
- * become empty after trimming.
+ * bare Pi tool names (trimmed, empties dropped, deduped). Returns `{ error }`
+ * for: non-string/non-array shapes, non-string entries, scoped patterns and
+ * wildcards (`Bash(...)`, `Edit:*`, `Edit*`), and entries that become empty
+ * after trimming.
  */
-export function parseToolListField(value: unknown, field: string): string[] | string {
+export function parseToolListField(value: unknown, field: string): FieldParseResult<string[]> {
   let names: string[];
   if (typeof value === "string") {
     names = value.split(",").map((s) => s.trim());
   } else if (Array.isArray(value)) {
     if (value.some((v) => typeof v !== "string")) {
-      return `\`${field}\` entries must all be tool names (strings)`;
+      return { error: `\`${field}\` entries must all be tool names (strings)` };
     }
     names = (value as unknown[]).map((v) => String(v).trim());
   } else {
-    return `\`${field}\` must be a YAML list of tool names or a comma-separated string`;
+    return {
+      error: `\`${field}\` must be a YAML list of tool names or a comma-separated string`,
+    };
   }
 
   const out: string[] = [];
   for (const raw of names) {
     if (raw === "") {
-      return `\`${field}\` contains an empty tool name${
-        typeof value === "string" ? " — separate names with commas" : ""
-      }`;
+      return {
+        error: `\`${field}\` contains an empty tool name${
+          typeof value === "string" ? " — separate names with commas" : ""
+        }`,
+      };
     }
     if (TOOL_NAME_FORBIDDEN.test(raw)) {
-      return (
-        `\`${field}\` entry "${raw}" is not a bare Pi tool name — scoped patterns ` +
-        `and wildcards (like Bash(git*:*), Configure:*, or Browser(*)) are not supported; ` +
-        `write the exact Pi tool name, e.g. "bash"`
-      );
+      return {
+        error:
+          `\`${field}\` entry "${raw}" is not a bare Pi tool name — scoped patterns ` +
+          `and wildcards (like Bash(git*:*), Configure:*, or Browser(*)) are not supported; ` +
+          `write the exact Pi tool name, e.g. "bash"`,
+      };
     }
     if (!out.includes(raw)) out.push(raw);
   }
-  return out;
+  return { value: out };
 }
 
 /**
@@ -417,11 +420,13 @@ export function discoverCustomSubagents(scopes: string[]): CustomTypeDiscovery {
 
   // Names any lower-priority scope had a valid definition for — used to tell
   // "shadowed" (invalid winner over a usable definition) apart from a plain
-  // invalid definition.
-  const lowerValid = new Map<string, string>(); // name → lower scope's path
+  // invalid definition. Iterating far→near and overwriting keeps the NEAREST
+  // lower-priority valid path: that is the definition an invalid winner
+  // actually shadows, so the diagnostic cites it, not some farther namesake.
+  const lowerValid = new Map<string, string>(); // name → nearest lower scope's path
   for (let i = scopes.length - 1; i >= 0; i--) {
     for (const [name, entry] of scanned[i].byName) {
-      if (entry.status === "valid" && !lowerValid.has(name)) {
+      if (entry.status === "valid") {
         lowerValid.set(name, entry.def!.sourcePath);
       }
     }

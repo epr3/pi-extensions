@@ -19,8 +19,6 @@ export type StreamEntry =
  */
 export const ACTIVITY_TAIL_LIMIT = 50;
 
-/** A retained Activity tail: the kept entries plus how many earlier ones
- *  were dropped (the omission indicator's number; 0 = indicator absent). */
 /** Map one runner StreamEvent into the shared entry shape — the single
  *  mapping used by foreground streaming updates and the background capture.
  *  Empty deltas yield nothing (they are not activity); unknown event types
@@ -36,6 +34,8 @@ export function entryFromStreamEvent(event: StreamEvent): StreamEntry | undefine
   return undefined;
 }
 
+/** A retained Activity tail: the kept entries plus how many earlier ones
+ *  were dropped (the omission indicator's number; 0 = indicator absent). */
 export interface ActivitySnapshot {
   entries: StreamEntry[];
   omitted: number;

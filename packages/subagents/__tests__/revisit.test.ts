@@ -244,7 +244,12 @@ function receiptEntry(runId: string) {
       toolCallId: "c1",
       toolName: "Agent",
       content: [{ type: "text", text: RECEIPT_TEXT }],
-      details: { agent_id: runId, status: "queued" },
+      details: {
+        agent_id: runId,
+        type: "general",
+        description: "refactor the parser",
+        status: "queued",
+      },
     } as unknown as ToolResultMessage,
   };
 }
