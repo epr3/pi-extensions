@@ -82,6 +82,12 @@ _Avoid_: Automatic result, push notification, agent message.
 **Delivery-capable mode**: Pi mode whose process can still start a later parent turn after a background run settles (`tui`, `rpc`); `print` and `json` are not, and launch an explicit diagnostic instead of promising delivery. Judged from the Pi mode, never from `hasUI`.
 _Avoid_: UI mode, with-UI capability, headless mode.
 
+**Persisted outcome**: Append-only custom session entry (`subagent-outcome-record`) a terminal background Subagent run writes through its Originating session, carrying run identity, terminal status, **Bounded result text** or marked partial output, and the retained **Activity tail** (≤50 entries plus the omission count) — best-effort, since shutdown, replacement, or a crash can prevent the write, and the entry bound is not a byte guarantee.
+_Avoid_: Checkpoint, completion cache, outcome backup.
+
+**Branch-local outcome**: **Persisted outcome** visible only on the branch whose history recorded it, reconstructed from the current branch's history and never copied onto sibling branches that hold only the **Launch receipt** — those read "outcome unavailable", which never implies the run is active or was lost from the outcome.
+_Avoid_: Cross-branch sync, global outcome, sibling completion.
+
 ## Relationships
 
 - **Subagents Extension package** registers `Agent` and `get_subagent_result` tools.
@@ -110,6 +116,8 @@ _Avoid_: UI mode, with-UI capability, headless mode.
 - A background **Subagent run** belongs to its **Originating session**; an **Attributed completion** is delivered there at most once during normal operation, queued as a non-interrupting follow-up while the parent is busy and delivered as a turn-starting message when idle.
 - **Originating session** shutdown or replacement stops queued and running **Subagent runs**, deactivates delivery, and never lets a replacement session receive an **Attributed completion** it did not own.
 - A **Subagent run** in a mode that is not a **Delivery-capable mode** reports an explicit diagnostic at launch instead of promising automatic delivery; explicit `get_subagent_result` retrieval remains available everywhere.
+- Every terminal background **Subagent run** in its **Originating session** attempts one **Persisted outcome**, distinct from the **Attributed completion**: delivery can be withheld while the outcome persists, and a shutdown, replacement, or crash can prevent the write without affecting delivery guarantees.
+- A **Branch-local outcome** is reconstructed only from the current branch's history; on revisit nothing redelivers or starts a model turn, and a **Launch receipt** without its **Persisted outcome** reads "outcome unavailable", never active or failed, with its **Activity tail** unavailable too.
 
 ## Example dialogue
 
@@ -148,3 +156,5 @@ _Avoid_: UI mode, with-UI capability, headless mode.
 - "matching a skill" could mean directory name or resolved skill name; resolved: names match Pi's resolved skill names (frontmatter `name`, falling back to the directory name) under Pi's own precedence, with project scope beating user scope for collided names.
 - "automatic completion" could mean the parent learns a background outcome with no assurance at all; resolved: one **Attributed completion** per run during normal operation, explicitly not promised through queue clearing, shutdown, replacement, or crashes, with explicit retrieval kept.
 - "can the parent still receive results" could be inferred from `ctx.hasUI`; resolved: **Delivery-capable mode** is judged from the Pi mode (`tui`/`rpc` can continue; `print`/`json` cannot), never from UI availability.
+- "persisting an outcome for revisit" could mean copying a completion to every branch holding its receipt; resolved: **Branch-local outcome** — reconstruction reads only the current branch's history, and a receipt-less sibling shows its own "outcome unavailable" rather than borrowing another branch's record.
+- "the 50-entry activity bound" could mean a storage size guarantee or crash-proof recovery; resolved: the bound is an entry count, session storage contains the retained **Activity tail** in full, and a shutdown or crash racing the write leaves the receipt with no **Persisted outcome** — no crash-proof or exactly-once claim.

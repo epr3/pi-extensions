@@ -13,6 +13,13 @@ import {
   type CustomTypeDiscovery,
 } from "./discovery.ts";
 import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts";
+import { ACTIVITY_TAIL_LIMIT, entryFromStreamEvent, ActivityCapture } from "./activity.ts";
+import {
+  OutcomePersistence,
+  reconstructBranchRuns,
+  describeBranchRuns,
+  reconstructedRetrievalText,
+} from "./outcome-records.ts";
 import { resolveDefinitionToolset } from "./toolset.ts";
 import { AgentManager, type AgentRecord, type StopOutcome } from "./manager.ts";
 import {
@@ -76,13 +83,12 @@ export function resolveTypeRequestOrThrow(requested: string, discovery: CustomTy
 // ─── Foreground stream rendering ───────────────────────────────────────────
 
 /** Maximum number of stream entries to include in expanded partial rendering.
- *  Prevents long Subagent runs from producing unbounded tool rows in the TUI. */
-export const EXPANDED_TAIL_LIMIT = 50;
+ *  Prevents long Subagent runs from producing unbounded tool rows in the TUI.
+ *  It is the same bound the persisted background activity tail keeps. */
+export const EXPANDED_TAIL_LIMIT = ACTIVITY_TAIL_LIMIT;
 
-export type StreamEntry =
-  | { type: "text"; text: string }
-  | { type: "tool_start"; name: string }
-  | { type: "tool_end"; name: string; error: boolean };
+import type { StreamEntry } from "./activity.ts";
+export type { StreamEntry };
 
 export interface AgentStreamDetails {
   streamEntries?: StreamEntry[];
@@ -446,11 +452,27 @@ export default function (pi: ExtensionAPI) {
   // Owning-session guard: anything after shutdown (quit, reload, new,
   // resume, fork) belongs to a different/consuming runtime — stop all work
   // and cancel delivery instead of leaking into a replacement session.
+  // Best-effort persistence writes share the originating session's lifetime:
+  // the shutdown-stopped runs still get their stopped outcome recorded while
+  // this session can write (pi handlers run before replacement invalidates
+  // ctx), and once shutdown has passed nothing persists or delivers again.
+  // Persistence and delivery remain distinct: delivery may be withheld while
+  // an outcome persists, and a crash can prevent the write.
+  const persistence = new OutcomePersistence(
+    (customType, data) => pi.appendEntry(customType, data),
+    { onError: (d) => pi.events.emit("subagents:persistence-error", d) },
+  );
   let sessionEnded = false;
   pi.on("session_shutdown", () => {
-    sessionEnded = true;
+    // Delivery first: runs stopped by shutdown must never deliver into a
+    // dying or replaced session (their owner is gone).
     delivery.deactivate();
+    // Then stop the runs — the settles fire synchronously and persist while
+    // this session can still write.
     manager.shutdown("Session shutdown or replacement");
+    // Close this session's persistence channel; later settles go nowhere.
+    persistence.endSession();
+    sessionEnded = true;
   });
 
   pi.registerTool({
@@ -588,38 +610,38 @@ export default function (pi: ExtensionAPI) {
         if (ctx.hasUI) ctx.ui.notify(`${w.setting} is malformed — falling back`, "warning");
       }
 
-      // Foreground runs stream child assistant text and compact tool activity
-      // via onUpdate. Background runs skip streaming — only start-id + poll.
-      // Streaming updates are tool rows: UI-only. Content re-renders in the
-      // component and `details` carries the tail; neither enters the
-      // model-facing tool result (the run's short task is in details.agentId
-      // once the record exists, so concurrent rows stay attributable).
-      const streamEntries: StreamEntry[] = [];
+      // UI-only activity capture, mapped through one shared helper for both
+      // modes. Foreground runs forward mapped entries as live tool-row
+      // updates. A background run only retains its bounded Activity tail
+      // (for persistence at settle): with no onUpdate, no live assistant
+      // prose or tool activity can reach the parent context from a
+      // background run.
+      const streamEntries: StreamEntry[] = []; // foreground: full list; the tail bound applies at rendering
+      const backgroundCapture = new ActivityCapture(); // background: bounded tail
       let streamRunId: string | undefined;
-      const onStreamEvent: StreamCallback | undefined = background
-        ? undefined
-        : (event: StreamEvent) => {
-            // Parent cancelled: stop emitting transient stream updates so the
-            // tool row freezes instead of continuing to show a dead run.
-            if (ctx.signal?.aborted) return;
-            if (event.type === "text_delta") {
-              if (!event.delta) return;
-              streamEntries.push({ type: "text", text: event.delta });
-            } else if (event.type === "tool_start") {
-              streamEntries.push({ type: "tool_start", name: event.name });
-            } else if (event.type === "tool_end") {
-              streamEntries.push({ type: "tool_end", name: event.name, error: !!event.error });
-            }
-            const streamText = formatExpandedStream(streamEntries);
-            onUpdate?.({
-              content: [{ type: "text", text: streamText }],
-              details: {
-                streamText,
-                streamEntries: [...streamEntries],
-                ...(streamRunId ? { agentId: streamRunId } : {}),
-              },
-            });
-          };
+      const onStreamEvent: StreamCallback = (event: StreamEvent) => {
+        // Parent cancelled (foreground): stop emitting transient stream
+        // updates so the tool row freezes instead of showing a dead run. A
+        // background run survives a cancelled parent turn, so its capture
+        // keeps recording for the persisted tail.
+        if (!background && ctx.signal?.aborted) return;
+        const entry = entryFromStreamEvent(event);
+        if (!entry) return;
+        if (background) {
+          backgroundCapture.push(event);
+          return;
+        }
+        streamEntries.push(entry);
+        const streamText = formatExpandedStream(streamEntries);
+        onUpdate?.({
+          content: [{ type: "text", text: streamText }],
+          details: {
+            streamText,
+            streamEntries: [...streamEntries],
+            ...(streamRunId ? { agentId: streamRunId } : {}),
+          },
+        });
+      };
 
       const exec = (stopSignal: AbortSignal) =>
         runSubagent({
@@ -658,12 +680,15 @@ export default function (pi: ExtensionAPI) {
           abortSignal: background ? stopSignal : mergedAbortSignal([ctx.signal, stopSignal]),
         });
       // Notify only for background settles — foreground returns its result
-      // inline, so a toast would be duplicate noise. Delivery happens once
-      // per run through the coordinator; shutdown deactivates it before any
-      // shutdown-stopped settle can fire, so replacement sessions never
-      // receive a completion.
+      // inline, so a toast would be duplicate noise. For background runs the
+      // terminal outcome (and the retained activity tail) persists first —
+      // persistence and delivery are distinct — and delivery happens once
+      // per run through the coordinator; shutdown deactivates delivery
+      // before any shutdown-stopped settle can fire, so replacement sessions
+      // never receive a completion.
       const onSettled = background
         ? (rec: AgentRecord) => {
+            persistence.record(rec, backgroundCapture.snapshotTail());
             if (sessionEnded) return;
             delivery.deliver(rec);
             if (ctx.hasUI) {
@@ -769,9 +794,35 @@ export default function (pi: ExtensionAPI) {
     label: "Subagent Result",
     description: "Check status / retrieve the result of a background Subagent.",
     parameters: resultParams,
-    async execute(_toolCallId, params) {
-      const rec = await manager.getResult(params.agent_id, params.wait ?? false);
-      return textResult(retrievalText(rec), { ...rec });
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      try {
+        const rec = await manager.getResult(params.agent_id, params.wait ?? false);
+        return textResult(retrievalText(rec), { ...rec });
+      } catch {
+        // Unknown to this live registry: on revisit (or after reload) the run
+        // may exist on the current branch's history. Reconstruction is
+        // read-only: a persisted outcome is explicitly retrievable here, a
+        // receipt-only run reads "outcome unavailable", and neither ever
+        // redelivers or starts a model turn — this explicit retrieval IS the
+        // model turn its result answers.
+        const view = reconstructBranchRuns(ctx.sessionManager.getBranch()).find(
+          (v) => (v.receipt?.runId ?? v.record?.runId) === params.agent_id,
+        );
+        if (!view) {
+          throw new Error(
+            `Unknown Subagent id "${params.agent_id}". Use the id returned by the background ` +
+              `launch (details.agent_id), or run /subagents to see what this branch recorded.`,
+          );
+        }
+        const data = view.record;
+        return textResult(reconstructedRetrievalText(view), {
+          agent_id: params.agent_id,
+          ...(data
+            ? { status: data.status, tokens: data.tokens, toolUses: data.toolUses }
+            : { outcome: "unavailable" }),
+          reconstructed: true,
+        });
+      }
     },
   });
 
@@ -779,7 +830,15 @@ export default function (pi: ExtensionAPI) {
     description: "List Subagents and their status",
     handler: async (_args, ctx) => {
       const lines = manager.list().map((r) => `${r.id}  ${r.type}  ${r.status}  ${r.description}`);
-      ctx.ui.notify(lines.length ? lines.join("\n") : "No subagents yet", "info");
+      const sections = [lines.length ? lines.join("\n") : "No subagents yet"];
+      // Revisit listing: the current branch's history — records on THIS
+      // branch only, receipts without records marked unavailable. Read-only:
+      // no redelivery, no model turn; activity appears as counts only.
+      const branchRuns = describeBranchRuns(reconstructBranchRuns(ctx.sessionManager.getBranch()));
+      if (branchRuns) {
+        sections.push("Background outcomes on this branch (from session history):\n" + branchRuns);
+      }
+      ctx.ui.notify(sections.join("\n"), "info");
     },
   });
 }

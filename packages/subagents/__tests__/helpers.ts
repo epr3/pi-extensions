@@ -14,6 +14,18 @@ export interface CapturedSend {
 /** Event name → handler, so tests can fire Pi lifecycle events at the seam. */
 export type CapturedHandlers = Map<string, (event: any, ctx?: any) => any>;
 
+/** One `pi.appendEntry` call: the extension's persisted custom entry. */
+export interface CapturedEntry {
+  customType: string;
+  data: unknown;
+}
+
+/** A registered `/command` with its handler, invokable from tests. */
+export interface CapturedCommand {
+  name: string;
+  handler: (args: string | undefined, ctx: any) => any;
+}
+
 /**
  * Capture the tools an extension registers through a minimal fake ExtensionAPI.
  * Optional captures record `sendMessage` calls and `on` handlers so delivery
@@ -25,6 +37,8 @@ export function makeFakeApi(
     sends?: CapturedSend[];
     handlers?: CapturedHandlers;
     messageRenderers?: Map<string, Function>;
+    appendEntries?: CapturedEntry[];
+    commands?: CapturedCommand[];
   },
 ): ExtensionAPI {
   return {
@@ -35,7 +49,12 @@ export function makeFakeApi(
     registerMessageRenderer: (customType: string, renderer: Function) => {
       o?.messageRenderers?.set(customType, renderer);
     },
-    registerCommand: () => {},
+    registerCommand: (name: string, command: { handler: CapturedCommand["handler"] }) => {
+      o?.commands?.push({ name, handler: command.handler });
+    },
+    appendEntry: (customType: string, data?: unknown) => {
+      o?.appendEntries?.push({ customType, data });
+    },
     sendMessage: (message: never, options?: never) => {
       o?.sends?.push({ message, options } as unknown as CapturedSend);
     },

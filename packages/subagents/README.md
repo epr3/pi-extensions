@@ -220,9 +220,39 @@ Explicit retrieval with `get_subagent_result` remains available either way.
   only the bounded final/partial result text under the shared
   [20,000-byte limit](#bounded-result-text).
 
-Persistence of outcomes for later session revisit is separate behavior and not
-implemented yet; a delivered completion is an ordinary message on the branch that
-contains it.
+### Persistence and revisit
+
+Terminal background outcomes persist for normal session revisit — independently of
+delivery:
+
+- When a background run settles, one append-only custom session entry
+  (`customType: "subagent-outcome-record"`) is appended through the originating
+  session's `pi.appendEntry`. It carries the run identity, terminal status, the
+  bounded result text (or the clearly marked partial output, plus the failure or
+  stop reason), and the retained Activity tail — at most 50 entries plus the
+  omission count. Persistence succeeds even when delivery is withheld; a crashed
+  process or a shutdown racing the write can prevent it (there is no claim of
+  crash-proof persistence or exactly-once behavior).
+- On revisit, outcomes reconstruct from the CURRENT branch's history
+  (`getBranch()`): a branch shows only completions its own history contains —
+  never a sibling's completion because both carry the same receipt, and no
+  completion is copied down for sibling receipts.
+- A launch receipt without a persisted completion reads **outcome unavailable**
+  — never showing the run as active or failed, and its activity is unavailable
+  too. An outcome persisted but not delivered stays inspectable; revisit never
+  automatically redelivers it and never starts a model turn.
+- Where it appears:
+  - `/subagents` lists background outcomes on this branch from session history
+    (status, outcome head, delivered/not delivered, activity counts).
+  - `get_subagent_result` with a revisited id falls back to the branch history:
+    the persisted outcome is returned again via explicit retrieval, a
+    receipt-only run answers "outcome unavailable", and the retained activity is
+    summarized by counts only — its content stays out of model-facing text.
+- Privacy and guarantees: session storage contains the retained activity tail in
+  full entries. The 50-entry bound is an entry count, **not a byte-size
+  guarantee** — entries vary in size. Shutdown, replacement, or a crash can
+  prevent both the write and later delivery; a receipt that lost its write is
+  indistinguishable from a run that never showed a completion.
 
 - The completion renders through a message renderer registered for the
   `subagent-outcome` custom type: the collapsed row is one attributable line
