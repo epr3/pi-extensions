@@ -9,7 +9,7 @@ Adds two subagent types for context hygiene. The `Agent` tool surface follows th
 | `explore` | read, grep, find, ls by default; **extra read-only tools are granted in settings** (the shipped `settings.json` grants the `lsp_*` set) | yes       | codebase discovery — the suite's default for context-gathering |
 | `general` | everything discovered: all built-ins **and all installed extension tools** (lsp, todo, …), minus the exclusions below                   | no        | off-context work that writes (e.g. parallel interface designs) |
 
-No `Plan` agent, no steering, no resume, no nested delegation — deliberately omitted. Custom Subagent types are supported via `.pi/agents` definition files (see below). **External web research** is also deliberately outside this package: the parent Pi coding agent uses web Extension tools such as `web_search` and `web_fetch` directly, not through a built-in Subagent type.
+No Claude-style `plan` or `general-purpose` built-ins — the package's built-ins are exactly `explore` and `general` — no steering, no resume, no nested delegation; all deliberately omitted. Custom Subagent types are supported via `.pi/agents` definition files (see below). **External web research** is also deliberately outside this package: the parent Pi coding agent uses web Extension tools such as `web_search` and `web_fetch` directly, not through a built-in Subagent type.
 
 ## Custom Subagent types
 
@@ -78,8 +78,9 @@ Body.
   denials minus the safety exclusions — is empty, the launch fails with an actionable
   message instead of running a tool-less Subagent.
 - **Safety boundaries always win.** Even if a definition explicitly allowlists `Agent`,
-  `get_subagent_result`, or `question`, those tools are removed from the Subagent session:
-  no custom type can gain nested delegation, result retrieval, or blocking questions.
+  `get_subagent_result`, `stop_subagent`, or `question`, those tools are removed from the
+  Subagent session: no custom type can gain nested delegation, result retrieval, stopping,
+  or blocking questions.
 
 ### Model: `model`
 
@@ -113,8 +114,10 @@ Definitions written for Claude Code must be adapted; compatibility is deliberate
 - **Write/shell implications:** an omitted `tools` list inherits write and shell tools
   (`write`, `bash`). Claude habits like relying on a narrower default permission profile do
   not transfer; state read-only intentions with an explicit read-only allowlist.
-- **Strict field validation:** unknown fields and unimplemented fields (`skills`) make the
-  definition invalid rather than ignored — remove or adapt them when migrating.
+- **Strict field validation:** unknown fields (anything other than `name`, `description`,
+  `tools`, `disallowedTools`, `model`, and `skills`) make the definition invalid rather
+  than ignored — remove or adapt unsupported fields (`mode`, `permission-mode`, scoped
+  tool patterns, model aliases) when migrating.
 - **Model identifiers:** exact `provider/model` strings or `inherit` only; Claude aliases
   such as `sonnet` or `opus` are invalid.
 - **Safety boundaries take precedence over any frontmatter value:** subagents cannot
@@ -125,7 +128,40 @@ Definitions written for Claude Code must be adapted; compatibility is deliberate
 
 Custom names are matched **exactly first**, then the built-in aliases apply. The speculative `expl` prefix alias for `explore` still works (`expl`, `EXPLORE`, …), so existing calls are unaffected — but it no longer swallows an input that exactly matches a valid custom name, such as a custom type named `Explorer`. Compatibility change: before this, any `expl…` input resolved to the built-in `explore`; if you relied on such an input resolving there but have since defined a custom type with that exact name, the custom type now wins. Unknown or invalid requested types fail with an actionable error — never a silent fallback to `general`.
 
-A custom type without its own fields behaves like `general` tool-wise: it inherits every available Subagent tool, including write and shell tools, minus the fixed safety exclusions (`Agent`, `get_subagent_result`, `question`). Per-project resource loading and the one-level-deep boundary apply exactly as for the built-ins.
+A custom type without its own fields behaves like `general` tool-wise: it inherits every available Subagent tool, including write and shell tools, minus the fixed safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`). Per-project resource loading and the one-level-deep boundary apply exactly as for the built-ins.
+
+### Compatibility and migration impacts
+
+Deliberate behavior changes to plan for when updating existing workflows and migrated
+Claude-style files (details in the sections above and in the package ADRs):
+
+- **Result bounding is new.** Foreground `Agent` results used to be unbounded; they are
+  now capped at a fixed 20,000 UTF-8 bytes with no recovery path for omitted text.
+  Workflows that assumed full-length foreground output should have the Subagent write
+  large deliverables to files.
+- **Built-in alias change.** The `expl` prefix alias still matches `explore` (and its
+  case variants), but an input that **exactly** matches a valid custom type name now
+  launches the custom type instead.
+- **Runs are session-owned.** Runs belong to the session that launched them. On
+  `session_shutdown` (quit, `new`, `resume`, `fork`, reload) queued and running runs are
+  stopped and delivery is deactivated; a replacement session never receives completions
+  from runs it did not own. Plan long-running background work around the owning
+  session's lifetime.
+- **Mode and version limits.** Automatic background completion is promised only where
+  Pi's process keeps the conversation running (`tui`, `rpc`). `print` and `json` modes
+  get an explicit diagnostic at launch and must retrieve explicitly. Lifetime,
+  persistence, and delivery behavior are built on the supported `pi-coding-agent` API
+  surface noted in the package ADRs; feasibility evidence is documentation/source
+  analysis plus a session-API integration test, not an end-to-end run against every
+  mode.
+- **Storage privacy.** The UI-only activity tail (≤50 entries) is stored in session
+  files as part of each persisted outcome, where anything in `~/.pi` session storage is
+  already visible. The 50-entry bound is an entry count, not a byte-size guarantee, and
+  a shutdown or crash can prevent the write.
+- **No crash-proof or exactly-once delivery.** Queue clearing, abort, shutdown,
+  replacement, or a crash can prevent persistence or delivery; at most one completion
+  per run is delivered during normal operation; revisit never redelivers a persisted
+  outcome.
 
 ### Skill preloading
 
@@ -171,15 +207,16 @@ skills' complete instructions are preloaded into your initial context.
 
 The sub-session uses the same resource loader as the parent, so it discovers every installed extension. The two types then differ in how tools reach the model:
 
-- **`general` needs nothing** — it passes no allowlist, so any extension you install (lsp, todo, a future one) is available to it automatically. The only subtractions are the safety exclusions: `Agent`, `get_subagent_result`, `question`.
-- **`explore` is an allowlist by design** — that's what makes its read-only property structural rather than promised. `explore` holds the core read tools (plus `subagents.explore.extraTools` / `PI_SUBAGENT_EXPLORE_TOOLS`). Only ever grant **read-only** tools — anything that writes or executes belongs to `general`. Take tools away from `general` with `subagents.general.excludeExtraTools`; the safety exclusions (`Agent`, `get_subagent_result`, `question`) are fixed and not configurable.
+- **`general` needs nothing** — it passes no allowlist, so any extension you install (lsp, todo, a future one) is available to it automatically. The only subtractions are the safety exclusions: `Agent`, `get_subagent_result`, `stop_subagent`, `question`.
+- **`explore` is an allowlist by design** — that's what makes its read-only property structural rather than promised. `explore` holds the core read tools (plus `subagents.explore.extraTools` / `PI_SUBAGENT_EXPLORE_TOOLS`). Only ever grant **read-only** tools — anything that writes or executes belongs to `general`. Take tools away from `general` with `subagents.general.excludeExtraTools`; the safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`) are fixed and not configurable.
 
-**One level deep, enforced:** sub-sessions are created with `excludeTools: ["Agent", "get_subagent_result", "question"]`, so a subagent cannot recursively spawn subagents (the resource loader would otherwise hand it this very extension) and can't block on a question no user will see. Foreground runs return their result inline; only background settles raise a notification.
+**One level deep, enforced:** sub-sessions are created with `excludeTools: ["Agent", "get_subagent_result", "stop_subagent", "question"]`, so a subagent cannot recursively spawn subagents (the resource loader would otherwise hand it this very extension), retrieve or stop runs, or block on a question no user will see. Foreground runs return their result inline; background settles deliver one attributed completion message (see [Background outcome delivery](#background-outcome-delivery)).
 
 ## Tools
 
 - `Agent({ subagent_type, prompt, description, run_in_background? })` — foreground blocks + returns the bounded result; background returns an id. `subagent_type` accepts the two built-ins or any valid custom type name (discovered names and descriptions are listed in the tool description; definitions are re-read at every launch).
 - `get_subagent_result({ agent_id, wait? })` — poll/retrieve a background agent's bounded result.
+- `stop_subagent({ agent_id })` — stop one queued or running background run (see [Stopping background runs](#stopping-background-runs)).
 - `/subagents` — list subagents and status.
 
 Background agents run through a concurrency queue (default 4, `PI_SUBAGENT_CONCURRENCY`).
@@ -219,6 +256,34 @@ Explicit retrieval with `get_subagent_result` remains available either way.
 - Completions never contain live activity, tool transcripts, or hidden reasoning —
   only the bounded final/partial result text under the shared
   [20,000-byte limit](#bounded-result-text).
+
+### Stopping background runs
+
+`stop_subagent({ agent_id })` targets **one** queued or running background run — it is a
+parent-facing operation, never a per-row control:
+
+- **Queued runs never start.** A stop on a queued run removes it from the queue and
+  settles it as `stopped` before it begins — no session is created and there is no
+  generated output (the record says `Stopped by request before it started`, with no
+  partial assistant output).
+- **Running runs are aborted.** Assistant text captured before the stop is returned as
+  clearly marked incomplete partial output; if none was captured, the response explicitly
+  says no partial output is available instead of staying ambiguous. Partial text is
+  bounded by the same shared [20,000-byte limit](#bounded-result-text).
+- **Already-terminal runs answer, not change.** A stop on a completed, failed, or
+  already-stopped run reports why the stop did not apply — `already completed before the
+stop request`, `already failed with: …`, `was already stopped` — and leaves the outcome
+  exactly as it was. An unknown id is an actionable error — nothing is stopped.
+- **First terminal outcome wins.** A stop racing the run's own completion or failure
+  resolves to whichever terminal event landed first; later candidates are ignored, so
+  there is exactly one terminal status per run.
+- **Foreground runs are not stopped this way.** `stop_subagent` refuses them: cancel the
+  `Agent` tool call instead. Parent cancellation stops the foreground run, and its
+  assistant text follows the same partial/missing-output contract as background stops;
+  where the interrupted call cannot return text, none is promised.
+
+Stopped runs still deliver exactly one attributed completion (status `stopped`) during
+normal operation — the stop changes the outcome, it does not remove it.
 
 ### Persistence and revisit
 
@@ -326,9 +391,8 @@ and the `subagents` status command are the reliable paths.
 ## Bounded result text
 
 Subagent result text is truncated to a fixed **20,000 UTF-8 bytes** on every delivery
-path: foreground `Agent` results and explicit `get_subagent_result` retrieval (the same
-bound covers automatic background completions and failed/stopped partial output as those
-arrive in later slices).
+path: foreground `Agent` results, explicit `get_subagent_result` retrieval, automatic
+background completions, and failed/stopped partial output — one shared limit.
 
 - The limit is fixed and non-configurable — no setting or environment variable overrides it.
 - The beginning of the text is kept, and the cut never splits a UTF-8 character.
@@ -367,9 +431,10 @@ Agent({ subagent_type: "explore", prompt: "Search B", description: "Search B" })
 
 - **Not a batch API.** There is no `tasks` parameter on `Agent`, no aggregate result
   object, and no batch polling tool. The `Agent` contract stays one-run-only.
-- **Not a replacement for background polling.** Foreground fan-out blocks and returns
-  results inline. Background runs with `run_in_background: true` + `get_subagent_result`
-  remain the correct pattern for long-running or fire-and-forget tasks.
+- **Not a replacement for background delivery.** Foreground fan-out blocks and returns
+  results inline. Background runs report their outcome automatically via one attributed
+  completion; `run_in_background: true` + `get_subagent_result` remains the pattern for
+  explicitly retrieving or inspecting a background run on demand.
 - **Not recursion.** **Subagents** cannot spawn child **Subagents** — the `Agent` and
   `get_subagent_result` tools are excluded from sub-sessions. Same-turn fan-out is
   sibling delegation by the parent Pi coding agent, not nested subagent spawning.
@@ -435,6 +500,10 @@ reference invalid — the extension falls back to the next level and warns.
 
 Each level: unconfigured, invalid reference syntax, or unresolvable ref
 (unknown provider / model id in the registry) → fall through to the next.
+
+A custom Subagent definition's own `model` frontmatter (exact `provider/model` or
+`inherit`) overrides all three of these levels — see [Custom Subagent types →
+Model](#model-model).
 
 ### Invalid reference warnings
 

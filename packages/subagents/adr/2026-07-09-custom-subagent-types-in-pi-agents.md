@@ -1,3 +1,5 @@
 # Store Custom Subagent Types in .pi/agents
 
 Custom subagent types use `.pi/agents/*.md` as canonical project-local namespace, though domain prose prefers "Subagent" terminology. Hard to change after files exist. Surprising — glossary favors subagent wording. Trade-off: domain purity vs ecosystem familiarity. Choose `.pi/agents` for Claude Code compat + easier discovery.
+
+(Updated 2026-11-01 to match shipped discovery: `.pi/agents` is the **project** scope, scanned recursively from the working directory up to the Git repository root inclusive — outside Git only the working directory — and never `.claude/agents/`; the shipped user scope is the `agents` directory of Pi's user agent config dir, respected as Pi's `PI_CODING_AGENT_DIR` override. Precedence is per-name and never merges: the nearest scope that mentions a name decides it, beating farther project scopes and the user scope; same-name conflicts in one scope make the name unusable with both paths diagnosed.)

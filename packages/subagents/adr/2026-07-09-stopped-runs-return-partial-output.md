@@ -1,3 +1,7 @@
 # Keep Partial Output for Stopped Subagent Runs
 
-When `stop_subagent` cancels running background run, retrieval returns status `stopped` + safely collected partial assistant output + stop reason. Hard to reverse once clients + debug workflows depend on response shape. Surprising — cancellation usually drops output. Trade-off: debuggability vs noise/privacy. Choose partial output retention for operator visibility; keep stop state explicit.
+When `stop_subagent` cancels a running background Subagent run, retrieval and the attributed completion return status `stopped`, the stop reason, and any assistant text the run captured before the abort — clearly marked incomplete, bounded by the shared 20,000-byte result limit — or an explicit "no partial output is available" statement when nothing was captured. A stop on a **queued** run settles it as stopped before it starts: no session, no output. A stop on an already-terminal run reports why it did not apply and changes nothing, and in stop/completion races the first terminal outcome wins. Foreground runs are refused by `stop_subagent` — the parent's own tool-call cancellation stops them, with partial text under the same contract where the interrupted call can return it.
+
+Hard to reverse once clients + debug workflows depend on response shape. Surprising — cancellation usually drops output. Trade-off: debuggability vs noise/privacy. Choose partial output retention for operator visibility; keep stop state explicit.
+
+(Updated 2026-11-01 to match shipped behavior and the delivered spec: queued stops never start and produce no output, partial output is explicitly absent when none exists, failure reasons ride outside the result limit, and every result path shares the single fixed limit.)

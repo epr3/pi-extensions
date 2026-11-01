@@ -22,6 +22,9 @@ _Avoid_: Agents folder, claude agents dir.
 **Subagent run**: Single execution instance of a **Subagent** for one delegated task.
 _Avoid_: Agent record, child session, job.
 
+**Stop request**: Parent-facing `stop_subagent` operation on one background **Subagent run**: a queued run settles as stopped before it starts and produces no output, a running run is aborted and keeps any captured **Partial assistant output**, an already-terminal run's outcome is unchanged, and the first terminal outcome always wins over a competing completion.
+_Avoid_: Kill, cancel row, per-row stop.
+
 **Subagent stream**: UI-only live progress signal of a foreground **Subagent run** shown inside the parent `Agent` tool row while the run is active.
 _Avoid_: Child transcript, nested conversation, streamed result.
 
@@ -73,6 +76,9 @@ _Avoid_: Output budget, truncation cutoff, context cap.
 **Bounded result text**: Result output delivered under the **Result-text limit**, with a truncation report carrying original and retained byte counts; run status and failure reason stay outside it.
 _Avoid_: Clipped result, shortened output, trimmed result.
 
+**Partial assistant output**: Assistant text a stopped or failed **Subagent run** captured before its terminal event, bounded under the **Result-text limit** and clearly marked incomplete — or an explicit "none available" statement when nothing was captured; a queued run that never started has none.
+_Avoid_: Partial result, recovered output, transcript tail.
+
 **Originating session**: Parent Pi session that launched a **Subagent run**; owns the run and its completion delivery and is the only session the completion may enter.
 _Avoid_: Owner runtime, launcher session, host session.
 
@@ -108,7 +114,8 @@ _Avoid_: Cross-branch sync, global outcome, sibling completion.
 - A **Subagent type** without a **Subagent tool allowlist** runs on the **Inherited toolset**, minus its **Subagent tool denial** list and the fixed safety exclusions — write and shell tools included; an explicitly read-only **Subagent type** must declare a read-only **Subagent tool allowlist**.
 - Every **Subagent tool allowlist** entry and **Subagent tool denial** must be an exactly available Pi tool name; scoped patterns, wildcards, and unavailable names are rejected, and an empty effective toolset makes the definition's run fail rather than launch.
 - **External web research** uses web Extension tools directly from the parent Pi coding agent rather than a dedicated built-in **Subagent type**.
-- **Subagent** cannot recursively launch child **Subagents** because subagent tools are excluded from sub-sessions.
+- **Subagent** cannot recursively launch child **Subagents** because the fixed safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`) are removed from every sub-session, custom allowlists included — the single-level boundary is structural, not a hidden-parameter convention.
+- A **Stop request** produces exactly one terminal outcome: a queued run's stop means no **Partial assistant output** ever exists for it, a running run's stop keeps what was captured, and no run has two terminal statuses in stop/completion races.
 - Every **Subagent run** delivers **Bounded result text** — foreground returns, explicit `get_subagent_result` retrieval, and automatic completions and failed/stopped partials — so the parent never sees an unbounded answer.
 - **Skill preloading** resolves names the same way the **Subagent run**'s own skill discovery does, so a preloaded skill and an on-demand read of the same name come from the same file; preloading adds startup instructions, never permissions — other skills stay discoverable and readable.
 - A missing or unreadable skill makes only the declaring **Custom Subagent definition**'s launch fail; unrelated valid **Subagent types** stay usable.
@@ -147,7 +154,7 @@ _Avoid_: Cross-branch sync, global outcome, sibling completion.
 - "prefer `llms.txt`" was specific to the retired researcher workflow; resolved: source-selection rules belong with research skills or web tool guidance, not the **Subagents Extension package** glossary.
 - Removing `researcher` could mean an alias, a disabled mode, or deleting the API value; resolved: remove it as a built-in **Subagent type**, fail fast on `subagent_type: "researcher"`, and update repo-owned docs/config references in the same change.
 - "an omitted `tools` field in a definition could mean read-only by default or full inheritance"; resolved: it means the **Inherited toolset** including write and shell tools — a read-only **Subagent type** must declare an explicit read-only **Subagent tool allowlist** (Claude-style omitted-allowlist assumptions do not transfer).
-- "allowlisting a subagent tool like `Agent` in a definition" could mean granting nested delegation; resolved: the fixed safety exclusions always win — the name is removed from the run's toolset regardless of the frontmatter value.
+- "allowlisting a subagent tool like `Agent` in a definition" could mean granting nested delegation; resolved: the fixed safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`) always win — the name is removed from the run's toolset regardless of the frontmatter value.
 - "`model: inherit` in a definition could mean inherit everything from the parent run"; resolved: it selects only the **Parent model** for that **Subagent type**; thinking level and settings obey their own rules.
 - "expl" was a speculative prefix alias that could capture a distinct custom name such as `Explorer`; resolved: exact matches against valid custom **Subagent type** names win before built-in aliasing, so the `expl` alias still applies (`expl`, `EXPLORE`, …) but never eats an exact custom name.
 - "merge definitions across scopes" could mean per-name precedence or combining fields from multiple **Subagent definitions directories**; resolved: per-name precedence without merging, so a nearer scope cannot silently inherit a farther scope's prompt.
