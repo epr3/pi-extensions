@@ -1,18 +1,18 @@
-# Context Map
+# Glossary Map
 
 This repo uses a multi-context layout mirroring the tracked Pi Extension package directories under `packages/*`.
 
 ## Contexts
 
-- [lsp](./packages/lsp/CONTEXT.md) — language-server-backed code navigation and diagnostics tools.
-- [model-compaction](./packages/model-compaction/CONTEXT.md) — model-aware compaction trigger that starts automatic compaction at 50% of the active model's advertised context window, resumes interrupted work, and recovers from failures.
-- [model-presets](./packages/model-presets/CONTEXT.md) — atomic provider/model/thinking presets for Pi model selection.
-- [question](./packages/question/CONTEXT.md) — structured multiple-choice question tool for interactive agent workflows.
-- [statusline](./packages/statusline/CONTEXT.md) — context-degradation footer status rendered inside Pi.
-- [subagents](./packages/subagents/CONTEXT.md) — isolated delegated worker sessions launched by the parent Pi coding agent.
-- [todo](./packages/todo/CONTEXT.md) — persistent checklist tools used by planning and issue-resolution skills.
-- [web-fetch](./packages/web-fetch/CONTEXT.md) — URL fetching and readable-content extraction tool for research workflows.
-- [web-search](./packages/web-search/CONTEXT.md) — Google Custom Search backed web discovery tool for research workflows.
+- [lsp](./packages/lsp/GLOSSARY.md) — language-server-backed code navigation and diagnostics tools.
+- [model-compaction](./packages/model-compaction/GLOSSARY.md) — model-aware compaction trigger that starts automatic compaction at 50% of the active model's advertised context window, resumes interrupted work, and recovers from failures.
+- [model-presets](./packages/model-presets/GLOSSARY.md) — atomic provider/model/thinking presets for Pi model selection.
+- [question](./packages/question/GLOSSARY.md) — structured multiple-choice question tool for interactive agent workflows.
+- [statusline](./packages/statusline/GLOSSARY.md) — context-degradation footer status rendered inside Pi.
+- [subagents](./packages/subagents/GLOSSARY.md) — isolated delegated worker sessions launched by the parent Pi coding agent.
+- [todo](./packages/todo/GLOSSARY.md) — persistent checklist tools used by planning and issue-resolution skills.
+- [web-fetch](./packages/web-fetch/GLOSSARY.md) — URL fetching and readable-content extraction tool for research workflows.
+- [web-search](./packages/web-search/GLOSSARY.md) — Google Custom Search backed web discovery tool for research workflows.
 
 ## Relationships
 
@@ -100,7 +100,7 @@ _Avoid_: Manifest-only update, deferred migration, blind bump.
 - Tests could live next to source files, in `tests/`, or in `__tests__/`; resolved: use **Package test suite** directories named `__tests__/`.
 - Test scripts could include only run, run plus coverage, or run plus watch plus coverage; resolved: use the **Test script contract** with `test` and root coverage reporting.
 - Web/search/fetch tests could run against live services, optional live services, or mocks only; resolved: keep **Deterministic package tests** and avoid live external IO.
-- The old in-tree `docs/CONTEXT.md` used **Extension package** as a repo-wide term; resolved by defining the concrete package term inside each package context.
+- The old in-tree central glossary used **Extension package** as a repo-wide term; resolved by defining the concrete package term inside each package context.
 - `pi-config` is a config bundle, not a runtime Extension package; it intentionally has no package context here.
 - `shared` was support code, not a runtime Extension package; it intentionally has no package context here.
 - "model selector package" could mean patching Pi's raw model cycle, config-only `enabledModels`, or a broader mode profile system; resolved: create a `model-presets` Extension package centered on **Atomic model presets**.
