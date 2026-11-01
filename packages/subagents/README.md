@@ -144,6 +144,46 @@ The sub-session uses the same resource loader as the parent, so it discovers eve
 
 Background agents run through a concurrency queue (default 4, `PI_SUBAGENT_CONCURRENCY`).
 
+## Background outcome delivery
+
+Background runs report their outcome to the originating parent session automatically —
+one **attributed completion** per run during normal operation, no polling required.
+Explicit retrieval with `get_subagent_result` remains available either way.
+
+- The completion is a Pi custom message (`customType: "subagent-outcome"`). Its text
+  names the Subagent type, the short task description, the run id, and the terminal
+  status (`completed`, `failed`, or `stopped`), and carries the bounded result — or,
+  for stopped/failed runs, the available assistant text clearly marked incomplete, or
+  an explicit statement that no partial output exists. Structured attribution (run id,
+  type, status, counts) rides in the message `details`, not in the model-facing text.
+- If the parent is busy (between an agent run start and its full settle), the
+  completion queues as a non-interrupting follow-up of the current turn. If the parent
+  is idle, the completion starts a parent turn. The busy/idle choice is taken from
+  Pi's own agent lifecycle events — never inferred from UI availability (`hasUI`).
+- Delivery is bound to the originating session. On `session_shutdown` (quit, `new`,
+  `resume`, `fork`, or reload) queued and running runs are stopped, delivery is
+  deactivated, and cleanup is idempotent; a replaced session never receives
+  completions from runs it did not own, and Pi's stale-`ctx` errors after replacement
+  are treated as cancellation, not surfaced as failures.
+- Delivery is not guaranteed through everything that can end a turn: queue clearing,
+  abort, shutdown, replacement, or a crash can prevent it, and runs stopped by
+  session shutdown themselves never deliver (their owner is gone). This is
+  **at most one delivery per run during normal operation** — not crash-proof,
+  not exactly-once, and there is no automatic redelivery.
+- In Pi `print` and `json` modes the process exits after the initial prompt, so
+  automatic delivery of a later completion cannot be promised. Background launches
+  in those modes say so explicitly — in the launch result text and as
+  `details.delivery: { promised: false, mode: "print" }` — and point at explicit
+  retrieval. `tui` and `rpc` keep the conversation running and keep delivery
+  promised; the distinction follows the Pi mode, not `hasUI`.
+- Completions never contain live activity, tool transcripts, or hidden reasoning —
+  only the bounded final/partial result text under the shared
+  [20,000-byte limit](#bounded-result-text).
+
+Persistence of outcomes for later session revisit is separate behavior and not
+implemented yet; a delivered completion is an ordinary message on the branch that
+contains it.
+
 ## Bounded result text
 
 Subagent result text is truncated to a fixed **20,000 UTF-8 bytes** on every delivery

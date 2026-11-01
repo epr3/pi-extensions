@@ -16,6 +16,13 @@ import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts"
 import { resolveDefinitionToolset } from "./toolset.ts";
 import { AgentManager, type AgentRecord, type StopOutcome } from "./manager.ts";
 import {
+  CompletionDelivery,
+  ParentBusyTracker,
+  modeDeliveryDiagnostic,
+  partialOutputBlock,
+  type OutcomeMessage,
+} from "./delivery.ts";
+import {
   resolveTypeDefaultModel,
   resolveDefaultModel,
   resolveDefinitionModel,
@@ -205,13 +212,6 @@ function settledText(rec: AgentRecord): string {
   return `\u2717 ${rec.type} (${rec.description}) ${rec.status}: ${rec.error ?? ""}`;
 }
 
-/** Boolean that the run produced no partial assistant text. */
-function partialBlock(rec: AgentRecord): string {
-  return rec.partialText
-    ? `\n\nPartial assistant output (incomplete):\n${rec.partialText}`
-    : "\n\nNo partial assistant output is available.";
-}
-
 /**
  * Compose the parent-facing text for an explicit background retrieval.
  * Completed runs return their result; stopped and failed runs name the
@@ -228,7 +228,7 @@ export function retrievalText(rec: AgentRecord): string {
       : rec.status === "failed"
         ? `failed: ${rec.error}`
         : `status: ${rec.status}`;
-  return `${head}${partialBlock(rec)}`;
+  return `${head}${partialOutputBlock(rec)}`;
 }
 
 /** Compose the parent-facing response for a stop request. */
@@ -320,6 +320,16 @@ function settingsKey(): Record<string, any> {
   return out;
 }
 
+/** Strip the OutcomeMessage down to the Pick<CustomMessage,…> shape pi.sendMessage accepts. */
+function toPiMessage(msg: OutcomeMessage) {
+  return {
+    customType: msg.customType,
+    content: msg.content,
+    display: msg.display,
+    details: msg.details,
+  };
+}
+
 export default function (pi: ExtensionAPI) {
   const raw = settingsKey();
   const cfg = {
@@ -347,6 +357,38 @@ export default function (pi: ExtensionAPI) {
   const manager = new AgentManager({
     maxConcurrency: Number(process.env.PI_SUBAGENT_CONCURRENCY) || cfg.maxConcurrency,
     onEvent: (name, record) => pi.events.emit(`subagents:${name}`, { ...record }),
+  });
+
+  // ───────────────────────── Delivery to the originating session ────────────
+  // Runs and their completions belong to the session that launched them.
+  // Busy/idle is decided from Pi's own agent lifecycle (agent_start →
+  // agent_settled), never from UI availability; the attributed completion is
+  // a custom message (`subagent-outcome`) so the text is visible to the
+  // model while structured attribution rides in `details`.
+  const busy = new ParentBusyTracker();
+  pi.on("agent_start", () => busy.onAgentStart());
+  pi.on("agent_settled", () => busy.onAgentSettled());
+
+  const delivery = new CompletionDelivery(
+    {
+      isParentBusy: () => busy.isBusy(),
+      queueFollowUp: (msg) =>
+        pi.sendMessage(toPiMessage(msg), { triggerTurn: true, deliverAs: "followUp" }),
+      startParentTurn: (msg) => pi.sendMessage(toPiMessage(msg), { triggerTurn: true }),
+    },
+    {
+      onError: (d) => pi.events.emit("subagents:delivery-error", d),
+    },
+  );
+
+  // Owning-session guard: anything after shutdown (quit, reload, new,
+  // resume, fork) belongs to a different/consuming runtime — stop all work
+  // and cancel delivery instead of leaking into a replacement session.
+  let sessionEnded = false;
+  pi.on("session_shutdown", () => {
+    sessionEnded = true;
+    delivery.deactivate();
+    manager.shutdown("Session shutdown or replacement");
   });
 
   pi.registerTool({
@@ -524,19 +566,30 @@ export default function (pi: ExtensionAPI) {
           abortSignal: background ? stopSignal : mergedAbortSignal([ctx.signal, stopSignal]),
         });
       // Notify only for background settles — foreground returns its result
-      // inline, so a toast would be duplicate noise.
-      const onSettled =
-        background && ctx.hasUI
-          ? (rec: AgentRecord) =>
-              ctx.ui.notify(
-                settledText(rec),
-                rec.status === "completed"
-                  ? "info"
-                  : rec.status === "stopped"
-                    ? "warning"
-                    : "error",
-              )
-          : undefined;
+      // inline, so a toast would be duplicate noise. Delivery happens once
+      // per run through the coordinator; shutdown deactivates it before any
+      // shutdown-stopped settle can fire, so replacement sessions never
+      // receive a completion.
+      const onSettled = background
+        ? (rec: AgentRecord) => {
+            if (sessionEnded) return;
+            delivery.deliver(rec);
+            if (ctx.hasUI) {
+              try {
+                ctx.ui.notify(
+                  settledText(rec),
+                  rec.status === "completed"
+                    ? "info"
+                    : rec.status === "stopped"
+                      ? "warning"
+                      : "error",
+                );
+              } catch {
+                // Stale ctx after replacement: the toast target is gone.
+              }
+            }
+          }
+        : undefined;
 
       const { record, done } = manager.launch(
         { type, description: params.description, background },
@@ -546,11 +599,17 @@ export default function (pi: ExtensionAPI) {
 
       if (background) {
         record.warnings = warnings;
+        // Explicit diagnostic where the Pi mode cannot promise the later
+        // continuation (print/json): keyed off ctx.mode, never off hasUI.
+        const modeDiag = background ? modeDeliveryDiagnostic(ctx.mode) : undefined;
         return textResult(
-          `Started ${type} Subagent ${record.id} (background). Poll with get_subagent_result.`,
+          `Started ${type} Subagent ${record.id} (background). ` +
+            "Poll with get_subagent_result." +
+            (modeDiag ? ` ${modeDiag}` : ""),
           {
             agent_id: record.id,
             status: record.status,
+            ...(modeDiag ? { delivery: { promised: false, mode: ctx.mode, note: modeDiag } } : {}),
             ...(warnings.length > 0 ? { warnings } : {}),
             ...(defDiagnostics.length > 0 ? { definitionDiagnostics: defDiagnostics } : {}),
           },

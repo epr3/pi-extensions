@@ -34,6 +34,7 @@ function harness(hasUI = true, parentModel = parent) {
   extension({
     registerTool: (tool: any) => tools.set(tool.name, tool),
     registerCommand: () => {},
+    on: () => {},
     events: { emit: () => {} },
   } as any);
   const ctx = {

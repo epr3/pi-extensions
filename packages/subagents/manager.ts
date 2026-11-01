@@ -72,6 +72,8 @@ interface Job {
   controller: AbortController;
   /** Set once a stop request reached a not-yet-terminal job. */
   stopRequested: boolean;
+  /** Set when shutdown stops this job; wins over stop_subagent's wording. */
+  shutdownReason?: string;
   /** True once the first terminal outcome has been applied. */
   terminal: boolean;
 }
@@ -85,6 +87,7 @@ export class AgentManager {
   private seq = 0;
   private maxConcurrency: number;
   private onEvent: (name: string, record: AgentRecord) => void;
+  private shuttingDown = false;
 
   constructor(opts: ManagerOptions = {}) {
     this.maxConcurrency = opts.maxConcurrency && opts.maxConcurrency > 0 ? opts.maxConcurrency : 4;
@@ -102,6 +105,12 @@ export class AgentManager {
     exec: (signal: AbortSignal) => Promise<RunOutput>,
     onSettled?: (record: AgentRecord) => void,
   ): { record: AgentRecord; done: Promise<AgentRecord> } {
+    if (this.shuttingDown) {
+      throw new Error(
+        "Cannot launch a Subagent after session shutdown or replacement — " +
+          "this session's run registry is closed.",
+      );
+    }
     const record: AgentRecord = {
       id: `sa_${(++this.seq).toString(36)}_${Date.now().toString(36).slice(-4)}`,
       type: task.type,
@@ -177,6 +186,41 @@ export class AgentManager {
     };
   }
 
+  /**
+   * Stop every queued and running run: the originating session is shutting
+   * down or being replaced (session_shutdown for quit/reload/new/resume/fork).
+   * Queued runs settle as stopped without ever starting; running runs are
+   * aborted. Delivery is withheld for shutdown-stopped runs (the owner is
+   * gone), so callers deactivate their delivery channel before this. Safe to
+   * call repeatedly: the second call is a no-op.
+   */
+  shutdown(reason = "Session ended"): void {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    for (const job of this.jobs.values()) {
+      if (job.terminal) continue;
+      job.stopRequested = true;
+      if (job.record.status === "queued") {
+        this.unqueue(job);
+        this.settleTerminal(job, {
+          status: "stopped" satisfies Status,
+          stopReason: reason,
+        });
+      } else {
+        job.shutdownReason = reason;
+        job.controller.abort();
+        // Abort now, settle now: a shutdown-stopped run never claims output
+        // it did not capture, and an exec that ignores its signal cannot
+        // leave the registry holding a live-looking record. A later exec
+        // rejection is a no-op (terminal already applied).
+        this.settleTerminal(job, {
+          status: "stopped" satisfies Status,
+          stopReason: reason,
+        });
+      }
+    }
+  }
+
   async getResult(id: string, wait = false): Promise<AgentRecord> {
     const record = this.records.get(id);
     if (!record) throw new Error(`No subagent ${id}`);
@@ -232,10 +276,11 @@ export class AgentManager {
       const partial = typeof e?.partialText === "string" ? e.partialText : undefined;
       const partialPatch = partial ? { partialText: appendTruncationNotice(partial) } : {};
       if (job.stopRequested) {
-        // The stop request won: the first terminal outcome is "stopped".
+        // The first terminal outcome is "stopped" — either stop_subagent or
+        // session shutdown won the race with the run's own completion.
         this.settleTerminal(job, {
           status: "stopped" satisfies Status,
-          stopReason: "Stopped by request while running",
+          stopReason: job.shutdownReason ?? "Stopped by request while running",
           ...partialPatch,
         });
       } else {
@@ -252,6 +297,8 @@ export class AgentManager {
   }
 
   private pump(): void {
+    // Shutdown closed the registry: settle-out must not spawn new work.
+    if (this.shuttingDown) return;
     while (this.running < this.maxConcurrency) {
       // Foreground has priority; only drain background when no foreground jobs.
       const job = this.foregroundQueue.shift() ?? this.backgroundQueue.shift();
