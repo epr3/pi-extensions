@@ -13,7 +13,12 @@ import {
   type CustomTypeDiscovery,
 } from "./discovery.ts";
 import { runSubagent, type StreamEvent, type StreamCallback } from "./runner.ts";
-import { ACTIVITY_TAIL_LIMIT, entryFromStreamEvent, ActivityCapture } from "./activity.ts";
+import {
+  ACTIVITY_TAIL_LIMIT,
+  activityTail,
+  entryFromStreamEvent,
+  ActivityCapture,
+} from "./activity.ts";
 import {
   OutcomePersistence,
   reconstructBranchRuns,
@@ -21,6 +26,7 @@ import {
   reconstructedRetrievalText,
 } from "./outcome-records.ts";
 import { resolveDefinitionToolset } from "./toolset.ts";
+import { SubagentCardBody, SubagentCardTop } from "./presentation.ts";
 import { AgentManager, type AgentRecord, type StopOutcome } from "./manager.ts";
 import {
   OUTCOME_MESSAGE_TYPE,
@@ -93,9 +99,20 @@ export type { StreamEntry };
 export interface AgentStreamDetails {
   streamEntries?: StreamEntry[];
   streamText?: string;
+  /** Number of earlier activity entries dropped from the retained tail. */
+  streamOmitted?: number;
   /** Run id of the streaming run, set once the record exists — ride along so
    *  compact active rows can attribute concurrent runs by id. */
   agentId?: string;
+  /** Structured identity, so renderers do not need to reparse display text. */
+  type?: string;
+  description?: string;
+  status?: string;
+  tokens?: number;
+  toolUses?: number;
+  background?: boolean;
+  /** Pi's background launch uses snake_case for the model-facing receipt. */
+  agent_id?: string;
 }
 
 /** Latest tool lifecycle marker with its word — status never rides on a
@@ -111,10 +128,10 @@ function toolMarkerText(entry: Extract<StreamEntry, { type: "tool_start" | "tool
  * when earlier entries were dropped. Hidden reasoning never reaches this list
  * (the runner never forwards thinking deltas). Display-only.
  */
-export function formatExpandedStream(entries: StreamEntry[]): string {
+export function formatExpandedStream(entries: StreamEntry[], omitted = 0): string {
   const tail = entries.length > EXPANDED_TAIL_LIMIT ? entries.slice(-EXPANDED_TAIL_LIMIT) : entries;
   const lines: string[] = [];
-  const dropped = entries.length - tail.length;
+  const dropped = omitted + entries.length - tail.length;
   if (dropped > 0) lines.push(`… ${dropped} earlier entries not shown`);
   let textBuffer = "";
   for (const e of tail) {
@@ -162,7 +179,7 @@ export function backgroundReceiptText(
   modeDiagnostic?: string,
 ): string {
   return (
-    `Started background Subagent — ${run.type} "${run.description}" [run ${run.id}] — status: queued. ` +
+    `Subagent ${run.type} "${run.description}" [run ${run.id}] — status: queued.\n` +
     "Retrieve the result with get_subagent_result, or stop the run with stop_subagent." +
     (modeDiagnostic ? ` ${modeDiagnostic}` : "")
   );
@@ -183,23 +200,94 @@ export function renderAgentResult(
   options: ToolRenderResultOptions,
   theme: Theme,
   _ctx: unknown,
-): Text {
-  if (!options.isPartial) {
-    // The finalized row is the clean model-facing result (or the receipt for
-    // background launches) — never an activity tail. Activity stays UI-only
-    // in the partial details and is deliberately dropped here.
-    const text = result.content
-      .filter(isTextContent)
-      .map((c) => c.text)
-      .join("\n");
-    return new Text(theme.fg("toolOutput", text), 0, 0);
+): Text | SubagentCardBody {
+  const details = (result.details ?? {}) as AgentStreamDetails;
+  const runId = details.agentId ?? details.agent_id;
+  const status = details.status ?? (options.isPartial ? "running" : "completed");
+  const contentText = result.content
+    .filter(isTextContent)
+    .map((c) => c.text)
+    .join("\n");
+
+  if (options.isPartial) {
+    const entries = details.streamEntries;
+    if (!entries || entries.length === 0) return new Text("", 0, 0);
+    const activity = formatExpandedStream(entries, details.streamOmitted);
+    const body = options.expanded
+      ? `${partialHead(theme, status, runId, entries)}${activity ? `\n\n${theme.fg("muted", "Activity")}\n${theme.fg("toolOutput", activity)}` : ""}`
+      : partialHead(theme, status, runId, entries);
+    return new SubagentCardBody(theme, body);
   }
-  const entries = result.details?.streamEntries;
-  if (!entries || entries.length === 0) return new Text("", 0, 0);
-  const text = options.expanded
-    ? formatExpandedStream(entries)
-    : formatCollapsedStream(entries, result.details?.agentId);
-  return new Text(theme.fg("toolOutput", text), 0, 0);
+
+  // Background launch receipt: the top border names the run, the body is the
+  // textual queued state plus the retrieve/stop pointers. The authoritative
+  // outcome arrives later as a separate attributed completion.
+  if (details.background || (!details.streamEntries && details.agent_id && status === "queued")) {
+    const instructions =
+      contentText.split("\n").slice(1).join("\n").trim() ||
+      "Retrieve the result with get_subagent_result, or stop the run with stop_subagent.";
+    const body = `${statusHead(theme, status, undefined)}\n${theme.fg("toolOutput", instructions)}`;
+    return new SubagentCardBody(theme, body);
+  }
+
+  const head = statusHead(theme, status, statsText(details.toolUses, details.tokens));
+  const label = (name: string) => theme.fg("muted", name);
+  const output = theme.fg("toolOutput", contentText);
+  if (!options.expanded) {
+    return new SubagentCardBody(theme, `${head}\n\n${label("Result")}\n${output}`);
+  }
+  const omitted = details.streamOmitted ?? 0;
+  const activity = details.streamEntries?.length
+    ? formatExpandedStream(details.streamEntries, omitted)
+    : "";
+  return new SubagentCardBody(
+    theme,
+    `${head}${activity ? `\n\n${label("Activity")}\n${theme.fg("toolOutput", activity)}` : ""}\n\n${label("Result")}\n${output}`,
+  );
+}
+
+/** Status is always spelled out, so meaning never rides on the icon/color. */
+function statusHead(theme: Theme, status: string, detail?: string): string {
+  const icon =
+    status === "completed" ? "✓" : status === "failed" ? "✗" : status === "stopped" ? "⏹" : "◷";
+  const color =
+    status === "completed"
+      ? "success"
+      : status === "failed"
+        ? "error"
+        : status === "stopped"
+          ? "warning"
+          : "accent";
+  return `${theme.fg(color, icon)} ${theme.fg(color, status)}${detail ? ` · ${detail}` : ""}`;
+}
+
+function latestToolMarker(entries: StreamEntry[]): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (e.type === "tool_start" || e.type === "tool_end") return toolMarkerText(e);
+  }
+  return undefined;
+}
+
+function partialHead(
+  theme: Theme,
+  status: string,
+  runId: string | undefined,
+  entries: StreamEntry[],
+): string {
+  const marker = latestToolMarker(entries);
+  return `${statusHead(theme, status, undefined)}${runId ? ` [run ${runId}]` : ""}${marker ? ` — ${marker}` : ""}`;
+}
+
+function statsText(toolUses?: number, tokens?: number): string | undefined {
+  const parts: string[] = [];
+  if (typeof toolUses === "number" && toolUses >= 0) {
+    parts.push(`${toolUses} tool use${toolUses === 1 ? "" : "s"}`);
+  }
+  if (typeof tokens === "number" && tokens > 0) {
+    parts.push(tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k tok` : `${tokens} tok`);
+  }
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 /**
@@ -345,14 +433,15 @@ export function displayAgentTypeName(requested: string): string {
 export function renderAgentCall(
   args: { subagent_type: string; description: string; run_in_background?: boolean },
   theme: Theme,
-): Text {
+): SubagentCardTop {
   const type = displayAgentTypeName(args.subagent_type);
-  const text =
-    theme.fg("toolTitle", theme.bold("Agent ")) +
+  const title =
+    theme.fg("toolTitle", theme.bold("Agent")) +
+    (args.run_in_background ? theme.fg("muted", " · background") : "");
+  const header =
     theme.fg("accent", type) +
-    theme.fg("muted", `  ${args.description}`) +
-    theme.fg("muted", args.run_in_background ? "  (background)" : "");
-  return new Text(text, 0, 0);
+    (args.description ? theme.fg("muted", ` · "${args.description}"`) : "");
+  return new SubagentCardTop(theme, title, header);
 }
 
 // Settings: this extension reads its own top-level "subagents" key from Pi's
@@ -495,6 +584,7 @@ export default function (pi: ExtensionAPI) {
     ],
     renderCall: renderAgentCall,
     renderResult: renderAgentResult,
+    renderShell: "self",
     parameters: agentParams,
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       const availableTools = getActiveToolNamesFrom(pi);
@@ -643,6 +733,9 @@ export default function (pi: ExtensionAPI) {
             streamText,
             streamEntries: [...streamEntries],
             ...(streamRunId ? { agentId: streamRunId } : {}),
+            type,
+            description: params.description,
+            status: "running",
           },
         });
       };
@@ -732,12 +825,14 @@ export default function (pi: ExtensionAPI) {
           backgroundReceiptText({ type, description: params.description, id: record.id }, modeDiag),
           {
             agent_id: record.id,
+            agentId: record.id,
             // Structured receipt identity (dual result contract): revisit
             // reconstruction reads type/description from here instead of
             // reparsing the receipt row's display text.
             type,
             description: params.description,
             status: record.status,
+            background: true,
             ...(modeDiag ? { delivery: { promised: false, mode: ctx.mode, note: modeDiag } } : {}),
             ...(warnings.length > 0 ? { warnings } : {}),
             ...(defDiagnostics.length > 0 ? { definitionDiagnostics: defDiagnostics } : {}),
@@ -753,11 +848,17 @@ export default function (pi: ExtensionAPI) {
         // parent's turn was aborted the call never returns this at all.
         throw new Error(`Subagent failed: ${rec.error}${partialOutputBlock(rec)}`);
       }
+      const retained = activityTail(streamEntries);
       return textResult(rec.result ?? "(no output)", {
         agent_id: rec.id,
+        agentId: rec.id,
+        type,
+        description: params.description,
         status: rec.status,
         tokens: rec.tokens,
         toolUses: rec.toolUses,
+        streamEntries: retained.entries,
+        streamOmitted: retained.omitted,
         ...(warnings.length > 0 ? { warnings } : {}),
         ...(defDiagnostics.length > 0 ? { definitionDiagnostics: defDiagnostics } : {}),
       });

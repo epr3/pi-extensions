@@ -1,5 +1,6 @@
 import type { MessageRenderOptions, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { SubagentCard } from "./presentation.ts";
 import type { AgentRecord } from "./manager.ts";
 
 /**
@@ -212,11 +213,20 @@ export function outcomeHeadline(message: {
         ? details.stopReason
         : "";
   const boundedReason = reason ? (reason.length > 60 ? `${reason.slice(0, 60)}…` : reason) : "";
+  const toolUses = typeof details.toolUses === "number" ? details.toolUses : undefined;
+  const tokens = typeof details.tokens === "number" ? details.tokens : undefined;
+  const stats: string[] = [];
+  if (toolUses !== undefined) stats.push(`${toolUses} tool use${toolUses === 1 ? "" : "s"}`);
+  if (tokens !== undefined && tokens > 0) {
+    stats.push(tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k tok` : `${tokens} tok`);
+  }
   const parts = [
     "Subagent outcome",
     [type, description ? `"${description}"` : ""].filter(Boolean).join(" "),
     id ? `[run ${id}]` : "",
-    status + (boundedReason ? ` (${boundedReason})` : ""),
+    status +
+      (boundedReason ? ` (${boundedReason})` : "") +
+      (stats.length ? ` · ${stats.join(" · ")}` : ""),
   ].filter(Boolean);
   return parts.join(" — ");
 }
@@ -242,7 +252,7 @@ export function renderOutcomeMessage(
   message: OutcomeRenderMessage,
   options: MessageRenderOptions,
   theme: Theme,
-): Text {
+): Text | SubagentCard {
   const content =
     typeof message.content === "string"
       ? message.content
@@ -254,10 +264,20 @@ export function renderOutcomeMessage(
   // first line when they are missing so the attribution statement stays
   // readable rather than collapsing to a bare "Subagent outcome" stub.
   const details = message.details as Record<string, unknown> | undefined;
-  const head =
-    details && (details.status !== undefined || details.agentId !== undefined)
-      ? outcomeHeadline(message)
-      : (content.split("\n", 1)[0] ?? "Subagent outcome");
-  const text = options.expanded ? `${head}\n\n${content}` : head;
-  return new Text(theme.fg("toolOutput", text), options.outputPad, 0);
+  const typed = details && (details.status !== undefined || details.agentId !== undefined);
+  if (!typed) {
+    const head = content.split("\n", 1)[0] ?? "Subagent outcome";
+    const text = options.expanded ? `${head}\n\n${content}` : head;
+    return new Text(theme.fg("toolOutput", text), options.outputPad, 0);
+  }
+  const head = outcomeHeadline(message);
+  // The stored content repeats the attribution line before the body. Keep
+  // the authoritative body in the card and let the bordered headline carry
+  // the identity, so the completion reads as one result card.
+  const body = content.includes("\n\n") ? content.slice(content.indexOf("\n\n") + 2) : content;
+  return new SubagentCard(
+    theme,
+    theme.fg("toolTitle", theme.bold("Subagent outcome")),
+    `${head}\n\n${theme.fg("toolOutput", body.trim() || content)}`,
+  );
 }

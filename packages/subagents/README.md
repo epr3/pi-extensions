@@ -320,11 +320,11 @@ delivery:
   indistinguishable from a run that never showed a completion.
 
 - The completion renders through a message renderer registered for the
-  `subagent-outcome` custom type: the collapsed row is one attributable line
-  (`Subagent outcome — general "task" [run sa_x] — completed`; failed/stopped
-  headlines also carry the reason), and the expanded row adds the full
-  authoritative content — the bounded result, or the clearly marked partial
-  output, or the explicit no-partial statement.
+  `subagent-outcome` custom type as a bordered result card. Its headline names
+  the run (`Subagent outcome — general "task" [run sa_x] — completed`) with
+  tool/token stats; the body carries the authoritative content — the bounded
+  result, or the clearly marked partial output, or the explicit no-partial
+  statement. Failed/stopped headlines also carry the reason.
 
 ## Run presentation
 
@@ -334,26 +334,28 @@ expanded activity tail for inspection, and distinct outcome rows.
 
 ### Compact rows (identity and state)
 
-- The `Agent` call row shows `Agent <type>  <description>` plus
-  `(background)` when launched with `run_in_background`. The displayed type is
-  what the parent requested — **custom names are never rewritten to a built-in
-  they resemble**: a custom type named `explorer` is displayed as `explorer`,
-  not `explore` (only exact built-in names canonicalize, case-insensitively).
-  Launch-time validation still rejects unsupported types.
+- The `Agent` row is a bordered card. Its top border names the tool (`Agent`,
+  plus `background` when launched with `run_in_background`) and its header line
+  carries `<type> · "<description>"`. The displayed type is what the parent
+  requested — **custom names are never rewritten to a built-in they resemble**:
+  a custom type named `explorer` is displayed as `explorer`, not `explore`
+  (only exact built-in names canonicalize, case-insensitively). Launch-time
+  validation still rejects unsupported types.
 - While a foreground run is active, its result row shows the textual running
   state plus the latest tool lifecycle marker **in words** —
-  `running — ▶ started grep`, `running — ✓ finished read`,
-  `running — ✗ failed bash` — or the neutral `running` before any tool has
+  `◷ running — ▶ started grep`, `◷ running — ✓ finished read`,
+  `◷ running — ✗ failed bash` — or the neutral `◷ running` before any tool has
   moved. It never shows live assistant prose: expand for the text tail instead.
 - Once the run has an id, the compact row includes it —
-  `running [run sa_1_ab] — ✓ finished read` — so sibling rows from same-turn
+  `◷ running [run sa_1_ab] — ✓ finished read` — so sibling rows from same-turn
   fan-out stay attributable to their own runs. Background rows (the receipt and
   the attributed completion) always carry the run id.
 - Nothing important rides on color or symbols alone: every state and marker is
   also stated in words, and all of it is plain text that wraps, so identity and
   status survive narrow terminals.
-- Outcomes of completed foreground runs render inline and separate from any
-  activity. A failed foreground run surfaces its error — reason included —
+- Outcomes of completed foreground runs render inline in the same card:
+  `✓ completed · N tool uses · N tok`, then `Activity` (on expansion) and
+  `Result`. A failed foreground run surfaces its error — reason included —
   distinctly from a completed answer; a parent-cancelled foreground run stops
   leaking updates and its partial text follows the same partial/missing-output
   contract as background stops. Keeping the conversation legible is the point:
@@ -370,16 +372,17 @@ expanded activity tail for inspection, and distinct outcome rows.
   deltas into the tail, and partial output promoted into results is assistant
   prose only.
 - Activity stays out of model-facing content: the tail lives in the row's
-  `details` during streaming, and the finalized row renders the clean result
-  (or the background receipt) with the activity deliberately dropped.
+  `details` during streaming and is retained, bounded, in the finalized row's
+  details. Expansion of a completed row shows that retained activity separately
+  from the clean result (or the background receipt).
 
 ### Background receipts and attributed completions
 
-The finalized background launch row is a **receipt**: it names the type, the
-short task description, the run id, and the textual state —
-`Started background Subagent — general "refactor the parser" [run sa_7_zzz] —
-status: queued. Retrieve the result with get_subagent_result, or stop the run
-with stop_subagent.`
+The finalized background launch row is a **receipt**: its card names the type,
+short task description, run id, and textual state —
+`Subagent general "refactor the parser" [run sa_7_zzz] — status: queued.
+Retrieve the result with get_subagent_result, or stop the run with
+stop_subagent.`
 
 The authoritative visible outcome is later the **attributed completion**
 message (see [Background outcome delivery](#background-outcome-delivery)),

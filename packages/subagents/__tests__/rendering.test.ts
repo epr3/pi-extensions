@@ -101,11 +101,10 @@ describe("renderAgentCall", () => {
     expect(lines.length).toBeGreaterThan(0);
   });
 
-  it("starts with tool name, not bare type", () => {
+  it("names the tool, not a bare type", () => {
     const text = renderedText("explore", "short task");
-    const trimmed = text.trim();
-    expect(trimmed.startsWith("Agent")).toBe(true);
-    expect(trimmed.startsWith("explore")).toBe(false);
+    expect(text).toContain("Agent");
+    expect(text.trim().startsWith("explore")).toBe(false);
   });
 
   it("renders an unsupported type as requested without throwing", () => {
@@ -121,13 +120,15 @@ describe("renderAgentCall", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderAgentResult — final", () => {
-  it("renders clean answer with no tool markers", () => {
+  it("renders the result card with the clean answer and compact activity markers", () => {
     const result = {
       content: [{ type: "text" as const, text: "Clean final answer." }],
       details: { agent_id: "sa_abc", status: "completed", tokens: 10, toolUses: 1 },
     };
     const text = renderResultText(result, { expanded: false, isPartial: false });
     expect(text).toContain("Clean final answer.");
+    expect(text).toContain("Result");
+    expect(text).toContain("1 tool use");
     expect(text).not.toContain("▶");
     expect(text).not.toContain("streamText");
   });
@@ -150,7 +151,8 @@ describe("renderAgentResult — final", () => {
       },
     };
     const text = renderResultText(result, { expanded: false, isPartial: false });
-    expect(text.startsWith("Clean answer.")).toBe(true);
+    expect(text).toContain("Clean answer.");
+    expect(text).toContain("Result");
     expect(text).not.toContain("▶");
     expect(text).not.toContain("✗");
     expect(text).not.toContain("leaked stream");
@@ -169,9 +171,9 @@ describe("renderAgentResult — final", () => {
         details: { agent_id: "sa_x", status: "completed" as const, tokens: 1, toolUses: 0 },
       };
       const rendered = renderResultText(result, { expanded: false, isPartial: false });
-      expect(rendered.startsWith(answer)).toBe(true);
+      expect(rendered).toContain(answer);
+      expect(rendered).toContain("Result");
       expect(rendered).not.toContain("▶");
-      expect(rendered).not.toContain("✓");
       expect(rendered).not.toContain("✗");
     }
   });
@@ -306,7 +308,8 @@ describe("renderAgentResult — partial collapsed", () => {
       { type: "tool_start", name: "grep" },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("running — ▶ started grep");
+    expect(text).toContain("running");
+    expect(text).toContain("▶ started grep");
     expect(text).not.toContain("Starting search");
   });
 
@@ -316,7 +319,8 @@ describe("renderAgentResult — partial collapsed", () => {
       { type: "tool_end", name: "read", error: false },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("running — ✓ finished read");
+    expect(text).toContain("running");
+    expect(text).toContain("✓ finished read");
   });
 
   it("shows latest tool error with distinct failure wording", () => {
@@ -325,7 +329,8 @@ describe("renderAgentResult — partial collapsed", () => {
       { type: "tool_end", name: "bash", error: true },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("running — ✗ failed bash");
+    expect(text).toContain("running");
+    expect(text).toContain("✗ failed bash");
   });
 
   it("ignores trailing text — shows latest tool marker, never assistant prose", () => {
@@ -335,14 +340,15 @@ describe("renderAgentResult — partial collapsed", () => {
       { type: "text", text: "Almost done." },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("running — ✓ finished read");
+    expect(text).toContain("running");
+    expect(text).toContain("✓ finished read");
     expect(text).not.toContain("Almost done");
   });
 
   it("shows the neutral running state when only text entries exist", () => {
     const entries: StreamEntry[] = [{ type: "text", text: "Thinking..." }];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("running");
+    expect(text).toContain("running");
     expect(text).not.toContain("Thinking");
   });
 
@@ -352,7 +358,8 @@ describe("renderAgentResult — partial collapsed", () => {
       { type: "text", text: "Still working..." },
     ];
     const text = renderResultText(makePartialResult(entries), { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("running");
+    expect(text).toContain("running");
+    expect(text).not.toContain("Still working");
   });
 
   it("includes the run id when known so concurrent runs stay distinguishable", () => {
@@ -363,7 +370,8 @@ describe("renderAgentResult — partial collapsed", () => {
     const result = makePartialResult(entries);
     result.details.agentId = "sa_1_ab";
     const text = renderResultText(result, { expanded: false, isPartial: true });
-    expect(text.trim()).toBe("running [run sa_1_ab] — ✓ finished read");
+    expect(text).toContain("running [run sa_1_ab]");
+    expect(text).toContain("✓ finished read");
   });
 
   it("renders empty text when no entries", () => {

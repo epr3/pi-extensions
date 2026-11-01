@@ -131,7 +131,7 @@ describe("compact active row — textual state and latest tool marker", () => {
       ],
       { expanded: false },
     );
-    expect(text.trim()).toBe("running");
+    expect(text).toContain("running");
     expect(text).not.toContain("Thinking");
   });
 
@@ -296,9 +296,10 @@ describe("renderAgentCall — custom-type resolution fix", () => {
     expect(renderedCall({ subagent_type: "general", description: "x" })).toContain("general");
   });
 
-  it("still starts with the tool name, never with a bare type", () => {
-    const text = renderedCall({ subagent_type: "explore", description: "short task" }).trim();
-    expect(text.startsWith("Agent")).toBe(true);
+  it("names the tool, never a bare type", () => {
+    const text = renderedCall({ subagent_type: "explore", description: "short task" });
+    expect(text).toContain("Agent");
+    expect(text.trim().startsWith("explore")).toBe(false);
   });
 
   it("marks background call rows in words", () => {
@@ -366,7 +367,8 @@ describe("narrow widths — identity and outcome survive wrapping", () => {
       undefined,
     );
     const narrow = component.render(28).join("\n").replace(/\s+/g, " ");
-    expect(narrow).toContain("earlier entries not shown");
+    expect(narrow).toContain("earlier entries");
+    expect(narrow).toContain("not shown");
     expect(narrow).toContain("tool_90");
   });
 });
@@ -454,7 +456,7 @@ describe("renderOutcomeMessage — authoritative attributed completion", () => {
     description: "find auth helpers",
   } as const;
 
-  it("compact: one identifiable line that names type, task, run id, and textual status", () => {
+  it("compact: an identifiable result card naming type, task, run id, status, and stats", () => {
     const msg = outcomeMessage({
       ...base,
       status: "completed",
@@ -464,15 +466,17 @@ describe("renderOutcomeMessage — authoritative attributed completion", () => {
       toolUses: 2,
     });
     const text = renderOutcome(msg, false);
-    const lines = text.split("\n").filter((l) => l.trim() !== "");
-    expect(lines.length).toBe(1);
+    expect(text).toContain("Subagent outcome");
     expect(text).toContain("explore");
     expect(text).toContain("find auth helpers");
     expect(text).toContain("sa_1_out");
     expect(text).toContain("completed");
+    expect(text).toContain("2 tool uses");
+    expect(text).toContain("4 tok");
+    expect(text).toContain("the bounded answer");
   });
 
-  it("compact hides the result body; expanded shows the authoritative full content", () => {
+  it("shows the authoritative result body in the completion card", () => {
     const msg = outcomeMessage({
       ...base,
       status: "completed",
@@ -482,7 +486,7 @@ describe("renderOutcomeMessage — authoritative attributed completion", () => {
       toolUses: 2,
     });
     const compact = renderOutcome(msg, false);
-    expect(compact).not.toContain("the bounded answer body");
+    expect(compact).toContain("the bounded answer body");
     const expanded = renderOutcome(msg, true);
     expect(expanded).toContain("the bounded answer body");
     expect(expanded).toContain("sa_1_out");
@@ -666,7 +670,7 @@ describe("extension registration — subagent-outcome message renderer", () => {
     const expandedText = expanded.render(80).join("\n");
     expect(compactText).toContain("general");
     expect(compactText).toContain("sa_5_rr");
-    expect(compactText).not.toContain("schema wired");
+    expect(compactText).toContain("schema wired");
     expect(expandedText).toContain("schema wired");
   });
 });
