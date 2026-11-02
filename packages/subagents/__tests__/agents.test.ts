@@ -88,6 +88,51 @@ describe("explore prompt", () => {
   });
 });
 
+describe("explore semantic navigation guidance", () => {
+  const prompt = AGENTS.explore.systemPrompt!.toLowerCase();
+
+  it("expresses the LSP-first preference for semantic navigation", () => {
+    expect(/lsp_/.test(prompt)).toBe(true);
+    expect(/prefer/.test(prompt)).toBe(true);
+    expect(/grep|\bread\b|\bfind\b/.test(prompt)).toBe(true);
+  });
+
+  it("permits locating an identifier or position with text tools first and directs textual questions to them", () => {
+    expect(/locate|find/.test(prompt)).toBe(true);
+    expect(/position|identifier/.test(prompt)).toBe(true);
+    expect(/comments/.test(prompt)).toBe(true);
+    expect(/non-code/.test(prompt)).toBe(true);
+  });
+
+  it("supports fallback when the language server cannot help and names uncertainty", () => {
+    expect(/fallback|fall back/.test(prompt)).toBe(true);
+    expect(/unavailable|fails|times out/.test(prompt)).toBe(true);
+    expect(/uncertain/.test(prompt)).toBe(true);
+  });
+
+  it("treats empty semantic results as inconclusive with selective verification", () => {
+    expect(/empty/.test(prompt)).toBe(true);
+    expect(/inconclusive/.test(prompt)).toBe(true);
+    expect(/verify/.test(prompt)).toBe(true);
+    expect(/not automatically/.test(prompt)).toBe(true);
+  });
+
+  it("keeps access framed as configuration — extra tools are granted, allowlist-only codemode stays", () => {
+    expect(prompt).toContain("granted");
+    expect(prompt).toContain("allowlist");
+  });
+
+  it("explore access to lsp tools remains configuration, not default", () => {
+    expect(DEFAULT_EXPLORE_TOOLS).not.toContain("lsp_definition");
+    expect(exploreToolset(["lsp_definition"]).includes("lsp_definition")).toBe(true);
+    expect(
+      exploreToolset([], { PI_SUBAGENT_EXPLORE_TOOLS: "lsp_references" }).includes(
+        "lsp_references",
+      ),
+    ).toBe(true);
+  });
+});
+
 // ─── Agent config assertions ────────────────────────────────────────────────
 
 describe("resolveAgentType()", () => {

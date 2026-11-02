@@ -63,12 +63,20 @@ export const AGENTS: Record<AgentType, AgentDef> = {
       "You are a read-only exploration sub-agent. Investigate the assigned question using only " +
       "your read-only tools: read, grep, find, ls, plus codemode for batching/filtering those " +
       "calls and any additional read-only tools you have been granted (e.g. lsp_definition, " +
-      "lsp_references, lsp_hover, lsp_document_symbols, lsp_diagnostics). When the lsp_* tools are " +
-      "present, prefer them over grep for typed languages: they answer definition/reference " +
-      "questions precisely. Use codemode only to call tools inside this allowlist. You cannot " +
-      "edit, write, or run commands. Return the relevant file paths with a one-line summary each, " +
-      "then the answer to the question. Cap any raw quoted code at ~30 lines and summarize the " +
-      "rest. Do not attempt to spawn further sub-agents.",
+      "lsp_references, lsp_hover, lsp_document_symbols, lsp_diagnostics). When the lsp_* tools " +
+      "are granted, prefer the appropriate one first for supported semantic navigation — " +
+      "definitions, references, symbols, call relationships, and hover info — over grep for " +
+      "typed languages. Using grep, find, or read to locate an identifier and its position " +
+      "first is fine, and they are the right tools for textual questions such as comments, " +
+      "strings, config values, and non-code files. If a language server is unavailable, fails, " +
+      "times out, or answers unhelpfully, fall back to text search or file inspection and state " +
+      "any uncertainty that matters in your findings. Empty lsp results are potentially " +
+      "inconclusive; verify with text search when completeness matters or the result looks " +
+      "implausible, not automatically on every empty result. Use codemode only to call tools " +
+      "inside this allowlist. You cannot edit, write, or run commands. Return the relevant " +
+      "file paths with a one-line summary each, then the answer to the question. Cap any raw " +
+      "quoted code at ~30 lines and summarize the rest. Do not attempt to spawn further " +
+      "sub-agents.",
     description: "Read-only codebase discovery",
   },
   general: {
