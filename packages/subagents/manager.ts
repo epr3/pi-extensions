@@ -224,12 +224,27 @@ export class AgentManager {
     }
   }
 
-  async getResult(id: string, wait = false): Promise<AgentRecord> {
+  async getResult(
+    id: string,
+    wait = false,
+    onProgress?: (record: AgentRecord) => void,
+  ): Promise<AgentRecord> {
     const record = this.records.get(id);
     if (!record) throw new Error(`No subagent ${id}`);
     if (wait) {
+      // Report the pre-wait state once, then each poll transition, so a
+      // blocking retrieval can show live status instead of an idle row.
+      let seen = "";
+      const report = () => {
+        const key = `${record.status}:${record.tokens}:${record.toolUses}`;
+        if (key === seen) return;
+        seen = key;
+        onProgress?.(record);
+      };
+      report();
       while (record.status === "queued" || record.status === "running") {
         await new Promise((r) => setTimeout(r, 150));
+        report();
       }
     }
     return record;

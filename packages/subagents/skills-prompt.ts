@@ -28,15 +28,18 @@ export function preloadedSkillsSection(skills?: PreloadedSkill[]): string {
 }
 
 /**
- * The sub-session's effective system-prompt override: the custom definition's
- * body (when it has one) followed by the preloaded-skills section. Returns
- * undefined when neither contributes anything, so the normal prompt applies.
+ * The sub-session's effective system-prompt override: the inherited or custom
+ * body followed by the preloaded-skills section and any extra tool guidance
+ * (e.g. the codemode preference). `body` is the custom definition's body when
+ * it has one, otherwise Pi's normal prompt for the cwd. Returns undefined when
+ * no part contributes anything, so the normal prompt applies unchanged.
  */
 export function composeCustomSystemPrompt(
   body: string | undefined,
   skills?: PreloadedSkill[],
+  toolGuidance?: string,
 ): string | undefined {
-  const merged = [body, preloadedSkillsSection(skills)]
+  const merged = [body, preloadedSkillsSection(skills), toolGuidance]
     .filter((s): s is string => Boolean(s && s.length))
     .join("\n\n");
   return merged.length > 0 ? merged : undefined;

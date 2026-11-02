@@ -24,6 +24,15 @@ export const CORE_READ_TOOLS = ["read", "grep", "find", "ls"];
  *  itself read-only, so the allowlist still has to keep write/execute tools out. */
 export const DEFAULT_EXPLORE_TOOLS = [...CORE_READ_TOOLS, "codemode"];
 
+/** Tool guidance for every Subagent when codemode is available: prefer it when
+ *  a task needs several calls, calls whose results feed later calls, or
+ *  filtering large output; keep simple single calls on the direct tools. */
+export const CODEMODE_GUIDANCE =
+  "Prefer codemode when a task needs several tool calls, when one call's result feeds the next, " +
+  "or when tool output must be filtered before it reaches you: it batches independent calls, " +
+  "chains dependent ones, and filters large results in one step. Use the direct tools for " +
+  "straightforward single calls.";
+
 /** Always excluded from sub-sessions: no recursion, no stopping, and no
  *  questions without a user — only the parent launches, retrieves, stops. */
 export const SAFETY_EXCLUDES = ["Agent", "get_subagent_result", "stop_subagent", "question"];

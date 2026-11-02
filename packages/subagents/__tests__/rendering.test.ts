@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { renderAgentCall, renderAgentResult, type StreamEntry } from "../index.ts";
+import {
+  renderAgentCall,
+  renderAgentResult,
+  renderRetrievalResult,
+  type StreamEntry,
+} from "../index.ts";
 
 // ---------------------------------------------------------------------------
 // Plain theme — no ANSI codes, just passes text through.
@@ -407,5 +412,66 @@ describe("renderAgentResult — partial collapsed", () => {
       { expanded: false, isPartial: true },
     );
     expect(nullEntries).toBe("");
+  });
+});
+// ---------------------------------------------------------------------------
+// get_subagent_result presentation
+// ---------------------------------------------------------------------------
+
+describe("get_subagent_result rendering", () => {
+  const details = {
+    agent_id: "sa_1_ab",
+    agentId: "sa_1_ab",
+    type: "general",
+    description: "scout",
+    status: "completed",
+    tokens: 4200,
+    toolUses: 2,
+    result: "the answer",
+  };
+
+  function render(result: any, options: { expanded: boolean; isPartial: boolean }): string {
+    return renderRetrievalResult(result, options, plainTheme, undefined).render(80).join("\n");
+  }
+
+  it("renders a compact attributable row when collapsed", () => {
+    const text = render(
+      { content: [{ type: "text", text: "the answer" }], details },
+      { expanded: false, isPartial: false },
+    );
+    expect(text).toContain("completed");
+    expect(text).toContain("general");
+    expect(text).toContain("scout");
+    expect(text).toContain("sa_1_ab");
+    expect(text).toContain("2 tool uses");
+    expect(text).not.toContain("the answer");
+  });
+
+  it("renders the authoritative text when expanded", () => {
+    const text = render(
+      { content: [{ type: "text", text: "the answer" }], details },
+      { expanded: true, isPartial: false },
+    );
+    expect(text).toContain("the answer");
+  });
+
+  it("shows live status while a wait is in flight", () => {
+    const text = render(
+      { content: [{ type: "text", text: "" }], details: { ...details, status: "running" } },
+      { expanded: false, isPartial: true },
+    );
+    expect(text).toContain("running");
+    expect(text).toContain("sa_1_ab");
+  });
+
+  it("surfaces the failure reason on the compact row", () => {
+    const text = render(
+      {
+        content: [{ type: "text", text: "failed" }],
+        details: { ...details, status: "failed", error: "provider 500" },
+      },
+      { expanded: false, isPartial: false },
+    );
+    expect(text).toContain("provider 500");
   });
 });

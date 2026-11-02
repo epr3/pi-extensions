@@ -162,7 +162,9 @@ describe("shared Subagent thinking at the Agent session boundary", () => {
       }),
     ]);
     expect(h.notify).toHaveBeenCalledWith(expect.stringMatching(/max.*high/), "warning");
-    expect(result.content).toEqual([{ type: "text", text: "answer" }]);
+    // Background retrieval names the run before the authoritative answer.
+    expect(result.content[0].text).toContain("answer");
+    expect(result.content[0].text).toContain("[run ");
   });
 
   describe.each(["explore", "general"])("%s", (type) => {
@@ -232,7 +234,7 @@ describe("shared Subagent thinking at the Agent session boundary", () => {
           }),
         ]);
         expect(h.notify).toHaveBeenCalledWith(expect.stringMatching(/high.*off/), "warning");
-        expect(result.content).toEqual([{ type: "text", text: "answer" }]);
+        expect(result.content[0].text).toContain("answer");
         expect(JSON.stringify(h.updates.mock.calls)).not.toContain("secret reasoning");
         if (background) expect(h.updates).not.toHaveBeenCalled();
         else expect(h.updates).toHaveBeenCalled();

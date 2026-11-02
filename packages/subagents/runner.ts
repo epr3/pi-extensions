@@ -10,7 +10,9 @@ import {
 import type { Model } from "@earendil-works/pi-ai";
 import {
   AGENTS,
+  CODEMODE_GUIDANCE,
   CORE_READ_TOOLS,
+  DEFAULT_EXPLORE_TOOLS,
   SAFETY_EXCLUDES,
   type AgentDef,
   type AgentType,
@@ -168,6 +170,9 @@ export async function runSubagent(opts: {
   tools?: string[];
   /** Extra exclusions on top of SAFETY_EXCLUDES. */
   excludeExtraTools?: string[];
+  /** Whether codemode reaches the sub-session. Defaults to deriving it from
+   *  `tools` (allowlist case) or assuming it for inherited toolsets. */
+  codemodeAvailable?: boolean;
   /** Callback for compact UI-only stream events during foreground runs. */
   onStreamEvent?: StreamCallback;
   /** When set, the child session is aborted if this signal fires. */
@@ -177,10 +182,15 @@ export async function runSubagent(opts: {
   if (!def) throw new Error(`Unknown Subagent type "${opts.type}"`);
 
   // A custom definition's body plus any preloaded skills form the initial
-  // context. Built-ins (and skill-less bodies) keep the normal prompt.
+  // context. Built-ins keep Pi's normal prompt (as the override's `base`).
+  // Every Subagent with codemode gets the same preference guidance.
+  const codemodeAvailable =
+    opts.codemodeAvailable ?? (opts.tools ? opts.tools.includes("codemode") : true);
+  const toolGuidance = codemodeAvailable ? CODEMODE_GUIDANCE : undefined;
   const composeIfNeeded =
-    def.systemPrompt || opts.preloadedSkills?.length
-      ? () => composeCustomSystemPrompt(def.systemPrompt, opts.preloadedSkills)
+    def.systemPrompt || opts.preloadedSkills?.length || toolGuidance
+      ? (base: string | undefined) =>
+          composeCustomSystemPrompt(def.systemPrompt ?? base, opts.preloadedSkills, toolGuidance)
       : undefined;
 
   const modelRuntime = await ModelRuntime.create();
@@ -188,7 +198,7 @@ export async function runSubagent(opts: {
   const loader = new DefaultResourceLoader({
     cwd: opts.cwd,
     agentDir: getAgentDir(),
-    ...(composeIfNeeded ? { systemPromptOverride: () => composeIfNeeded() } : {}),
+    ...(composeIfNeeded ? { systemPromptOverride: (base) => composeIfNeeded(base) } : {}),
   });
   await loader.reload();
 
@@ -211,11 +221,20 @@ export async function runSubagent(opts: {
   try {
     ({ session } = await makeSession(opts.tools));
   } catch (e) {
-    // The explore allowlist names lsp_* tools that may not be installed. If
-    // this harness version rejects unknown allowlist names rather than
-    // ignoring them, degrade to the core read-only tools instead of failing.
+    // The explore allowlist names optional tools (e.g. lsp_* navigation) that
+    // may not be installed. If this harness version rejects unknown allowlist
+    // names rather than ignoring them, degrade instead of failing — but keep
+    // codemode, which is a core default, and only then fall back to the bare
+    // read-only floor if codemode itself is what got rejected.
     if (!("readOnly" in def) || !def.readOnly) throw e;
-    ({ session } = await makeSession(CORE_READ_TOOLS));
+    const reduced = opts.tools
+      ? opts.tools.filter((t) => DEFAULT_EXPLORE_TOOLS.includes(t))
+      : CORE_READ_TOOLS;
+    try {
+      ({ session } = await makeSession(reduced));
+    } catch {
+      ({ session } = await makeSession(CORE_READ_TOOLS));
+    }
   }
 
   if (opts.thinkingLevel !== undefined) opts.onThinkingLevel?.(session.thinkingLevel);

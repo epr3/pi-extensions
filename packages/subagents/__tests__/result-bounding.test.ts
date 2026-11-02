@@ -148,7 +148,9 @@ describe("bounded results at the get_subagent_result seam", () => {
     const agentId = started.details.agent_id;
     const res = await resultTool.execute("call-2", { agent_id: agentId, wait: true });
     const text = contentText(res);
-    expect(text.startsWith("a".repeat(RESULT_TEXT_LIMIT))).toBe(true);
+    // The retrieval now names the run, then the bounded result verbatim.
+    expect(text).toContain(`[run ${agentId}]`);
+    expect(text).toContain(`completed:\n\n${"a".repeat(RESULT_TEXT_LIMIT)}`);
     expect(text).toContain("[Truncated: showing the first 20,000 of 20,100 bytes.]");
     expect(res.details.status).toBe("completed");
   });

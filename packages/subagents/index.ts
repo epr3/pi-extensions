@@ -279,6 +279,74 @@ function partialHead(
   return `${statusHead(theme, status, undefined)}${runId ? ` [run ${runId}]` : ""}${marker ? ` — ${marker}` : ""}`;
 }
 
+/** Details payload of get_subagent_result: curated run identity and outcome
+ *  for the user-facing renderer, kept in sync with the plain-text content. */
+export interface RetrievalDetails {
+  agent_id?: string;
+  result?: string;
+  agentId?: string;
+  type?: string;
+  description?: string;
+  status?: string;
+  tokens?: number;
+  toolUses?: number;
+  error?: string;
+  stopReason?: string;
+  reconstructed?: boolean;
+  outcome?: string;
+  warnings?: ReadonlyArray<{ scope: string; reference: string; type: string }>;
+}
+
+/**
+ * Render the get_subagent_result call row: the run it addresses, so repeated
+ * retrievals in one turn stay attributable.
+ */
+export function renderRetrievalCall(
+  args: { agent_id: string; wait?: boolean },
+  theme: Theme,
+): SubagentCardTop {
+  const title =
+    theme.fg("toolTitle", theme.bold("Subagent Result")) +
+    (args.wait ? theme.fg("muted", " · wait") : "");
+  return new SubagentCardTop(theme, title, theme.fg("muted", `[run ${args.agent_id}]`));
+}
+
+/**
+ * Render the get_subagent_result result row with the same vocabulary as the
+ * Agent tool: a compact status head (identity, run id, stats, reason) with the
+ * authoritative text behind expansion. While a `wait: true` retrieval polls a
+ * live run, the row shows that state instead of looking stalled.
+ */
+export function renderRetrievalResult(
+  result: AgentToolResult<RetrievalDetails>,
+  options: ToolRenderResultOptions,
+  theme: Theme,
+  _ctx: unknown,
+): SubagentCardBody {
+  const details = (result.details ?? {}) as RetrievalDetails;
+  const id = details.agentId ?? details.agent_id;
+  const status =
+    details.status ??
+    (details.outcome === "unavailable" ? "unavailable" : options.isPartial ? "running" : "completed");
+  const identity = [details.type, details.description ? `"${details.description}"` : ""]
+    .filter(Boolean)
+    .join(" ");
+  const head =
+    statusHead(theme, status, statsText(details.toolUses, details.tokens)) +
+    (identity ? ` · ${theme.fg("muted", identity)}` : "") +
+    (id ? theme.fg("muted", ` · [run ${id}]`) : "");
+  const reason = details.error ?? details.stopReason;
+  const reasonLine = reason ? `\n${theme.fg("muted", reason)}` : "";
+  if (options.isPartial || !options.expanded) {
+    return new SubagentCardBody(theme, `${head}${reasonLine}`);
+  }
+  const contentText = result.content
+    .filter(isTextContent)
+    .map((c) => c.text)
+    .join("\n");
+  return new SubagentCardBody(theme, `${head}${reasonLine}\n\n${theme.fg("toolOutput", contentText)}`);
+}
+
 function statsText(toolUses?: number, tokens?: number): string | undefined {
   const parts: string[] = [];
   if (typeof toolUses === "number" && toolUses >= 0) {
@@ -364,14 +432,36 @@ function settledText(rec: AgentRecord): string {
  * text was composed by the manager outside the result-text limit.
  */
 export function retrievalText(rec: AgentRecord): string {
-  if (rec.status === "completed") return rec.result ?? "(no output)";
+  // Every retrieval names the run it answered, so a fan-out session can
+  // attribute a result from the model-facing text alone (not just details).
+  const identity = `Subagent ${rec.type} "${rec.description}" [run ${rec.id}]`;
+  if (rec.status === "completed")
+    return `${identity} \u2014 completed:\n\n${rec.result ?? "(no output)"}`;
   const head =
     rec.status === "stopped"
       ? `stopped \u2014 ${rec.stopReason ?? "stopped by request"}`
       : rec.status === "failed"
         ? `failed: ${rec.error}`
         : `status: ${rec.status}`;
-  return `${head}${partialOutputBlock(rec)}`;
+  return `${identity} \u2014 ${head}${partialOutputBlock(rec)}`;
+}
+
+/** Curated details for a live retrieval: run identity plus outcome, without
+ *  the record's internal bookkeeping (warnings, activity tail). */
+export function retrievalDetails(rec: AgentRecord): RetrievalDetails {
+  return {
+    agent_id: rec.id,
+    agentId: rec.id,
+    type: rec.type,
+    description: rec.description,
+    status: rec.status,
+    tokens: rec.tokens,
+    toolUses: rec.toolUses,
+    ...(rec.result !== undefined ? { result: rec.result } : {}),
+    ...(rec.error !== undefined ? { error: rec.error } : {}),
+    ...(rec.stopReason !== undefined ? { stopReason: rec.stopReason } : {}),
+    ...(rec.warnings && rec.warnings.length > 0 ? { warnings: rec.warnings } : {}),
+  };
 }
 
 /** Compose the parent-facing response for a stop request. */
@@ -588,6 +678,9 @@ export default function (pi: ExtensionAPI) {
     parameters: agentParams,
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       const availableTools = getActiveToolNamesFrom(pi);
+      // codemode guidance follows real availability; undefined means the
+      // boundary cannot report the tool set, so the runner assumes the default.
+      const codemodeAvailable = availableTools?.includes("codemode");
       // Re-read custom definitions on every launch: edits and additions apply
       // to subsequent launches; a running Subagent keeps its launch-time
       // definition snapshot.
@@ -770,6 +863,7 @@ export default function (pi: ExtensionAPI) {
             ? { tools: exploreTools }
             : {}),
           ...(isBuiltin ? { excludeExtraTools: cfg.general.excludeExtraTools } : {}),
+          ...(codemodeAvailable !== undefined ? { codemodeAvailable } : {}),
           ...(!isBuiltin && customToolset ? { ...customToolset } : {}),
           onStreamEvent,
           // Foreground: the parent's tool-call cancellation stops the run.
@@ -909,11 +1003,26 @@ export default function (pi: ExtensionAPI) {
     name: "get_subagent_result",
     label: "Subagent Result",
     description: "Check status / retrieve the result of a background Subagent.",
+    promptSnippet: "Retrieve a background Subagent's status or result",
+    promptGuidelines: [
+      "Use get_subagent_result to poll a background Subagent; pass wait:true to block until it finishes. Prefer one wait:true retrieval over repeated polling.",
+      "Results name the run they belong to; keep the id so later stop_subagent or repeated retrieval targets the same run.",
+    ],
+    renderCall: renderRetrievalCall,
+    renderResult: renderRetrievalResult,
+    renderShell: "self",
     parameters: resultParams,
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       try {
-        const rec = await manager.getResult(params.agent_id, params.wait ?? false);
-        return textResult(retrievalText(rec), { ...rec });
+        const rec = await manager.getResult(params.agent_id, params.wait ?? false, (live) => {
+          // Live status while a blocking wait polls: queued/running is shown,
+          // then the terminal state arrives as the final result.
+          onUpdate?.({
+            content: [{ type: "text" as const, text: retrievalText(live) }],
+            details: { ...retrievalDetails(live) },
+          });
+        });
+        return textResult(retrievalText(rec), { ...retrievalDetails(rec) });
       } catch {
         // Unknown to this live registry: on revisit (or after reload) the run
         // may exist on the current branch's history. Reconstruction is

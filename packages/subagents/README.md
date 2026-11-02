@@ -207,15 +207,17 @@ skills' complete instructions are preloaded into your initial context.
 
 The sub-session uses the same resource loader as the parent, so it discovers every installed extension. The two types then differ in how tools reach the model:
 
-- **`general` needs nothing** — it passes no allowlist, so any extension you install (lsp, todo, a future one) is available to it automatically. The only subtractions are the safety exclusions: `Agent`, `get_subagent_result`, `stop_subagent`, `question`.
-- **`explore` is an allowlist by design** — that's what makes its read-only property structural rather than promised. `explore` holds the core read tools plus codemode (for batching/filtering those calls), and `subagents.explore.extraTools` / `PI_SUBAGENT_EXPLORE_TOOLS` adds more. Only ever grant **read-only** tools — anything that writes or executes belongs to `general`. Take tools away from `general` with `subagents.general.excludeExtraTools`; the safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`) are fixed and not configurable.
+- **`general` needs nothing** — it passes no allowlist, so any extension you install (lsp, todo, a future one) is available to it automatically.
+
+Every Subagent with codemode available — built-in or custom, whether the toolset is allowlisted or inherited — gets the same tool guidance: prefer codemode when a task needs several calls, when one call's result feeds the next, or when output must be filtered; use the direct tools for straightforward single calls. The only subtractions are the safety exclusions: `Agent`, `get_subagent_result`, `stop_subagent`, `question`.
+- **`explore` is an allowlist by design** — that's what makes its read-only property structural rather than promised. `explore` holds the core read tools plus codemode (for batching/filtering those calls), and `subagents.explore.extraTools` / `PI_SUBAGENT_EXPLORE_TOOLS` adds more. If an optional granted tool is rejected at session creation, the allowlist degrades to the core reads and codemode — codemode is only dropped if it is itself unavailable. Only ever grant **read-only** tools — anything that writes or executes belongs to `general`. Take tools away from `general` with `subagents.general.excludeExtraTools`; the safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`) are fixed and not configurable.
 
 **One level deep, enforced:** sub-sessions are created with `excludeTools: ["Agent", "get_subagent_result", "stop_subagent", "question"]`, so a subagent cannot recursively spawn subagents (the resource loader would otherwise hand it this very extension), retrieve or stop runs, or block on a question no user will see. Foreground runs return their result inline; background settles deliver one attributed completion message (see [Background outcome delivery](#background-outcome-delivery)).
 
 ## Tools
 
 - `Agent({ subagent_type, prompt, description, run_in_background? })` — foreground blocks + returns the bounded result; background returns an id. `subagent_type` accepts the two built-ins or any valid custom type name (discovered names and descriptions are listed in the tool description; definitions are re-read at every launch).
-- `get_subagent_result({ agent_id, wait? })` — poll/retrieve a background agent's bounded result.
+- `get_subagent_result({ agent_id, wait? })` — poll/retrieve a background agent's bounded result. The model-facing text names the run; the row shows a compact status head (`wait: true` shows live `queued`/`running` while it polls) with the full text behind expansion.
 - `stop_subagent({ agent_id })` — stop one queued or running background run (see [Stopping background runs](#stopping-background-runs)).
 - `/subagents` — list subagents and status.
 
