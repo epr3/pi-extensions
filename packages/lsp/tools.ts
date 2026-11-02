@@ -31,9 +31,16 @@ export class LspManager {
 
   async clientForFile(filePath: string): Promise<LspClient> {
     const langId = this.langForFile(filePath);
-    if (!langId) throw new Error(`no language server configured for ${path.extname(filePath)}`);
+    if (!langId)
+      throw new Error(
+        `no language server configured for '${path.extname(filePath)}' files: ` +
+          `no 'lsp.servers' entry owns this extension. Add or fix a mapping under 'lsp.servers' in ` +
+          `settings.json, or fall back to grep-based tools for this file type.`,
+      );
     let client = this.clients.get(langId);
-    if (!client) {
+    // A server that exited mid-session is discarded; the next tool call spawns it again.
+    if (client && !client.running) this.clients.delete(langId);
+    if (!client || !this.clients.has(langId)) {
       const def = this.servers[langId]!;
       client = new LspClient({
         cmd: def.cmd,
@@ -135,6 +142,20 @@ export function lspToolSpecs(
   opts: LspToolOptions = {},
 ): LspToolSpec[] {
   const diagnosticsDelayMs = opts.diagnosticsDelayMs ?? 600;
+  // Server failures (missing executable, exited server, protocol error,
+  // timeout) are recoverable-with-fallback conditions, not crashes: they reach
+  // the model as actionable text with the original structured result slot
+  // empty, so the model can switch tools instead of blowing up the turn.
+  const recoverable =
+    (run: LspToolSpec["run"]): LspToolSpec["run"] =>
+    async (args) => {
+      try {
+        return await run(args);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return { text: message, details: { error: message } };
+      }
+    };
   const openAt = async (a: LspArgs) => {
     const manager = await getManager();
     const client = await manager.clientForFile(a.file);
@@ -188,7 +209,7 @@ export function lspToolSpecs(
     };
   };
 
-  return [
+  const all: LspToolSpec[] = [
     {
       name: "lsp_definition",
       label: "LSP Definition",
@@ -479,4 +500,5 @@ export function lspToolSpecs(
       },
     },
   ];
+  return all.map((spec) => ({ ...spec, run: recoverable(spec.run) }));
 }

@@ -18,6 +18,7 @@ async function statOrUndefined(filePath: string) {
 interface Pending {
   resolve: (v: any) => void;
   reject: (e: Error) => void;
+  timer?: NodeJS.Timeout;
 }
 
 export interface LspClientOptions {
@@ -38,6 +39,8 @@ export class LspClient {
   /** Last-seen on-disk state of opened documents, for saved-edit freshness. */
   private onDisk = new Map<string, { text: string; mtimeMs: number | null; size: number | null }>();
   private buffer = Buffer.alloc(0);
+  /** Reject hook for the `initialize` request that {@link start} awaits. */
+  private startReject: ((e: Error) => void) | null = null;
 
   private opts: LspClientOptions;
 
@@ -47,38 +50,81 @@ export class LspClient {
 
   async start(): Promise<void> {
     if (this.proc) return;
-    this.proc = spawn(this.opts.cmd, this.opts.args ?? [], {
+    const failure = new Promise<never>((_, reject) => {
+      this.startReject = reject;
+    });
+    const proc = spawn(this.opts.cmd, this.opts.args ?? [], {
       cwd: this.opts.rootPath,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    this.proc.stdout.on("data", (c: Buffer) => this.onData(c));
-    this.proc.stderr.on("data", () => {});
-    this.proc.on("exit", (code) => {
-      for (const { reject } of this.pending.values())
-        reject(new Error(`language server exited (${code})`));
-      this.pending.clear();
-      this.proc = null;
+    this.proc = proc as ChildProcessWithoutNullStreams;
+    proc.stdout.on("data", (c: Buffer) => this.onData(c));
+    proc.stderr.on("data", () => {});
+    // The child never started (e.g. ENOENT): stdin writes would error async on
+    // the pipe; swallow them — pending requests are rejected below instead.
+    proc.stdin.on("error", () => {});
+    proc.on("error", (err: NodeJS.ErrnoException) => this.onProcError(err));
+    proc.on("exit", (code) => {
+      this.failPending(new Error(`language server '${this.opts.cmd}' exited (${code})`));
     });
 
-    const rootUri = pathToFileURL(this.opts.rootPath).href;
-    await this.request("initialize", {
-      processId: process.pid,
-      rootUri,
-      capabilities: {
-        textDocument: {
-          definition: {},
-          implementation: {},
-          references: {},
-          hover: { contentFormat: ["plaintext", "markdown"] },
-          documentSymbol: { hierarchicalDocumentSymbolSupport: true },
-          callHierarchy: {},
-          publishDiagnostics: {},
-        },
-        workspace: { symbol: {} },
-      },
-      workspaceFolders: [{ uri: rootUri, name: "root" }],
-    });
-    this.notify("initialized", {});
+    try {
+      const rootUri = pathToFileURL(this.opts.rootPath).href;
+      await Promise.race([
+        this.request("initialize", {
+          processId: process.pid,
+          rootUri,
+          capabilities: {
+            textDocument: {
+              definition: {},
+              implementation: {},
+              references: {},
+              hover: { contentFormat: ["plaintext", "markdown"] },
+              documentSymbol: { hierarchicalDocumentSymbolSupport: true },
+              callHierarchy: {},
+              publishDiagnostics: {},
+            },
+            workspace: { symbol: {} },
+          },
+          workspaceFolders: [{ uri: rootUri, name: "root" }],
+        }),
+        failure,
+      ]);
+      this.notify("initialized", {});
+    } catch (e) {
+      this.proc = null;
+      throw e;
+    } finally {
+      this.startReject = null;
+    }
+  }
+
+  /** True while the server process is up (initialize handshake included). */
+  get running(): boolean {
+    return this.proc !== null;
+  }
+
+  private onProcError(err: NodeJS.ErrnoException): void {
+    const message =
+      err.code === "ENOENT"
+        ? `language server '${this.opts.cmd}' (${this.opts.languageId}) failed to start: command not found (ENOENT). Install '${this.opts.cmd}' on PATH or fix the 'lsp.servers' entry for '${this.opts.languageId}' in settings, then retry.`
+        : `language server '${this.opts.cmd}' (${this.opts.languageId}) process error (${err.code ?? "unknown"}): ${err.message}. Check the 'lsp.servers' entry for '${this.opts.languageId}' in settings.`;
+    this.failPending(new Error(message));
+    // Reject the in-flight initialize await, if start() is still running.
+    this.startReject?.(new Error(message));
+  }
+
+  private failPending(err: Error): void {
+    for (const p of this.pending.values()) {
+      if (p.timer) clearTimeout(p.timer);
+      p.reject(err);
+    }
+    this.pending.clear();
+    // State from the dead process is meaningless to a respawned one; clearing
+    // openDocs makes the next ensureOpen re-send didOpen to the fresh server.
+    this.openDocs.clear();
+    this.diagnostics.clear();
+    this.proc = null;
   }
 
   async stop(): Promise<void> {
@@ -191,14 +237,22 @@ export class LspClient {
   private request(method: string, params: unknown): Promise<any> {
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.send({ jsonrpc: "2.0", id, method, params });
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pending.has(id)) {
+          const p = this.pending.get(id)!;
           this.pending.delete(id);
+          if (p.timer) clearTimeout(p.timer);
           reject(new Error(`LSP request '${method}' timed out`));
         }
       }, 20000);
+      this.pending.set(id, { resolve, reject, timer });
+      try {
+        this.send({ jsonrpc: "2.0", id, method, params });
+      } catch (e) {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
     });
   }
 
@@ -207,7 +261,10 @@ export class LspClient {
   }
 
   private send(obj: unknown): void {
-    if (!this.proc) throw new Error("language server not running");
+    if (!this.proc)
+      throw new Error(
+        `language server '${this.opts.cmd}' is not running (it may have exited); the next tool call spawns it again`,
+      );
     const body = Buffer.from(JSON.stringify(obj), "utf8");
     const header = Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "ascii");
     this.proc.stdin.write(Buffer.concat([header, body]));
@@ -242,6 +299,7 @@ export class LspClient {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
+      if (p.timer) clearTimeout(p.timer);
       if (msg.error) p.reject(new Error(msg.error.message || "LSP error"));
       else p.resolve(msg.result);
       return;

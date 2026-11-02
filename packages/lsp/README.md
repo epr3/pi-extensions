@@ -10,6 +10,8 @@ Language servers are external commands and must be available on `PATH`; for Vue 
 
 Freshness boundary: the client tracks each opened file's on-disk state and, before serving a request, re-synchronizes the server (`textDocument/didChange` with the new full text) when the saved contents have changed — hands-free, no re-read when nothing changed. Only saved content is visible; unsaved in-editor buffers are not, so save the file before navigating to see your edit.
 
+**Failure behavior** — server problems are surfaced as model-readable tool results, never crashes: a missing/unspawnable server command (e.g. ENOENT) fails fast naming the command, the affected language, and the `'lsp.servers'` setting to fix; a file type no `lsp.servers` entry owns explains the extension and suggests grep fallback; in-flight requests against a server error or exit are rejected with the server's message. The next `lsp_*` call re-spawns a server that exited; no retry loop beyond that.
+
 The tool catalog (names, descriptions, param-kinds, handlers) is a single data array in `tools.ts`; `index.ts` registers it in a loop, so each tool is declared once. The stdio client (`client.ts`) and handlers (`tools.ts`) are standard LSP and are runtime-tested against a mock server independently of Pi; `index.ts` registers the tools via `pi.registerTool`. Skills prefer these over grep "if available".
 
 ## Using them well
