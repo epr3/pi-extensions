@@ -16,7 +16,7 @@ The tool catalog (names, descriptions, param-kinds, handlers) is a single data a
 
 ## Using them well
 
-When the `lsp_*` tools are available, prefer them over grep/find/read for code navigation — they answer from the compiler's understanding of the code, not text matching:
+When the `lsp_*` tools are available, try the appropriate one **first** for supported semantic navigation — they answer from the compiler's understanding of the code, not text matching. The extension supplies this preference itself through registered tool guidance (descriptions, prompt snippets, and guidelines), so it works without editing agent instructions:
 
 - `lsp_definition` — jump to a symbol's declaration; `lsp_implementation` for the concrete code behind an interface or abstract member
 - `lsp_references` — every usage across the codebase
@@ -29,4 +29,8 @@ Positions are 1-based `file:line:column`.
 
 **Before** renaming or changing any signature, run `lsp_references` on it — grep misses dynamic and re-exported usages and over-matches common names. **After** writing or editing code, run `lsp_diagnostics` on each touched file and fix type errors and missing imports immediately, before moving on.
 
-Grep/find remain the right tool for what the language server can't see: comments, strings, config values, TODOs, log messages, and non-code files.
+Grep/find remain the right tool in three situations. **Orientation and input:** locating an identifier and its `file:line:column` position before a position tool can run. **Textual questions:** what the language server can't see — comments, strings, config values, TODOs, log messages, and non-code files. **Fallback:** when a language server is unavailable, fails, times out, or gives an unhelpful answer; state any uncertainty that matters to the task rather than silently pretending the semantic answer was authoritative.
+
+Empty semantic results are potentially inconclusive — a server may simply not cover the file or symbol. Verify with text search when completeness matters (e.g. before a rename) or the result looks implausible; don't automatically re-check every empty result.
+
+Explore agents carry the same preference: grant them the `lsp_*` set via `subagents.explore.extraTools` or `PI_SUBAGENT_EXPLORE_TOOLS` (the shipped settings example does), and their tailored prompt expresses the same first-choice, fallback, and empty-result guidance.
