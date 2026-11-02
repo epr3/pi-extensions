@@ -22,8 +22,11 @@ _Avoid_: Search scope, target file.
 **Tool invocation summary**: User-facing call display shown while an `lsp_*` tool is executing, using the tool argument path plus 1-based position when present and separate from the model-visible tool result.
 _Avoid_: Tool output, LSP log, progress stream.
 
-**Diagnostics request**: `lsp_diagnostics` call that returns language-server errors and warnings for one file after an optional debounce delay.
+**Diagnostics request**: `lsp_diagnostics` call that returns language-server errors and warnings for one file, with a **diagnostics confidence** state (pending, current, uncertain) bounded by a wait budget that is not itself evidence of currency.
 _Avoid_: Typecheck, lint run.
+
+**Diagnostics confidence**: The version-correlated state of a **Diagnostics request** — `current` when a publish with a matching document version arrived, `uncertain` when freshness relative to the latest saved contents cannot be established, `pending` when no publish has been received since the last open/saved-file synchronization.
+_Avoid_: Debounce delay, freshness delay.
 
 **Server mapping**: Configuration entry that binds one LSP language id to an external language-server command and the file extensions it owns.
 _Avoid_: Server preset, language config, extension handler.

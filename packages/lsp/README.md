@@ -12,6 +12,8 @@ Freshness boundary: the client tracks each opened file's on-disk state and, befo
 
 **Failure behavior** — server problems are surfaced as model-readable tool results, never crashes: a missing/unspawnable server command (e.g. ENOENT) fails fast naming the command, the affected language, and the `'lsp.servers'` setting to fix; a file type no `lsp.servers` entry owns explains the extension and suggests grep fallback; in-flight requests against a server error or exit are rejected with the server's message. The next `lsp_*` call re-spawns a server that exited; no retry loop beyond that.
 
+Diagnostics confidence: `lsp_diagnostics` reports how its answer relates to the latest saved contents — `current` (a `publishDiagnostics` message whose document version matches the opened document; a reported empty set means the file is clean), `uncertain` (the server omitted the version or answered for an older one; diagnostics are shown if any, but the file is never claimed clean), or `pending` (the server has not published anything for the file since it was opened/synchronized; not available yet, not a clean file). `lsp.diagnosticsDelayMs` is only a wait budget that expires when no correlated response arrives — a delay is never proof of current diagnostics.
+
 The tool catalog (names, descriptions, param-kinds, handlers) is a single data array in `tools.ts`; `index.ts` registers it in a loop, so each tool is declared once. The stdio client (`client.ts`) and handlers (`tools.ts`) are standard LSP and are runtime-tested against a mock server independently of Pi; `index.ts` registers the tools via `pi.registerTool`. Skills prefer these over grep "if available".
 
 ## Using them well
