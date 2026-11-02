@@ -512,25 +512,72 @@ export function lspToolSpecs(
       paramKind: "file",
       async run(a) {
         const { client, uri } = await openAt(a);
-        await new Promise((r) => setTimeout(r, diagnosticsDelayMs)); // diagnostics arrive async after didOpen
-        const raw = client.getDiagnostics(uri);
-        if (!raw.length)
-          return {
-            text: "no diagnostics",
-            details: { resultKind: "diagnostics" as const, diagnostics: [] },
-          };
-        const diags = raw.map((d: any) => ({
+        // Bounded budget — a timeout is never proof of current diagnostics.
+        // Wait only until a publish correlated with the current document
+        // version arrives (or the budget expires), then report the state.
+        await client.waitForDiagnostics(uri, diagnosticsDelayMs);
+        const { state, diagnostics: raw, sinceVersion } = client.getDiagnostics(uri);
+        const toRecord = (d: any) => ({
           severity: (SEVERITY[d.severity] ?? "info") as "error" | "warning" | "info" | "hint",
           message: d.message,
           file: a.file,
           line: d.range.start.line + 1,
           column: d.range.start.character + 1,
-        }));
+        });
+        if (state === "pending")
+          return {
+            text:
+              `diagnostics not available yet — the language server has not published ` +
+              `diagnostics for this file since it was opened (waited ${diagnosticsDelayMs}ms); ` +
+              `an empty result here is NOT evidence the file is clean`,
+            details: {
+              resultKind: "diagnostics" as const,
+              confidence: "pending" as const,
+              diagnostics: [],
+              sinceVersion: null,
+            },
+          };
+        if (!raw.length && state === "current")
+          // The server published an empty set for the current version.
+          return {
+            text: "no diagnostics",
+            details: {
+              resultKind: "diagnostics" as const,
+              confidence: "current" as const,
+              diagnostics: [],
+              sinceVersion,
+            },
+          };
+        if (!raw.length)
+          return {
+            text:
+              `the language server reported no diagnostics, but freshness could not be ` +
+              `established (no document version correlated with the latest saved contents) — ` +
+              `the file may not be clean`,
+            details: {
+              resultKind: "diagnostics" as const,
+              confidence: "uncertain" as const,
+              diagnostics: [],
+              sinceVersion,
+            },
+          };
+        const diags = raw.map(toRecord);
+        const lines = diags
+          .map((d: any) => `${d.severity} ${d.file}:${d.line}:${d.column}  ${d.message}`)
+          .join("\n");
+        const note =
+          state === "uncertain"
+            ? "\nNote: freshness could not be established (no document version correlated with " +
+              "the latest saved contents) — these diagnostics may not reflect the latest saved contents."
+            : "";
         return {
-          text: diags
-            .map((d: any) => `${d.severity} ${d.file}:${d.line}:${d.column}  ${d.message}`)
-            .join("\n"),
-          details: { resultKind: "diagnostics" as const, diagnostics: diags },
+          text: lines + note,
+          details: {
+            resultKind: "diagnostics" as const,
+            confidence: state,
+            diagnostics: diags,
+            sinceVersion,
+          },
         };
       },
     },

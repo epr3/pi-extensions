@@ -61,6 +61,10 @@ export interface LspNavigationDetails {
   symbols?: LspSymbolRecord[];
   hover?: LspHoverRecord;
   diagnostics?: LspDiagnosticRecord[];
+  /** Diagnostics only: server response vs opened-document state; absent means current. */
+  confidence?: "pending" | "current" | "uncertain";
+  /** Diagnostics only: document version the diagnostics correspond to, when known. */
+  sinceVersion?: number | null;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -255,7 +259,30 @@ export function renderLspNavigationResult(
   // ── Diagnostics result ──
 
   if (d.diagnostics) {
+    const confidence = d.confidence ?? "current";
     if (d.diagnostics.length === 0) {
+      // An uncorrelated empty set is not a clean file; a pending response is
+      // not a result at all. Only a current empty set renders as clean.
+      if (confidence === "pending") {
+        return new Text(
+          theme.fg(
+            "muted",
+            "diagnostics pending — the language server has not reported for this file yet",
+          ),
+          0,
+          0,
+        );
+      }
+      if (confidence === "uncertain") {
+        return new Text(
+          theme.fg(
+            "muted",
+            "diagnostics freshness unverified — server reported none, but the file is not confirmed clean",
+          ),
+          0,
+          0,
+        );
+      }
       return new Text(theme.fg("muted", emptyMessage(kind)), 0, 0);
     }
 
@@ -267,9 +294,12 @@ export function renderLspNavigationResult(
       if (errors > 0) parts.push(`${errors} err`);
       if (warnings > 0) parts.push(`${warnings} warn`);
       if (rest > 0) parts.push(`${rest} more`);
+      const suffix =
+        (parts.length ? `  ${parts.join(", ")}` : "") +
+        (confidence === "uncertain" ? "  (freshness unverified)" : "");
       return new Text(
         theme.fg("accent", countLabel(kind, d.diagnostics.length)) +
-          (parts.length ? theme.fg("muted", `  ${parts.join(", ")}`) : ""),
+          (suffix ? theme.fg("muted", suffix) : ""),
         0,
         0,
       );

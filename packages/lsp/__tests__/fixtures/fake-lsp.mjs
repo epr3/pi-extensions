@@ -1,17 +1,26 @@
 // Deterministic minimal Language server fixture for the `lsp_*` tool tests.
 // Implements stdio Content-Length framing and keeps per-document text from
 // `textDocument/didOpen` / `textDocument/didChange` — exactly the state a real
-// Language server holds. Answers are computed from that held text, so a test
-// can observe whether the server sees the current on-disk contents.
+// Language server holds. Answers and diagnostics are computed from that held
+// text, so a test can observe whether the server sees the current on-disk
+// contents.
 //
-// Usage: node fake-lsp.mjs <message-log-path>
+// Usage: node fake-lsp.mjs <message-log-path> [publish-mode] [publish-delay-ms]
 // Appends one JSON line per received didOpen/didChange to <message-log-path>
 // (a test-side channel; nothing in the client knows about it).
+//
+// Publish modes (after each accepted didOpen/didChange, following an optional
+// delay):
+//   versioned   — textDocument/publishDiagnostics WITH the document version
+//   unversioned — publishDiagnostics WITHOUT any version field
+//   silent      — never publishes diagnostics at all
 
 import fs from "node:fs";
 import process from "node:process";
 
 const logPath = process.argv[2];
+const publishMode = process.argv[3] ?? "versioned";
+const publishDelayMs = Number(process.argv[4] ?? 10);
 
 // uri -> document text currently held by the server
 const docs = new Map();
@@ -53,6 +62,32 @@ function log(entry) {
   fs.appendFileSync(logPath, JSON.stringify(entry) + "\n");
 }
 
+// Diagnostics derived from the held document text: each "FIXME" marker line
+// reports an error, so an edit removing them yields an empty diagnostic set.
+function diagnosticsFor(uri) {
+  const text = docs.get(uri) ?? "";
+  return text.split(/\r?\n/).reduce((acc, lineText, line) => {
+    const m = /FIXME/.exec(lineText);
+    if (m) {
+      acc.push({
+        severity: 1,
+        message: `synthetic error: ${lineText.trim()}`,
+        range: {
+          start: { line, character: m.index },
+          end: { line, character: lineText.length },
+        },
+      });
+    }
+    return acc;
+  }, []);
+}
+
+function publish(uri, version) {
+  const params = { uri, diagnostics: diagnosticsFor(uri) };
+  if (publishMode === "versioned") params.version = version;
+  send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params });
+}
+
 // Top-level `function NAME` lines, zero-based index by position in held text.
 function functionSymbols(uri) {
   const text = docs.get(uri) ?? "";
@@ -90,6 +125,7 @@ function handle(msg) {
     const td = msg.params.textDocument;
     docs.set(td.uri, td.text);
     log({ method: "didOpen", version: td.version, text: td.text });
+    if (publishMode !== "silent") setTimeout(() => publish(td.uri, td.version), publishDelayMs);
     return;
   }
   if (msg.method === "textDocument/didChange") {
@@ -97,6 +133,7 @@ function handle(msg) {
     const text = msg.params.contentChanges.at(-1).text;
     docs.set(td.uri, text);
     log({ method: "didChange", version: td.version, text });
+    if (publishMode !== "silent") setTimeout(() => publish(td.uri, td.version), publishDelayMs);
     return;
   }
   if (msg.id !== undefined && msg.id !== null) {

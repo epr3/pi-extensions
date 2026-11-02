@@ -28,11 +28,40 @@ export interface LspClientOptions {
   rootPath: string;
 }
 
+// ─── Diagnostics confidence (ticket 0002) ──────────────────────────────────
+
+/** How the last published diagnostics relate to the opened document state. */
+export type DiagnosticsConfidence = "pending" | "current" | "uncertain";
+
+/**
+ * Confidence-tagged diagnostics for one document, derived from version
+ * correlation — never from elapsed time.
+ *
+ * - `"pending"`: the Language server has not published diagnostics for the
+ *   document at all since it was last opened or synchronized with the latest
+ *   saved contents. An empty result is NOT evidence the file is clean.
+ * - `"current"`: the server published diagnostics whose document version
+ *   matches the version opened/synchronized here; an empty set may be
+ *   reported as a clean file.
+ * - `"uncertain"`: publishes exist but cannot be correlated with the latest
+ *   saved contents (the server omitted `version`, or published for an older
+ *   version). Diagnostics may be shown, but the file is never confirmed clean.
+ */
+export interface DiagnosticsStatus {
+  state: DiagnosticsConfidence;
+  diagnostics: any[];
+  /** Document version the published diagnostics correspond to, if correlated or attached; null when unknown. */
+  sinceVersion: number | null;
+}
+
 export class LspClient {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private seq = 0;
   private pending = new Map<number, Pending>();
-  private diagnostics = new Map<string, any[]>();
+  /** Last `textDocument/publishDiagnostics` state per document. */
+  private publishState = new Map<string, { diagnostics: any[]; version: number | null }>();
+  /** Publish waiters per document, resolved whenever a publish arrives. */
+  private diagWaiters = new Map<string, Set<() => void>>();
   private openDocs = new Set<string>();
   /** Monotonically increasing version per opened document, for didOpen/didChange. */
   private versions = new Map<string, number>();
@@ -158,6 +187,8 @@ export class LspClient {
         if (text !== prev.text) {
           const version = (this.versions.get(uri) ?? 1) + 1;
           this.versions.set(uri, version);
+          // Any previously published diagnostics predate the synchronization.
+          this.publishState.delete(uri);
           this.notify("textDocument/didChange", {
             textDocument: { uri, version },
             contentChanges: [{ text }],
@@ -186,8 +217,53 @@ export class LspClient {
     return uri;
   }
 
-  getDiagnostics(uri: string): any[] {
-    return this.diagnostics.get(uri) ?? [];
+  // ─── Diagnostics confidence (ticket 0002) ────────────────────────────────
+
+  /**
+   * Confidence-tagged view of the diagnostics published for a document after
+   * the last open/saved-file synchronization.
+   *
+   * State is derived from version correlation with the opened document
+   * version, never from elapsed time. Use waitForDiagnostics() to bound the
+   * wait for a server response.
+   */
+  getDiagnostics(uri: string): DiagnosticsStatus {
+    const pub = this.publishState.get(uri);
+    if (!pub) return { state: "pending", diagnostics: [], sinceVersion: null };
+    const docVersion = this.versions.get(uri);
+    if (pub.version === null || pub.version !== docVersion) {
+      return { state: "uncertain", diagnostics: pub.diagnostics, sinceVersion: pub.version };
+    }
+    return { state: "current", diagnostics: pub.diagnostics, sinceVersion: docVersion! };
+  }
+
+  /**
+   * Wait up to `budgetMs` for the server to publish diagnostics that answer
+   * the document's current state, resolving early when one arrives. The
+   * budget is only a timeout, never evidence of a current result: after the
+   * wait, callers must read getDiagnostics() and honor its state — a publish
+   * may still be pending or unverifiable (unversioned server).
+   */
+  async waitForDiagnostics(uri: string, budgetMs: number): Promise<void> {
+    const deadline = Date.now() + Math.max(0, budgetMs);
+    for (;;) {
+      if (this.getDiagnostics(uri).state !== "pending") return;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      await new Promise<void>((resolve) => {
+        // Publishing resolves early and cancels the timeout; timeout expiry
+        // removes itself from the waiter set.
+        const waiter = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          this.diagWaiters.get(uri)?.delete(waiter);
+          resolve();
+        }, remaining);
+        this.diagWaiters.set(uri, (this.diagWaiters.get(uri) ?? new Set()).add(waiter));
+      });
+    }
   }
 
   definition(uri: string, line: number, character: number) {
@@ -305,12 +381,26 @@ export class LspClient {
       return;
     }
     if (msg.method === "textDocument/publishDiagnostics") {
-      this.diagnostics.set(msg.params.uri, msg.params.diagnostics ?? []);
+      const { uri } = msg.params;
+      if (this.openDocs.has(uri)) {
+        this.publishState.set(uri, {
+          diagnostics: msg.params.diagnostics ?? [],
+          version: msg.params.version ?? null,
+        });
+        this.resolveDiagWaiters(uri);
+      }
       return;
     }
     // Answer server-initiated requests minimally so it doesn't stall.
     if (msg.id !== undefined && msg.method) {
       this.send({ jsonrpc: "2.0", id: msg.id, result: null });
     }
+  }
+
+  private resolveDiagWaiters(uri: string): void {
+    const set = this.diagWaiters.get(uri);
+    if (!set) return;
+    this.diagWaiters.set(uri, new Set());
+    for (const resolve of set) resolve();
   }
 }

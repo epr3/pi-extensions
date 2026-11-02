@@ -700,6 +700,92 @@ describe("renderLspNavigationResult — diagnostics", () => {
     expect(resultText(result)).toContain("no diagnostics");
   });
 
+  it("empty current diagnostics show 'no diagnostics'", () => {
+    const result = {
+      content: [{ type: "text" as const, text: "no diagnostics" }],
+      details: {
+        resultKind: "diagnostics",
+        diagnostics: [],
+        confidence: "current",
+      } satisfies LspNavigationDetails,
+    };
+    expect(resultText(result)).toContain("no diagnostics");
+  });
+
+  it("pending diagnostics do not render as a clean 'no diagnostics'", () => {
+    const result = {
+      content: [{ type: "text" as const, text: "diagnostics not available yet" }],
+      details: {
+        resultKind: "diagnostics",
+        diagnostics: [],
+        confidence: "pending",
+      } satisfies LspNavigationDetails,
+    };
+    const text = resultText(result);
+    expect(text).toContain("diagnostics pending");
+    expect(text).not.toContain("no diagnostics");
+  });
+
+  it("uncertain empty diagnostics do not render as a clean 'no diagnostics'", () => {
+    const result = {
+      content: [{ type: "text" as const, text: "freshness could not be established" }],
+      details: {
+        resultKind: "diagnostics",
+        diagnostics: [],
+        confidence: "uncertain",
+      } satisfies LspNavigationDetails,
+    };
+    const text = resultText(result);
+    expect(text).toContain("freshness unverified");
+    expect(text).toContain("confirmed clean");
+    expect(text).not.toContain("no diagnostics");
+  });
+
+  it("uncertain non-empty diagnostics flag freshness in collapsed view", () => {
+    const result = {
+      content: [{ type: "text" as const, text: "error src/a.ts:10:5  bad" }],
+      details: {
+        resultKind: "diagnostics",
+        diagnostics: [
+          {
+            severity: "error",
+            message: "Type 'X' is not assignable",
+            file: "src/a.ts",
+            line: 10,
+            column: 5,
+          } satisfies LspDiagnosticRecord,
+        ],
+        confidence: "uncertain",
+      } satisfies LspNavigationDetails,
+    };
+    const text = resultText(result, { expanded: false });
+    expect(text).toContain("1 diagnostic");
+    expect(text).toContain("freshness unverified");
+  });
+
+  it("current non-empty diagnostics carry no freshness flag", () => {
+    const result = {
+      content: [{ type: "text" as const, text: "error src/a.ts:10:5  bad" }],
+      details: {
+        resultKind: "diagnostics",
+        diagnostics: [
+          {
+            severity: "error",
+            message: "Type 'X' is not assignable",
+            file: "src/a.ts",
+            line: 10,
+            column: 5,
+          } satisfies LspDiagnosticRecord,
+        ],
+        confidence: "current",
+        sinceVersion: 2,
+      } satisfies LspNavigationDetails,
+    };
+    const text = resultText(result, { expanded: false });
+    expect(text).toContain("1 diagnostic");
+    expect(text).not.toContain("freshness unverified");
+  });
+
   it("expanded shows info and hint severities", () => {
     const result = {
       content: [{ type: "text" as const, text: "" }],
