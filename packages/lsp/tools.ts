@@ -120,6 +120,30 @@ export interface LspArgs {
   query?: string;
 }
 
+/** Cross-cutting semantic-navigation guidance shared by every lsp tool.
+ * Pi's system prompt dedupes identical guideline strings, so each of these
+ * appears once however many lsp tools are active in the session. */
+export const SHARED_NAVIGATION_GUIDELINES = [
+  // LSP-first preference, plus the permissions that keep it from blocking
+  // basic orientation (locate a symbol/position first) and textual questions.
+  "Try the appropriate lsp_* tool first for supported semantic navigation — " +
+    "definitions, references, implementations, workspace symbols, document " +
+    "outlines, hover info, and call relationships. Using grep, find, or read " +
+    "to locate an identifier and its position first is fine; use them directly " +
+    "for textual questions such as comments, strings, config values, logs, and " +
+    "non-code files.",
+  // Practical fallback + consequential uncertainty.
+  "When an lsp_* tool reports an error, times out, the language server is " +
+    "unavailable, or the answer is unhelpful, fall back to grep, find, or read — " +
+    "and state uncertainty that matters to the task in your answer (for example, " +
+    "that a more complete answer might exist later).",
+  // Empty results are potentially inconclusive; verification is selective.
+  "Empty lsp results are potentially inconclusive — the language server may " +
+    "not cover the file or symbol. Verify with text search when completeness " +
+    "matters or the result looks implausible, not automatically after every " +
+    "empty result.",
+];
+
 /** A complete tool definition as data — the single source of truth for the
  * LSP tool set. index.ts iterates this to register; nothing is declared twice. */
 export interface LspToolSpec {
@@ -209,7 +233,11 @@ export function lspToolSpecs(
     };
   };
 
-  const all: LspToolSpec[] = [
+  // Each tool's own guideline states what it is preferred over; the shared
+  // guidelines add the cross-tool preference, fallback, and empty-result
+  // contract. Keeping this a return-boundary wrapper keeps the catalog literal
+  // unchanged.
+  const specs: LspToolSpec[] = [
     {
       name: "lsp_definition",
       label: "LSP Definition",
@@ -217,7 +245,7 @@ export function lspToolSpecs(
         "Go to the definition of the symbol at file:line:column (1-based). Prefer over grep for typed languages.",
       promptSnippet: "Find the definition of a symbol via the language server",
       promptGuidelines: [
-        "Use lsp_definition instead of grep to find where a symbol is defined in a typed language.",
+        "Try lsp_definition first instead of grep to find where a symbol is defined in a typed language.",
       ],
       paramKind: "pos",
       async run(a) {
@@ -249,10 +277,11 @@ export function lspToolSpecs(
     {
       name: "lsp_references",
       label: "LSP References",
-      description: "Find all references to the symbol at file:line:column (1-based).",
+      description:
+        "Find all references to the symbol at file:line:column (1-based). Prefer over grep for usages, and run it before renaming or changing a signature.",
       promptSnippet: "Find all references to a symbol via the language server",
       promptGuidelines: [
-        "Use lsp_references instead of grep to find all call sites of a symbol in a typed language.",
+        "Try lsp_references first instead of grep to find all usages of a symbol in a typed language, and to assess affected code before a rename or signature change.",
       ],
       paramKind: "ref",
       async run(a) {
@@ -286,10 +315,11 @@ export function lspToolSpecs(
     {
       name: "lsp_hover",
       label: "LSP Hover",
-      description: "Type / signature / doc for the symbol at file:line:column (1-based).",
+      description:
+        "Type / signature / doc for the symbol at file:line:column (1-based). Prefer over reading the file to infer a symbol's type.",
       promptSnippet: "Get type, signature, or documentation for a symbol via the language server",
       promptGuidelines: [
-        "Use lsp_hover to inspect a symbol's type, signature, or docs without opening the file.",
+        "Try lsp_hover first to inspect a symbol's type, signature, or docs instead of reading the file to infer them.",
       ],
       paramKind: "pos",
       async run(a) {
@@ -326,10 +356,11 @@ export function lspToolSpecs(
     {
       name: "lsp_document_symbols",
       label: "LSP Symbols",
-      description: "Outline of a file: classes, functions, methods, with line numbers.",
+      description:
+        "Outline of a file: classes, functions, methods, with line numbers. Prefer over reading the whole file to orient.",
       promptSnippet: "List the symbols in a file via the language server",
       promptGuidelines: [
-        "Use lsp_document_symbols to get an outline of a file before reading the whole thing.",
+        "Try lsp_document_symbols first to get an outline of a file before reading the whole thing.",
       ],
       paramKind: "file",
       async run(a) {
@@ -369,11 +400,11 @@ export function lspToolSpecs(
       name: "lsp_implementation",
       label: "LSP Implementation",
       description:
-        "Concrete implementations of the interface/abstract symbol at file:line:column (1-based) — where definition gives the declaration, this gives the code that runs.",
+        "Concrete implementations of the interface/abstract symbol at file:line:column (1-based) — where definition gives the declaration, this gives the code that runs. Prefer over grepping for implementors.",
       promptSnippet:
         "Find concrete implementations of an interface/abstract symbol via the language server",
       promptGuidelines: [
-        "Use lsp_implementation instead of grep to find concrete implementations in a typed language.",
+        "Try lsp_implementation first instead of grep to find concrete implementations in a typed language.",
       ],
       paramKind: "pos",
       async run(a) {
@@ -406,7 +437,7 @@ export function lspToolSpecs(
       name: "lsp_workspace_symbols",
       label: "LSP Workspace Symbols",
       description:
-        "Find where something is defined by name across the whole workspace, without knowing the file. `file` is any file of the target language (routes to the right server).",
+        "Find where something is defined by name across the whole workspace, without knowing the file. Prefer over grepping for the name. `file` is any file of the target language (routes to the right server).",
       promptSnippet: "Find a symbol by name across the workspace",
       promptGuidelines: [
         "Use lsp_workspace_symbols to locate a symbol by name when you don't know which file defines it, instead of grepping.",
@@ -444,9 +475,12 @@ export function lspToolSpecs(
     {
       name: "lsp_incoming_calls",
       label: "LSP Incoming Calls",
-      description: "Call hierarchy: who calls the function at file:line:column (1-based).",
+      description:
+        "Call hierarchy: who calls the function at file:line:column (1-based). Prefer over grepping for callers, which over-matches common names.",
       promptSnippet: "Find callers of a function via the language server",
-      promptGuidelines: ["Use lsp_incoming_calls to see who calls a function in a typed language."],
+      promptGuidelines: [
+        "Try lsp_incoming_calls first to see who calls a function in a typed language.",
+      ],
       paramKind: "pos",
       async run(a) {
         return callHierarchy(a, "incoming");
@@ -455,10 +489,11 @@ export function lspToolSpecs(
     {
       name: "lsp_outgoing_calls",
       label: "LSP Outgoing Calls",
-      description: "Call hierarchy: what the function at file:line:column (1-based) calls.",
+      description:
+        "Call hierarchy: what the function at file:line:column (1-based) calls. Prefer over grepping for use sites.",
       promptSnippet: "Find functions called by a function via the language server",
       promptGuidelines: [
-        "Use lsp_outgoing_calls to see what a function calls in a typed language.",
+        "Try lsp_outgoing_calls first to see what a function calls in a typed language.",
       ],
       paramKind: "pos",
       async run(a) {
@@ -469,7 +504,7 @@ export function lspToolSpecs(
       name: "lsp_diagnostics",
       label: "LSP Diagnostics",
       description:
-        "Compiler/linter diagnostics for a file \u2014 ground-truth errors and warnings.",
+        "Compiler/linter diagnostics for a file \u2014 ground-truth errors and warnings. Prefer over guessing whether a file compiles.",
       promptSnippet: "Get compiler/linter diagnostics for a file",
       promptGuidelines: [
         "Use lsp_diagnostics to verify a file compiles cleanly after edits, instead of guessing.",
@@ -500,5 +535,9 @@ export function lspToolSpecs(
       },
     },
   ];
-  return all.map((spec) => ({ ...spec, run: recoverable(spec.run) }));
+  return specs.map((spec) => ({
+    ...spec,
+    promptGuidelines: [...(spec.promptGuidelines ?? []), ...SHARED_NAVIGATION_GUIDELINES],
+    run: recoverable(spec.run),
+  }));
 }

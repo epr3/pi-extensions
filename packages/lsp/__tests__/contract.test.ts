@@ -27,6 +27,15 @@ async function registerLsp(): Promise<ToolDefinition[]> {
   return tools;
 }
 
+/** Registered Tool guidance = description + snippet + guidelines. */
+function guidanceOf(tool: ToolDefinition): string {
+  return [tool.description, tool.promptSnippet ?? "", ...(tool.promptGuidelines ?? [])].join("\n");
+}
+
+function allGuidance(tools: ToolDefinition[]): string {
+  return tools.map(guidanceOf).join("\n");
+}
+
 const EXPECTED_TOOLS = [
   "lsp_definition",
   "lsp_references",
@@ -98,6 +107,67 @@ describe("prompt guidance", () => {
     for (const tool of tools) {
       expect(tool.promptSnippet && tool.promptSnippet.length > 0).toBe(true);
       expect(Array.isArray(tool.promptGuidelines) && tool.promptGuidelines!.length > 0).toBe(true);
+    }
+  });
+});
+
+describe("semantic navigation preference guidance", () => {
+  it("every tool expresses the LSP-first preference over text tools", async () => {
+    const tools = await registerLsp();
+    for (const tool of tools) {
+      const guidance = guidanceOf(tool).toLowerCase();
+      expect(
+        /first|prefer/.test(guidance),
+        `${tool.name} guidance should express trying LSP first/preference`,
+      ).toBe(true);
+      expect(
+        /grep|\bfind\b|\bread\b/.test(guidance),
+        `${tool.name} guidance should reference the text tools it is preferred over`,
+      ).toBe(true);
+    }
+  });
+
+  it("guidance permits text search or inspection to locate an identifier or position", async () => {
+    const tools = await registerLsp();
+    const guidance = allGuidance(tools).toLowerCase();
+    expect(/locate|find/.test(guidance)).toBe(true);
+    expect(/position|identifier/.test(guidance)).toBe(true);
+  });
+
+  it("guidance directs textual and non-code questions to textual tools", async () => {
+    const tools = await registerLsp();
+    const guidance = allGuidance(tools).toLowerCase();
+    expect(/comments/.test(guidance)).toBe(true);
+    expect(/non-code/.test(guidance)).toBe(true);
+    expect(/grep|\bread\b|\bfind\b/.test(guidance)).toBe(true);
+  });
+
+  it("guidance supports fallback on unavailable, failed, timed-out, or unhelpful responses and names consequential uncertainty", async () => {
+    const tools = await registerLsp();
+    const guidance = allGuidance(tools).toLowerCase();
+    expect(/fallback|fall back/.test(guidance)).toBe(true);
+    expect(/unavailable|fails|times out|error/.test(guidance)).toBe(true);
+    expect(/unhelpful/.test(guidance)).toBe(true);
+    expect(/uncertain/.test(guidance)).toBe(true);
+  });
+
+  it("guidance treats empty semantic results as potentially inconclusive with selective, not automatic, text verification", async () => {
+    const tools = await registerLsp();
+    const guidance = allGuidance(tools).toLowerCase();
+    expect(/empty/.test(guidance)).toBe(true);
+    expect(/inconclusive/.test(guidance)).toBe(true);
+    expect(/verify/.test(guidance)).toBe(true);
+    expect(/not automatically/.test(guidance)).toBe(true);
+  });
+
+  it("guidance stays compact — at most 5 guideline entries per tool, none empty", async () => {
+    const tools = await registerLsp();
+    for (const tool of tools) {
+      for (const g of tool.promptGuidelines ?? []) {
+        expect(g.trim().length).toBeGreaterThan(0);
+      }
+      expect(tool.promptGuidelines!.length).toBeGreaterThan(0);
+      expect(tool.promptGuidelines!.length).toBeLessThanOrEqual(5);
     }
   });
 });
