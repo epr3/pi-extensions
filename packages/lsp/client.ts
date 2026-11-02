@@ -152,7 +152,7 @@ export class LspClient {
     // State from the dead process is meaningless to a respawned one; clearing
     // openDocs makes the next ensureOpen re-send didOpen to the fresh server.
     this.openDocs.clear();
-    this.diagnostics.clear();
+    this.publishState.clear();
     this.proc = null;
   }
 
