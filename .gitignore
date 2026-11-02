@@ -142,3 +142,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# LSP tool-choice evaluation scratch (raw pi --mode json transcripts)
+packages/lsp/eval/tmp/

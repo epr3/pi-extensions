@@ -1,0 +1,40 @@
+{
+  "//": "Task set for scripts/lsp-tool-choice-eval.ts. Categories: semantic (an LSP tool is the right first move), textual (grep/find/read is right), orientation (outline/read before answering), fallback (an lsp call errors; the model should recover). expectedFirstClass is the class of the FIRST tool call the harness scores — it is an observation lens, not a pass/fail bar; model choice is variable and the run is non-gating.",
+  "tasks": [
+    {
+      "id": "T6-todo-comments",
+      "category": "textual",
+      "intent": "Textual question: locate TODO(eventions) comment markers the language server cannot see; a text search tool is the right first move.",
+      "prompt": "Find which source files in this project contain a TODO(eventions) comment marker. Report every file path that has one, with the line text.",
+      "expectedFirstClass": "textual"
+    },
+    {
+      "id": "T5-orientation",
+      "category": "orientation",
+      "intent": "Orientation: the model knows one file name only and must orient (outline or read) before summarizing; no single lsp position tool applies first.",
+      "prompt": "I am new to this codebase. Orient yourself in src/tasks.ts — its structure and responsibilities — and then summarize what the file is for in a few sentences.",
+      "expectedFirstClass": "orientation"
+    },
+    {
+      "id": "T3-callers",
+      "category": "semantic",
+      "intent": "Semantic navigation: find the callers of the concrete helper formatLine (declared in src/sinks.ts, called from src/tasks.ts). A call-relationship tool is the right first move; grep over the short identifier 'formatLine' is feasible but over-matches-prone in larger corpora.",
+      "prompt": "Which files call the function formatLine from src/sinks.ts? Report each calling file and line number.",
+      "expectedFirstClass": "semantic"
+    },
+    {
+      "id": "T2-implementations",
+      "category": "semantic",
+      "intent": "Semantic navigation: list concrete implementors of the Emitter interface (src/emitters.ts, implemented in src/emitters.ts and src/sinks.ts). lsp_implementation or lsp_workspace_symbols are good first moves; grep over the common word 'Emitter' risks over-matching comments.",
+      "prompt": "List the concrete classes in this project that implement the Emitter interface, with their file paths.",
+      "expectedFirstClass": "semantic"
+    },
+    {
+      "id": "T1-definition",
+      "category": "semantic",
+      "intent": "Semantic navigation: jump to the definition of the BatchSink.drain method (src/sinks.ts). lsp_definition or lsp_workspace_symbols are the right first moves.",
+      "prompt": "Find the definition of the drain method of the BatchSink class. Report the file and line number.",
+      "expectedFirstClass": "semantic"
+    }
+  ]
+}

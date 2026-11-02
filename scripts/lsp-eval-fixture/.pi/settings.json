@@ -1,0 +1,8 @@
+{
+  "//": "Eval-only li: the LSP server mapping is overwritten (and nothing else) by scripts/lsp-tool-choice-eval.ts at run time, so an untracked user settings edit can't distort the comparison.",
+  "lsp": {
+    "servers": {
+      "typescript": { "cmd": "typescript-language-server", "args": ["--stdio"], "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] }
+    }
+  }
+}
