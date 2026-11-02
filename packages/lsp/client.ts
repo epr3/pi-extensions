@@ -4,8 +4,16 @@
 // converts from 1-based line/column.
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+
+async function statOrUndefined(filePath: string) {
+  try {
+    return await stat(filePath);
+  } catch {
+    return undefined;
+  }
+}
 
 interface Pending {
   resolve: (v: any) => void;
@@ -25,6 +33,10 @@ export class LspClient {
   private pending = new Map<number, Pending>();
   private diagnostics = new Map<string, any[]>();
   private openDocs = new Set<string>();
+  /** Monotonically increasing version per opened document, for didOpen/didChange. */
+  private versions = new Map<string, number>();
+  /** Last-seen on-disk state of opened documents, for saved-edit freshness. */
+  private onDisk = new Map<string, { text: string; mtimeMs: number | null; size: number | null }>();
   private buffer = Buffer.alloc(0);
 
   private opts: LspClientOptions;
@@ -81,11 +93,47 @@ export class LspClient {
     this.proc = null;
   }
 
+  /**
+   * Open the document with the language server, or resynchronize it if it was
+   * opened earlier and the saved on-disk contents have changed since.
+   *
+   * Freshness boundary: only saved on-disk content is visible here. Unsaved
+   * in-editor buffers live in the editor and are outside this client's view —
+   * callers must save the file before expecting navigation to see the edit.
+   */
   async ensureOpen(filePath: string): Promise<string> {
     const uri = pathToFileURL(filePath).href;
-    if (this.openDocs.has(uri)) return uri;
+    if (this.openDocs.has(uri)) {
+      const prev = this.onDisk.get(uri)!;
+      const fileStat = await statOrUndefined(filePath);
+      if (!fileStat || fileStat.mtimeMs !== prev.mtimeMs || fileStat.size !== prev.size) {
+        // Stat diverged from last time; only a content difference warrants a didChange.
+        const text = (await readFile(filePath, "utf8").catch(() => prev.text)) ?? prev.text;
+        if (text !== prev.text) {
+          const version = (this.versions.get(uri) ?? 1) + 1;
+          this.versions.set(uri, version);
+          this.notify("textDocument/didChange", {
+            textDocument: { uri, version },
+            contentChanges: [{ text }],
+          });
+        }
+        this.onDisk.set(uri, {
+          text,
+          mtimeMs: fileStat?.mtimeMs ?? null,
+          size: fileStat?.size ?? null,
+        });
+      }
+      return uri;
+    }
     const text = await readFile(filePath, "utf8");
     this.openDocs.add(uri);
+    this.versions.set(uri, 1);
+    const fileStat = await statOrUndefined(filePath);
+    this.onDisk.set(uri, {
+      text,
+      mtimeMs: fileStat?.mtimeMs ?? null,
+      size: fileStat?.size ?? null,
+    });
     this.notify("textDocument/didOpen", {
       textDocument: { uri, languageId: this.opts.languageId, version: 1, text },
     });
