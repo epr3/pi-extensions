@@ -298,6 +298,21 @@ describe("/subagents — Subagent overview overlay", () => {
     expect(overlay.result.doneCalled).toBe(true);
   });
 
+  it("keeps the textual notification fallback outside the TUI — no overlay", async () => {
+    const command = registerCommand();
+    const { ctx, notified, customCalls } = tuiCtx(
+      [receiptEntry("sa_1_ab"), recordEntry("sa_1_ab", "completed")],
+      { mode: "rpc" },
+    );
+    await command.handler(undefined, ctx);
+    expect(customCalls).toEqual([]);
+    const text = notified.join("\n");
+    expect(text).toContain("sa_1_ab");
+    expect(text).toContain("general");
+    expect(text).toContain("completed");
+    expect(text).toContain("the answer");
+  });
+
   it("scrolls a long list with page keys and clamps at the ends", async () => {
     const command = registerCommand();
     // Enough branch history that the list outgrows a small viewport.
