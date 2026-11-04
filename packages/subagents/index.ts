@@ -28,6 +28,7 @@ import {
 import { resolveDefinitionToolset } from "./toolset.ts";
 import { SubagentCardBody, SubagentCardTop } from "./presentation.ts";
 import { AgentManager, type AgentRecord, type StopOutcome } from "./manager.ts";
+import { ActiveRunFooter } from "./footer.ts";
 import {
   OUTCOME_MESSAGE_TYPE,
   CompletionDelivery,
@@ -605,9 +606,17 @@ export default function (pi: ExtensionAPI) {
   };
   const exploreTools = exploreToolset(cfg.explore.extraTools);
 
+  // Footer summary of this session's active runs: its own keyed status so
+  // other extensions' footer text is never displaced. It re-renders on every
+  // run lifecycle event (the same notifications the event bus publishes),
+  // riding the latest context the extension saw.
+  const footer = new ActiveRunFooter();
   const manager = new AgentManager({
     maxConcurrency: Number(process.env.PI_SUBAGENT_CONCURRENCY) || cfg.maxConcurrency,
-    onEvent: (name, record) => pi.events.emit(`subagents:${name}`, { ...record }),
+    onEvent: (name, record) => {
+      footer.refresh(manager.list());
+      pi.events.emit(`subagents:${name}`, { ...record });
+    },
   });
 
   // ───────────────────────── Delivery to the originating session ────────────
@@ -677,6 +686,8 @@ export default function (pi: ExtensionAPI) {
     renderShell: "self",
     parameters: agentParams,
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+      // Run lifecycle events later render the footer through this context.
+      footer.attach(ctx);
       const availableTools = getActiveToolNamesFrom(pi);
       // codemode guidance follows real availability; undefined means the
       // boundary cannot report the tool set, so the runner assumes the default.
