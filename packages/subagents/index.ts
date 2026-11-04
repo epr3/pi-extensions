@@ -7,6 +7,7 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { resolveTypeRequest, exploreToolset } from "./agents.ts";
+import { buildOverviewRows } from "./overview-rows.ts";
 import {
   discoverCustomSubagents,
   customSubagentScopes,
@@ -25,6 +26,7 @@ import {
   describeBranchRuns,
   reconstructedRetrievalText,
 } from "./outcome-records.ts";
+import { SubagentsOverview } from "./overview.ts";
 import { resolveDefinitionToolset } from "./toolset.ts";
 import { SubagentCardBody, SubagentCardTop } from "./presentation.ts";
 import { AgentManager, type AgentRecord, type StopOutcome } from "./manager.ts";
@@ -1068,13 +1070,32 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("subagents", {
-    description: "List Subagents and their status",
+    description: "Open the Subagent overview",
     handler: async (_args, ctx) => {
+      // In the TUI the command opens the read-only Subagent overview: live
+      // current-session runs combined with the current branch's history,
+      // deduped by run id. Read-only — done() has no selection value.
+      if (ctx.mode === "tui") {
+        const rows = buildOverviewRows(
+          manager.list(),
+          reconstructBranchRuns(ctx.sessionManager.getBranch()),
+        );
+        await ctx.ui.custom<void>(
+          (tui, theme, keybindings, done) =>
+            new SubagentsOverview({ theme, keybindings, requestRender: () => tui.requestRender(), done, rows }),
+          {
+            overlay: true,
+            overlayOptions: { anchor: "center", width: "70%", maxHeight: "60%" },
+          },
+        );
+        return;
+      }
+      // Textual fallback wherever an overlay is unavailable (print, json,
+      // rpc): the same listing as before — live lines plus the branch's
+      // outcome listing. Read-only: no redelivery, no model turn; activity
+      // appears as counts only.
       const lines = manager.list().map((r) => `${r.id}  ${r.type}  ${r.status}  ${r.description}`);
       const sections = [lines.length ? lines.join("\n") : "No subagents yet"];
-      // Revisit listing: the current branch's history — records on THIS
-      // branch only, receipts without records marked unavailable. Read-only:
-      // no redelivery, no model turn; activity appears as counts only.
       const branchRuns = describeBranchRuns(reconstructBranchRuns(ctx.sessionManager.getBranch()));
       if (branchRuns) {
         sections.push("Background outcomes on this branch (from session history):\n" + branchRuns);
