@@ -34,8 +34,8 @@ _Avoid_: Title card, live transcript, stream panel.
 **Compact run row**: Collapsed inline conversation row for one **Subagent run** — Subagent type (exactly what was requested, never rewritten to a built-in it resembles), short task description, a textual state word, the latest started/finished/failed tool marker in words, and the run id once known — that never shows live assistant prose.
 _Avoid_: Dashboard, status panel, live view.
 
-**Subagent overview**: On-demand, read-only `/subagents` summary of the **Subagent runs** the current session and the current branch's history contain — active runs first, then terminal and unavailability-stated rows, newest first within each group, dismissible without side effects — complementary to their inline conversation rows.
-_Avoid_: Replacement dashboard, persistent dashboard, live updater.
+**Subagent overview**: On-demand, read-only `/subagents` summary of the **Subagent runs** the current session and the current branch's history contain — active runs first, then terminal and unavailability-stated rows, newest first within each group, dismissible without side effects, kept current while open as run state changes (keyed to the **Originating session**, so a shutdown or replacement settles nothing into the dying session's view) — complementary to their inline conversation rows.
+_Avoid_: Replacement dashboard, persistent dashboard, always-on live view.
 
 **Active-run footer summary**: Compact live footer text on the **Subagents Extension package**'s own keyed `ctx.ui.setStatus` slot, counting the current **Originating session**'s queued and running **Subagent runs** grouped by requested **Subagent type** — the accurate count leads and the type breakdown abbreviates under a crowded footer, and the slot clears when no run is active or on session shutdown or replacement. It is a UI summary only, never a durable record or a model-facing result.
 _Avoid_: Status line, dashboard, durable footer state.
@@ -134,6 +134,7 @@ _Avoid_: Cross-branch sync, global outcome, sibling completion.
 - A **Branch-local outcome** is reconstructed only from the current branch's history; on revisit nothing redelivers or starts a model turn, and a **Launch receipt** without its **Persisted outcome** reads "outcome unavailable", never active or failed, with its **Activity tail** unavailable too.
 - The **Subagent overview** combines the session's live **Subagent runs** with available reconstructed **Branch-local outcomes**, deduped by run id with the live state winning; a **Launch receipt** whose outcome is unavailable is never counted as an active run, and a sibling branch's outcome is never shown.
 - The **Subagent overview** complements the **Compact run rows**, **Launch receipts**, and **Attributed completions** — it is read-only, carries no activity tails or result bodies, and makes nothing redeliver or start a model turn.
+- An open **Subagent overview** re-renders on its own session's run transitions — queued, running, and terminal states, ordering, and the empty state — without closing and reopening it, dedupes runs again as outcomes become available on the branch, and never takes a shutdown settle from the session it dies with into a replacement session's view.
 
 ## Example dialogue
 

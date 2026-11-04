@@ -422,6 +422,13 @@ replaces them, never mutates anything, and never redelivers an outcome.
   outcome is not on the current branch's history shows `outcome unavailable`
   and is never classified as active merely because its launch receipt
   exists; another branch's outcome is never shown here.
+- The overview updates while it stays open: run state changes — queued,
+  running, and terminal transitions, reordering, a returned empty state, and
+  an outcome becoming available on the branch — re-render it without closing
+  and reopening. The updating is keyed to the owning session: a session
+  shutdown or replacement deactivates it before that session's runs settle,
+  so a dying session's terminal states never appear in its overview or in a
+  replacement session's.
 - When neither the session nor the branch history has Subagent runs, the
   overview says so explicitly — it does not render an empty shell.
 - Where a TUI overlay is unavailable (print / json mode), the command keeps
