@@ -7,7 +7,7 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { resolveTypeRequest, exploreToolset } from "./agents.ts";
-import { buildOverviewRows } from "./overview-rows.ts";
+
 import {
   discoverCustomSubagents,
   customSubagentScopes,
@@ -26,7 +26,7 @@ import {
   describeBranchRuns,
   reconstructedRetrievalText,
 } from "./outcome-records.ts";
-import { SubagentsOverview } from "./overview.ts";
+import { SubagentsOverviewUpdater } from "./overview.ts";
 import { resolveDefinitionToolset } from "./toolset.ts";
 import { SubagentCardBody, SubagentCardTop } from "./presentation.ts";
 import { AgentManager, type AgentRecord, type StopOutcome } from "./manager.ts";
@@ -620,10 +620,15 @@ export default function (pi: ExtensionAPI) {
   // run lifecycle event (the same notifications the event bus publishes),
   // riding the latest context the extension saw.
   const footer = new ActiveRunFooter();
+  // The `/subagents` overview owner: the command's TUI overlay registers here
+  // and re-renders on the same lifecycle events, so an open overview tracks
+  // runs live (rows rebuilt, deduped, ordered) without being reopened.
+  const overview = new SubagentsOverviewUpdater();
   const manager = new AgentManager({
     maxConcurrency: Number(process.env.PI_SUBAGENT_CONCURRENCY) || cfg.maxConcurrency,
     onEvent: (name, record) => {
       footer.refresh(manager.list());
+      overview.refresh(manager.list());
       pi.events.emit(`subagents:${name}`, { ...record });
     },
   });
@@ -670,6 +675,10 @@ export default function (pi: ExtensionAPI) {
     // terminal events may render the dying session's summary — neither back
     // into its own footer nor into a replacement session's.
     footer.deactivate(ctx ?? undefined);
+    // The open overview is keyed to this session like the footer: none of the
+    // dying session's settles below may re-render it, and nothing passes to
+    // the replacement session's own overview.
+    overview.deactivate();
     // Delivery next: runs stopped by shutdown must never deliver into a
     // dying or replaced session (their owner is gone).
     delivery.deactivate();
@@ -1083,24 +1092,9 @@ export default function (pi: ExtensionAPI) {
       // current-session runs combined with the current branch's history,
       // deduped by run id. Read-only — done() has no selection value.
       if (ctx.mode === "tui") {
-        const rows = buildOverviewRows(
-          manager.list(),
-          reconstructBranchRuns(ctx.sessionManager.getBranch()),
-        );
-        await ctx.ui.custom<void>(
-          (tui, theme, keybindings, done) =>
-            new SubagentsOverview({
-              theme,
-              keybindings,
-              requestRender: () => tui.requestRender(),
-              done,
-              rows,
-            }),
-          {
-            overlay: true,
-            overlayOptions: { anchor: "center", width: "70%", maxHeight: "60%" },
-          },
-        );
+        // Live overview: the updater opens the overlay using this context and
+        // keeps tracking it, so later run lifecycle events refresh its rows.
+        await overview.open(ctx, manager.list());
         return;
       }
       // Textual fallback wherever an overlay is unavailable (print, json,
