@@ -110,6 +110,26 @@ export class ActiveRunFooter {
     if (this.stopped) return;
     const ctx = this.ctx;
     if (!ctx || !ctx.hasUI) return;
-    ctx.ui.setStatus(FOOTER_STATUS_KEY, activeRunSummary(runs, this.maxWidth));
+    ctx.ui.setStatus?.(FOOTER_STATUS_KEY, activeRunSummary(runs, this.maxWidth));
+  }
+
+  /**
+   * Session shutdown or replacement: clear through the still-live shutdown
+   * context and stop serving this session's run registry. Later lifecycle
+   * events — including the synchronous settle of shutdown-stopped runs —
+   * never reach a replacement session's footer, and this session's summary
+   * cannot pass its state to any successor.
+   */
+  deactivate(ctx?: FooterUIContext): void {
+    this.stopped = true;
+    const target = ctx ?? this.ctx;
+    this.ctx = undefined;
+    if (!target?.hasUI) return;
+    try {
+      target.ui.setStatus?.(FOOTER_STATUS_KEY, undefined);
+    } catch {
+      // Stale context after replacement: the footer target is gone, and the
+      // successor session's statuses are its own — nothing to clear here.
+    }
   }
 }

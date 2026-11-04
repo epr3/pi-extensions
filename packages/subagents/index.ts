@@ -655,8 +655,13 @@ export default function (pi: ExtensionAPI) {
     { onError: (d) => pi.events.emit("subagents:persistence-error", d) },
   );
   let sessionEnded = false;
-  pi.on("session_shutdown", () => {
-    // Delivery first: runs stopped by shutdown must never deliver into a
+  pi.on("session_shutdown", (_event, ctx) => {
+    // The footer summary goes dark first, through the still-live context:
+    // manager.shutdown settles runs synchronously below, and none of those
+    // terminal events may render the dying session's summary — neither back
+    // into its own footer nor into a replacement session's.
+    footer.deactivate(ctx ?? undefined);
+    // Delivery next: runs stopped by shutdown must never deliver into a
     // dying or replaced session (their owner is gone).
     delivery.deactivate();
     // Then stop the runs — the settles fire synchronously and persist while

@@ -229,4 +229,58 @@ describe("active Subagent footer at the extension seam", () => {
       else process.env.PI_SUBAGENT_CONCURRENCY = previousEnv;
     }
   });
+
+  it("clears on session shutdown or replacement and never updates again after it", async () => {
+    const { agentTool, handlers } = setupSession();
+    hangingRunner();
+    const ctx = uiToolCtx();
+
+    const receipt = (agentTool.execute as Execute)(
+      "b1",
+      launchParams({ run_in_background: true, description: "a" }),
+      undefined,
+      undefined,
+      ctx as never,
+    );
+    await vi.waitFor(() => expect(lastFooterText(ctx)).toContain("Subagents 1"));
+
+    // The replacement/shutdown context is a DIFFERENT ui (fresh recorder):
+    // the dying session's clear must flow through the still-live ctx.
+    const shutdownCtx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      mode: "tui" as const,
+      signal: undefined,
+      model: undefined,
+      modelRegistry: { find: () => undefined },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+    const toolCtxCallsBeforeShutdown = ctx.ui.setStatus.mock.calls.length;
+    handlers.get("session_shutdown")!({}, shutdownCtx);
+    await receipt;
+
+    expect(shutdownCtx.ui.setStatus).toHaveBeenCalledWith(FOOTER_STATUS_KEY, undefined);
+
+    // The shutdown clear is the last footer write through the dying session's
+    // ui too: shutdown settles runs synchronously and none of those terminal
+    // events may re-render the summary — a replacement session never inherits
+    // it (no cross-session leakage).
+    await new Promise((r) => setTimeout(r, 50));
+    expect(ctx.ui.setStatus.mock.calls.length).toBe(toolCtxCallsBeforeShutdown);
+    const shutdownFooterCalls = shutdownCtx.ui.setStatus.mock.calls.filter(
+      ([key]) => key === FOOTER_STATUS_KEY,
+    );
+    expect(shutdownFooterCalls.at(-1)).toEqual([FOOTER_STATUS_KEY, undefined]);
+
+    // The run registry belongs to its session: no new runs after shutdown.
+    await expect(
+      (agentTool.execute as Execute)(
+        "b2",
+        launchParams({ run_in_background: true, description: "b" }),
+        undefined,
+        undefined,
+        ctx as never,
+      ),
+    ).rejects.toThrow(/shutdown|replacement/);
+  });
 });
