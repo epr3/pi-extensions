@@ -34,6 +34,9 @@ _Avoid_: Title card, live transcript, stream panel.
 **Compact run row**: Collapsed inline conversation row for one **Subagent run** — Subagent type (exactly what was requested, never rewritten to a built-in it resembles), short task description, a textual state word, the latest started/finished/failed tool marker in words, and the run id once known — that never shows live assistant prose.
 _Avoid_: Dashboard, status panel, live view.
 
+**Subagent overview**: On-demand, read-only summary of the current session's **Subagent runs**, complementary to their inline conversation rows.
+_Avoid_: Replacement dashboard.
+
 **Activity tail**: Chronological, UI-only tail of at most 50 assistant-text and tool-activity entries of one **Subagent run**, shown on expansion, opening with an explicit omission indicator ("… N earlier entries not shown") whenever earlier entries were dropped, and never entering parent-model context or the run's result.
 _Avoid_: Transcript dump, activity log, activity feed.
 
@@ -106,7 +109,7 @@ _Avoid_: Cross-branch sync, global outcome, sibling completion.
 - A background **Subagent run** departure leaves a **Launch receipt** on its launch row; the associated **Attributed completion** names the same run id and is the authoritative visible outcome, while a best-effort live row update, if ever used, is not durable or cross-mode.
 - **Same-turn fan-out** creates independent sibling **Subagent runs**, each with its own task prompt, description, stream, result, and failure status.
 - Foreground **Subagent runs** launched through **Same-turn fan-out** obey the configured subagent concurrency cap rather than bypassing it.
-- **Subagent run** uses its **Subagent type**'s **Default Subagent model** first, then the shared **Default Subagent model**, then the **Parent model**; an unresolvable configured reference is treated as absent but warned.
+- A **Subagent run** without an explicit definition model uses its **Subagent type**'s **Default Subagent model** first, then the shared **Default Subagent model**, then the **Parent model**; an unresolvable configured reference is treated as absent but warned.
 - A **Subagent type** definition's exact `provider/model` model overrides the **Default Subagent model**; `inherit` explicitly selects the **Parent model**; an explicit invalid or unavailable model fails the run instead of falling back.
 - `explore` is a **Read-only subagent**; `general` can write.
 - `explore` and `general` are reserved **Subagent type** names that **Custom Subagent definitions** cannot shadow.
