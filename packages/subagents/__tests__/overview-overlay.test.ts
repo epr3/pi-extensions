@@ -1,8 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { default as subagentsExtension } from "../index.ts";
-import { makeFakeApi, type CapturedCommand } from "./helpers.ts";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+
+// Resolve the runner at the SDK boundary only: runSubagent builds a real Pi
+// sub-session (models, credentials) — not observable deterministically.
+vi.mock("../runner.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../runner.ts")>();
+  return { ...actual, runSubagent: vi.fn() };
+});
+
+import extension from "../index.ts";
+import { runSubagent } from "../runner.ts";
+import { makeFakeApi, type CapturedCommand, type CapturedEntry, type CapturedHandlers } from "./helpers.ts";
+
+const runSubagentMock = vi.mocked(runSubagent);
 
 // ---------------------------------------------------------------------------
 // Plain theme — no ANSI codes, just passes text through.
@@ -72,8 +83,8 @@ function recordEntry(runId: string, status: "completed" | "failed" | "stopped", 
 interface OpenedOverlay {
   component: any;
   overlayOptions: any;
-  /** Resolved with the value the component passed to done(). */
-  result: { value: unknown };
+  /** Whether the component called done() — how dismissal is observed. */
+  result: { doneCalled: boolean };
 }
 
 function tuiCtx(
@@ -93,9 +104,9 @@ function tuiCtx(
         notified.push(message);
       },
       custom: async (factory: Function, opts: unknown) => {
-        const result: OpenedOverlay["result"] = { value: undefined };
-        const component = await factory(tui, plainTheme, keybindings, (v: unknown) => {
-          result.value = v;
+        const result: OpenedOverlay["result"] = { doneCalled: false };
+        const component = await factory(tui, plainTheme, keybindings, () => {
+          result.doneCalled = true;
         });
         customCalls.push({ component, overlayOptions: opts, result });
         return undefined;
@@ -107,17 +118,73 @@ function tuiCtx(
 }
 
 function registerCommand(): CapturedCommand {
-  const captured: ToolDefinition[] = [];
-  const commands: CapturedCommand[] = [];
-  subagentsExtension(makeFakeApi(captured, { commands } as never) as unknown as ExtensionAPI);
-  const command = commands.find((c) => c.name === "subagents")!;
-  if (!command) throw new Error("/subagents was not registered");
-  return command;
+  const seam = setupSession();
+  return subagentsCommand(seam);
 }
 
 /** The joined text a captured overlay component renders at the given width. */
 function rendered(overlay: OpenedOverlay, width = 80): string {
   return overlay.component.render(width).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// A real session at the seam: the extension registered, its Agent tool
+// available for launching live runs (runner mocked — SDK boundary only).
+// ---------------------------------------------------------------------------
+
+interface Seam {
+  agentTool: ToolDefinition;
+  commands: CapturedCommand[];
+  handlers: CapturedHandlers;
+}
+
+type Execute = NonNullable<ToolDefinition["execute"]>;
+
+function setupSession(): Seam {
+  const captured: ToolDefinition[] = [];
+  const commands: CapturedCommand[] = [];
+  const handlers: CapturedHandlers = new Map();
+  extension(makeFakeApi(captured, { handlers, commands } as never));
+  const agentTool = captured.find((t) => t.name === "Agent");
+  if (!agentTool?.execute) throw new Error("extension did not register the Agent tool");
+  return { agentTool, commands, handlers };
+}
+
+/** Tool-level ctx for launching live runs. */
+function toolCtx() {
+  return {
+    cwd: process.cwd(),
+    hasUI: false,
+    mode: "tui" as const,
+    signal: undefined,
+    model: undefined,
+    modelRegistry: { find: () => undefined },
+    ui: { notify: () => {} },
+  };
+}
+
+function launchParams(over: Record<string, unknown> = {}) {
+  return { subagent_type: "general", prompt: "do it", description: "d", ...over };
+}
+
+/** Launch one background run whose work resolves immediately; returns its id. */
+async function launchBackground(seam: Seam, over: Record<string, unknown> = {}): Promise<string> {
+  runSubagentMock.mockImplementation(async () => ({ result: "done", tokens: 3, toolUses: 2 }));
+  const result = await (seam.agentTool.execute as Execute)(
+    "t1",
+    launchParams({ run_in_background: true, ...over }),
+    undefined,
+    undefined,
+    toolCtx(),
+  );
+  const details = result.details as { agent_id?: string; agentId?: string };
+  return String(details.agentId ?? details.agent_id);
+}
+
+function subagentsCommand(seam: Seam): CapturedCommand {
+  const command = seam.commands.find((c) => c.name === "subagents");
+  if (!command) throw new Error("/subagents was not registered");
+  return command;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,5 +242,81 @@ describe("/subagents — Subagent overview overlay", () => {
     const text = rendered(customCalls[0]!);
     expect(text).toContain("outcome unavailable");
     expect(text).not.toContain("the answer");
+  });
+
+  it("lists a completed live run deduped against the same run's branch history", async () => {
+    const seam = setupSession();
+    const liveId = await launchBackground(seam);
+    const command = subagentsCommand(seam);
+    // The branch has recorded the same run: receipt plus persisted record.
+    const { ctx, customCalls } = tuiCtx([receiptEntry(liveId), recordEntry(liveId, "completed")]);
+    await command.handler(undefined, ctx);
+    const text = rendered(customCalls[0]!);
+    // One row for the run — the live state, not a duplicated history row.
+    expect(text.split(`[run ${liveId}]`)).toHaveLength(2);
+    expect(text).toContain(`${liveId}] — general "d" — completed`);
+  });
+
+  it("shows live current-session runs and runs from branch history with distinct ids", async () => {
+    const seam = setupSession();
+    // One active live run: the mocked run never settles, so it stays running.
+    runSubagentMock.mockImplementation(() => new Promise(() => {}));
+    await (seam.agentTool.execute as Execute)(
+      "t1",
+      launchParams({ run_in_background: true }),
+      undefined,
+      undefined,
+      toolCtx(),
+    );
+    const command = subagentsCommand(seam);
+    const { ctx, customCalls } = tuiCtx([
+      receiptEntry("sa_1_ab"),
+      recordEntry("sa_1_ab", "completed"),
+    ]);
+    await command.handler(undefined, ctx);
+    const text = rendered(customCalls[0]!);
+    expect(text).toContain("running");
+    expect(text).toContain("[run sa_1_ab]");
+  });
+
+  it("dismisses on Escape", async () => {
+    const command = registerCommand();
+    const { ctx, customCalls } = tuiCtx([]);
+    await command.handler(undefined, ctx);
+    const overlay = customCalls[0]!;
+    expect(overlay.result.doneCalled).toBe(false);
+    overlay.component.handleInput(KEYS.escape);
+    expect(overlay.result.doneCalled).toBe(true);
+  });
+
+  it("dismisses on Enter", async () => {
+    const command = registerCommand();
+    const { ctx, customCalls } = tuiCtx([]);
+    await command.handler(undefined, ctx);
+    const overlay = customCalls[0]!;
+    overlay.component.handleInput(KEYS.enter);
+    expect(overlay.result.doneCalled).toBe(true);
+  });
+
+  it("scrolls a long list with page keys and clamps at the ends", async () => {
+    const command = registerCommand();
+    // Enough branch history that the list outgrows a small viewport.
+    const entries = Array.from({ length: 12 }, (_, i) => [receiptEntry(`sa_h_${i}`), recordEntry(`sa_h_${i}`, "completed")]).flat();
+    const { ctx, customCalls } = tuiCtx(entries);
+    await command.handler(undefined, ctx);
+    const component = customCalls[0]!.component;
+    // Emulate the TUI's layout of the overlay at a small viewport height:
+    // content height is the full rendered line count, the viewport a few rows.
+    const contentHeight = rendered(customCalls[0]!, 80).split("\n").length;
+    component.updateLayout(contentHeight, 5, () => {});
+    expect(component.scrollTop).toBe(0);
+    component.handleInput(KEYS.pageDown);
+    expect(component.scrollTop).toBeGreaterThan(0);
+    // The window stays inside the content: at the end, further keys clamp.
+    component.handleInput(KEYS.pageDown);
+    component.handleInput(KEYS.pageDown);
+    expect(component.scrollTop).toBe(contentHeight - 5);
+    component.handleInput(KEYS.pageUp);
+    expect(component.scrollTop).toBeLessThan(contentHeight - 5);
   });
 });
