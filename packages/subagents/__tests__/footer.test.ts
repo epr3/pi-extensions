@@ -51,7 +51,7 @@ function launchParams(over: Record<string, unknown> = {}) {
 type Execute = NonNullable<ToolDefinition["execute"]>;
 
 /** Queue of manually released sub-session executions (hangs until released). */
-function hangingRunner(): { release: () => void } {
+function hangingRunner() {
   const pending: Array<(o: unknown) => void> = [];
   runSubagentMock.mockImplementation(
     () =>
@@ -59,9 +59,16 @@ function hangingRunner(): { release: () => void } {
         pending.push(resolve);
       }),
   );
+  const done = { result: "done", tokens: 1, toolUses: 0 };
   return {
-    release: () => {
-      for (const resolve of pending.splice(0)) resolve({ result: "done", tokens: 1, toolUses: 0 });
+    /** Settle one hanging run (launch order); settles all when omitted. */
+    release: (which?: number) => {
+      if (which === undefined) {
+        for (const resolve of pending.splice(0)) resolve(done);
+        return;
+      }
+      const resolve = pending.splice(which, 1)[0];
+      resolve?.(done);
     },
   };
 }
@@ -176,5 +183,50 @@ describe("active Subagent footer at the extension seam", () => {
       expect(lastFooterText(ctx)).toContain("Subagents 2");
       expect(lastFooterText(ctx)).toContain("2 explore");
     });
+  });
+
+  it("counts queued runs and updates as they start under the concurrency cap", async () => {
+    const previousEnv = process.env.PI_SUBAGENT_CONCURRENCY;
+    process.env.PI_SUBAGENT_CONCURRENCY = "1";
+    try {
+      const { agentTool } = setupSession();
+      const runner = hangingRunner();
+      const ctx = uiToolCtx();
+
+      // The cap lets one run start; the second waits queued.
+      const first = (agentTool.execute as Execute)(
+        "b1",
+        launchParams({ run_in_background: true, description: "a" }),
+        undefined,
+        undefined,
+        ctx as never,
+      );
+      const second = (agentTool.execute as Execute)(
+        "b2",
+        launchParams({ run_in_background: true, description: "b" }),
+        undefined,
+        undefined,
+        ctx as never,
+      );
+      await vi.waitFor(() => {
+        expect(lastFooterText(ctx)).toContain("(1 running, 1 queued)");
+      });
+
+      // A queued run counts like a running one; transitions keep the total
+      // exact as the queued work starts.
+      runner.release(0);
+      await first;
+      await vi.waitFor(() => {
+        expect(lastFooterText(ctx)).toContain("(1 running)");
+        expect(lastFooterText(ctx)).not.toContain("queued");
+      });
+
+      runner.release(0);
+      await second;
+      await vi.waitFor(() => expect(lastFooterText(ctx)).toBeUndefined());
+    } finally {
+      if (previousEnv === undefined) delete process.env.PI_SUBAGENT_CONCURRENCY;
+      else process.env.PI_SUBAGENT_CONCURRENCY = previousEnv;
+    }
   });
 });
