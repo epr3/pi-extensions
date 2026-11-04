@@ -37,6 +37,9 @@ _Avoid_: Dashboard, status panel, live view.
 **Subagent overview**: On-demand, read-only summary of the current session's **Subagent runs**, complementary to their inline conversation rows.
 _Avoid_: Replacement dashboard.
 
+**Active-run footer summary**: Compact live footer text on the **Subagents Extension package**'s own keyed `ctx.ui.setStatus` slot, counting the current **Originating session**'s queued and running **Subagent runs** grouped by requested **Subagent type** — the accurate count leads and the type breakdown abbreviates under a crowded footer, and the slot clears when no run is active or on session shutdown or replacement. It is a UI summary only, never a durable record or a model-facing result.
+_Avoid_: Status line, dashboard, durable footer state.
+
 **Activity tail**: Chronological, UI-only tail of at most 50 assistant-text and tool-activity entries of one **Subagent run**, shown on expansion, opening with an explicit omission indicator ("… N earlier entries not shown") whenever earlier entries were dropped, and never entering parent-model context or the run's result.
 _Avoid_: Transcript dump, activity log, activity feed.
 
@@ -125,6 +128,7 @@ _Avoid_: Cross-branch sync, global outcome, sibling completion.
 - Omitted **Bounded result text** is not recoverable; a large deliverable is instead written to a file by the **Subagent**.
 - A background **Subagent run** belongs to its **Originating session**; an **Attributed completion** is delivered there at most once during normal operation, queued as a non-interrupting follow-up while the parent is busy and delivered as a turn-starting message when idle.
 - **Originating session** shutdown or replacement stops queued and running **Subagent runs**, deactivates delivery, and never lets a replacement session receive an **Attributed completion** it did not own.
+- The **Active-run footer summary** counts every queued or running **Subagent run** owned by its session, groups them by requested **Subagent type**, renders under its own keyed footer slot so existing footer information is retained, and clears itself idle or with the session.
 - A **Subagent run** in a mode that is not a **Delivery-capable mode** reports an explicit diagnostic at launch instead of promising automatic delivery; explicit `get_subagent_result` retrieval remains available everywhere.
 - Every terminal background **Subagent run** in its **Originating session** attempts one **Persisted outcome**, distinct from the **Attributed completion**: delivery can be withheld while the outcome persists, and a shutdown, replacement, or crash can prevent the write without affecting delivery guarantees.
 - A **Branch-local outcome** is reconstructed only from the current branch's history; on revisit nothing redelivers or starts a model turn, and a **Launch receipt** without its **Persisted outcome** reads "outcome unavailable", never active or failed, with its **Activity tail** unavailable too.
