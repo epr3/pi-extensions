@@ -49,7 +49,10 @@ export class SubagentsOverview extends ScrollView {
 
   /** The user-visible content lines: header, rows or explicit empty state. */
   private lines(rows: readonly OverviewRow[]): string[] {
-    return ["Subagent overview", ...(rows.length ? rows.map(overviewRowLine) : ["No Subagent runs to show."])];
+    return [
+      "Subagent overview",
+      ...(rows.length ? rows.map(overviewRowLine) : ["No Subagent runs to show."]),
+    ];
   }
 
   handleInput(data: string): void {

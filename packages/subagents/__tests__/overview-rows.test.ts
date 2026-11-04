@@ -140,7 +140,14 @@ describe("buildOverviewRows", () => {
 describe("overviewRowLine", () => {
   it("shows the run id, type, description, and textual state", () => {
     const [row] = buildOverviewRows(
-      [liveRecord({ id: "sa_1_ab", type: "explore", description: "locate the bug", status: "running" })],
+      [
+        liveRecord({
+          id: "sa_1_ab",
+          type: "explore",
+          description: "locate the bug",
+          status: "running",
+        }),
+      ],
       [],
     );
     const line = overviewRowLine(row!);
@@ -151,9 +158,10 @@ describe("overviewRowLine", () => {
   });
 
   it("falls back to the outcome-unavailable state wording for a receipt-only run", () => {
-    const [row] = buildOverviewRows([], [
-      { receipt: { runId: "sa_1_ab", type: "general", description: "desc" }, delivered: false },
-    ]);
+    const [row] = buildOverviewRows(
+      [],
+      [{ receipt: { runId: "sa_1_ab", type: "general", description: "desc" }, delivered: false }],
+    );
     expect(row!.state).toBe("outcome unavailable");
   });
 });

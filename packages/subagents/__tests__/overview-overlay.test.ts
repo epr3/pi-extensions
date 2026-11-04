@@ -11,7 +11,7 @@ vi.mock("../runner.ts", async (importOriginal) => {
 
 import extension from "../index.ts";
 import { runSubagent } from "../runner.ts";
-import { makeFakeApi, type CapturedCommand, type CapturedEntry, type CapturedHandlers } from "./helpers.ts";
+import { makeFakeApi, type CapturedCommand, type CapturedHandlers } from "./helpers.ts";
 
 const runSubagentMock = vi.mocked(runSubagent);
 
@@ -54,7 +54,11 @@ function receiptEntry(runId: string, description = "refactor the parser") {
   } as any;
 }
 
-function recordEntry(runId: string, status: "completed" | "failed" | "stopped", extra: object = {}) {
+function recordEntry(
+  runId: string,
+  status: "completed" | "failed" | "stopped",
+  extra: object = {},
+) {
   return {
     type: "custom",
     customType: "subagent-outcome-record",
@@ -316,7 +320,10 @@ describe("/subagents — Subagent overview overlay", () => {
   it("scrolls a long list with page keys and clamps at the ends", async () => {
     const command = registerCommand();
     // Enough branch history that the list outgrows a small viewport.
-    const entries = Array.from({ length: 12 }, (_, i) => [receiptEntry(`sa_h_${i}`), recordEntry(`sa_h_${i}`, "completed")]).flat();
+    const entries = Array.from({ length: 12 }, (_, i) => [
+      receiptEntry(`sa_h_${i}`),
+      recordEntry(`sa_h_${i}`, "completed"),
+    ]).flat();
     const { ctx, customCalls } = tuiCtx(entries);
     await command.handler(undefined, ctx);
     const component = customCalls[0]!.component;

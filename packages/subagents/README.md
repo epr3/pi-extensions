@@ -210,6 +210,7 @@ The sub-session uses the same resource loader as the parent, so it discovers eve
 - **`general` needs nothing** — it passes no allowlist, so any extension you install (lsp, todo, a future one) is available to it automatically.
 
 Every Subagent with codemode available — built-in or custom, whether the toolset is allowlisted or inherited — gets the same tool guidance: prefer codemode when a task needs several calls, when one call's result feeds the next, or when output must be filtered; use the direct tools for straightforward single calls. The only subtractions are the safety exclusions: `Agent`, `get_subagent_result`, `stop_subagent`, `question`.
+
 - **`explore` is an allowlist by design** — that's what makes its read-only property structural rather than promised. `explore` holds the core read tools plus codemode (for batching/filtering those calls), and `subagents.explore.extraTools` / `PI_SUBAGENT_EXPLORE_TOOLS` adds more. If an optional granted tool is rejected at session creation, the allowlist degrades to the core reads and codemode — codemode is only dropped if it is itself unavailable. Only ever grant **read-only** tools — anything that writes or executes belongs to `general`. Take tools away from `general` with `subagents.general.excludeExtraTools`; the safety exclusions (`Agent`, `get_subagent_result`, `stop_subagent`, `question`) are fixed and not configurable.
 
 **One level deep, enforced:** sub-sessions are created with `excludeTools: ["Agent", "get_subagent_result", "stop_subagent", "question"]`, so a subagent cannot recursively spawn subagents (the resource loader would otherwise hand it this very extension), retrieve or stop runs, or block on a question no user will see. Foreground runs return their result inline; background settles deliver one attributed completion message (see [Background outcome delivery](#background-outcome-delivery)).
@@ -219,7 +220,8 @@ Every Subagent with codemode available — built-in or custom, whether the tools
 - `Agent({ subagent_type, prompt, description, run_in_background? })` — foreground blocks + returns the bounded result; background returns an id. `subagent_type` accepts the two built-ins or any valid custom type name (discovered names and descriptions are listed in the tool description; definitions are re-read at every launch).
 - `get_subagent_result({ agent_id, wait? })` — poll/retrieve a background agent's bounded result. The model-facing text names the run; the row shows a compact status head (`wait: true` shows live `queued`/`running` while it polls) with the full text behind expansion.
 - `stop_subagent({ agent_id })` — stop one queued or running background run (see [Stopping background runs](#stopping-background-runs)).
-- `/subagents` — list subagents and status.
+- `/subagents` — open the [Subagent overview](#subagent-overview-subagents)
+  (read-only, scrollable) in the TUI; a textual status listing elsewhere.
 
 Background agents run through a concurrency queue (default 4, `PI_SUBAGENT_CONCURRENCY`).
 
@@ -309,8 +311,10 @@ delivery:
   too. An outcome persisted but not delivered stays inspectable; revisit never
   automatically redelivers it and never starts a model turn.
 - Where it appears:
-  - `/subagents` lists background outcomes on this branch from session history
-    (status, outcome head, delivered/not delivered, activity counts).
+  - The [Subagent overview](#subagent-overview-subagents) (`/subagents`) shows
+    background outcomes on this branch from session history — the textual
+    fallback listing states them in detail (status, outcome head,
+    delivered/not delivered, activity counts).
   - `get_subagent_result` with a revisited id falls back to the branch history:
     the persisted outcome is returned again via explicit retrieval, a
     receipt-only run answers "outcome unavailable", and the retained activity is
@@ -331,9 +335,12 @@ delivery:
 
 ## Run presentation
 
-Runs are presented inline in the parent conversation — no separate dashboard, no
-per-row stop control — using compact tool rows for identity and state, an
-expanded activity tail for inspection, and distinct outcome rows.
+Runs are presented inline in the parent conversation — no persistent dashboard,
+no per-row stop control — using compact tool rows for identity and state, an
+expanded activity tail for inspection, and distinct outcome rows. An on-demand
+**Subagent overview** is always available through `/subagents` — a read-only
+summary that complements, and never replaces, these inline rows (see the
+[Subagent overview](#subagent-overview-subagents) section below).
 
 ### Compact rows (identity and state)
 
@@ -362,8 +369,10 @@ expanded activity tail for inspection, and distinct outcome rows.
   included — distinctly from a completed answer; a parent-cancelled foreground
   run stops leaking updates and its partial text follows the same
   partial/missing-output contract as background stops. Keeping the conversation
-  legible is the point: there is deliberately no aggregate dashboard and no
-  row-specific stop button.
+  legible is the point: conversation rows stay the primary detailed record —
+  there is no persistent aggregate dashboard and no row-specific stop button.
+  The on-demand `/subagents` overview is a read-only summary, not a place where
+  rows are driven.
 
 ### Expanded activity tail (per run)
 
@@ -394,6 +403,35 @@ associated by run id. A best-effort live update of the receipt row is
 deliberately **not** implemented — such updates could never be durable or
 cross-mode in Pi anyway; the persisted completion message, explicit retrieval,
 and the `subagents` status command are the reliable paths.
+
+### Subagent overview (`/subagents`)
+
+`/subagents` opens the **Subagent overview**: a read-only, scrollable overlay
+(one run per row). It complements the inline conversation rows — it never
+replaces them, never mutates anything, and never redelivers an outcome.
+
+- In the TUI, the command opens the overlay; Esc or Enter dismisses it. Long
+  lists scroll; no run controls (stop, retry, launch) exist here.
+- Each row names the run id, **Subagent type**, short task description, and a
+  textual state — `queued`, `running`, `completed`, `failed`, `stopped`, or
+  `outcome unavailable` — in words, never by color or symbol alone.
+- Rows order active runs first, then terminal runs, newest first within each
+  group. Runs from the current session and reconstructed current-branch
+  history are deduped by run id, the live state wins for a run both know.
+- Reconstruction keeps **Branch-local outcome** semantics: a run whose
+  outcome is not on the current branch's history shows `outcome unavailable`
+  and is never classified as active merely because its launch receipt
+  exists; another branch's outcome is never shown here.
+- When neither the session nor the branch history has Subagent runs, the
+  overview says so explicitly — it does not render an empty shell.
+- Where a TUI overlay is unavailable (print / json mode), the command keeps
+  the textual notification listing instead.
+
+The overview revises an earlier design note that restricted Subagent run
+presentation to inline rows only: it is a bounded, on-demand summary, so the
+inline rows remain the durable per-run record through the conversation while
+`/subagents` answers "what is running right now — and what ran on this
+branch".
 
 ## Bounded result text
 

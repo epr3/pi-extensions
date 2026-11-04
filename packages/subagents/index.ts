@@ -330,7 +330,11 @@ export function renderRetrievalResult(
   const id = details.agentId ?? details.agent_id;
   const status =
     details.status ??
-    (details.outcome === "unavailable" ? "unavailable" : options.isPartial ? "running" : "completed");
+    (details.outcome === "unavailable"
+      ? "unavailable"
+      : options.isPartial
+        ? "running"
+        : "completed");
   const identity = [details.type, details.description ? `"${details.description}"` : ""]
     .filter(Boolean)
     .join(" ");
@@ -347,7 +351,10 @@ export function renderRetrievalResult(
     .filter(isTextContent)
     .map((c) => c.text)
     .join("\n");
-  return new SubagentCardBody(theme, `${head}${reasonLine}\n\n${theme.fg("toolOutput", contentText)}`);
+  return new SubagentCardBody(
+    theme,
+    `${head}${reasonLine}\n\n${theme.fg("toolOutput", contentText)}`,
+  );
 }
 
 function statsText(toolUses?: number, tokens?: number): string | undefined {
@@ -1082,7 +1089,13 @@ export default function (pi: ExtensionAPI) {
         );
         await ctx.ui.custom<void>(
           (tui, theme, keybindings, done) =>
-            new SubagentsOverview({ theme, keybindings, requestRender: () => tui.requestRender(), done, rows }),
+            new SubagentsOverview({
+              theme,
+              keybindings,
+              requestRender: () => tui.requestRender(),
+              done,
+              rows,
+            }),
           {
             overlay: true,
             overlayOptions: { anchor: "center", width: "70%", maxHeight: "60%" },

@@ -79,7 +79,7 @@ export function buildOverviewRows(
   }
   // Live records: active group first (reverse creation order), then terminal.
   const rows = [...live]
-    .reverse()
+    .toReversed()
     .toSorted((a, b) => Number(rowFromRecord(b).active) - Number(rowFromRecord(a).active));
   return rows.map(rowFromRecord).concat(historyOnly);
 }
