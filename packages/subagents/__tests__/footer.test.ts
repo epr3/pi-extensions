@@ -50,6 +50,22 @@ function launchParams(over: Record<string, unknown> = {}) {
 
 type Execute = NonNullable<ToolDefinition["execute"]>;
 
+/** Queue of manually released sub-session executions (hangs until released). */
+function hangingRunner(): { release: () => void } {
+  const pending: Array<(o: unknown) => void> = [];
+  runSubagentMock.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        pending.push(resolve);
+      }),
+  );
+  return {
+    release: () => {
+      for (const resolve of pending.splice(0)) resolve({ result: "done", tokens: 1, toolUses: 0 });
+    },
+  };
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // The footer counts active (queued or running) Subagent runs of the current
 // session and clears itself the moment no run is active.
@@ -85,5 +101,80 @@ describe("active Subagent footer at the extension seam", () => {
     release();
     await receipt;
     await vi.waitFor(() => expect(lastFooterText(ctx)).toBeUndefined());
+  });
+
+  it("counts concurrent runs grouped by requested type, foreground and background alike, and tracks them down to idle", async () => {
+    const { agentTool } = setupSession();
+    const runner = hangingRunner();
+    const ctx = uiToolCtx();
+
+    // Same-turn fan-out: two background explores, one background general …
+    const bgs = [
+      (agentTool.execute as Execute)(
+        "b1",
+        launchParams({ run_in_background: true, description: "a" }),
+        undefined,
+        undefined,
+        ctx as never,
+      ),
+      (agentTool.execute as Execute)(
+        "b2",
+        launchParams({
+          subagent_type: "general",
+          run_in_background: true,
+          description: "b",
+        }),
+        undefined,
+        undefined,
+        ctx as never,
+      ),
+    ];
+    // …plus one foreground explore the parent is still awaiting.
+    const fg = (agentTool.execute as Execute)(
+      "f1",
+      launchParams({ description: "c" }),
+      undefined,
+      undefined,
+      ctx as never,
+    );
+
+    await vi.waitFor(() => {
+      const text = lastFooterText(ctx);
+      expect(text).toMatch(/Subagents 3\b/);
+      expect(text).toContain("2 explore");
+      expect(text).toContain("1 general");
+    });
+
+    // Runs leave the footer as they settle; no run, no status.
+    runner.release();
+    await Promise.all(bgs);
+    await fg;
+    await vi.waitFor(() => expect(lastFooterText(ctx)).toBeUndefined());
+  });
+
+  it("combines concurrent runs of one type into a single group", async () => {
+    const { agentTool } = setupSession();
+    hangingRunner();
+    const ctx = uiToolCtx();
+    await Promise.all([
+      (agentTool.execute as Execute)(
+        "b1",
+        launchParams({ run_in_background: true, description: "a" }),
+        undefined,
+        undefined,
+        ctx as never,
+      ),
+      (agentTool.execute as Execute)(
+        "b2",
+        launchParams({ run_in_background: true, description: "b" }),
+        undefined,
+        undefined,
+        ctx as never,
+      ),
+    ]);
+    await vi.waitFor(() => {
+      expect(lastFooterText(ctx)).toContain("Subagents 2");
+      expect(lastFooterText(ctx)).toContain("2 explore");
+    });
   });
 });
