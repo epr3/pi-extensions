@@ -1198,11 +1198,84 @@ describe("web_fetch tool — AI extraction contract", () => {
     expect(await listFiles(storageRoot)).toEqual([]);
   });
 
-  it("rejects a missing extraction-model configuration with an actionable error", async () => {
+  // Regression: OpenCode-adjacent providers require the Pi session id on every
+  // completion (mapped to the `x-opencode-session` header); omitting it fails
+  // with HTTP 400 "MissingSessionID". The raw provider-neutral path must also
+  // carry it.
+  it("forwards the Pi session id to the raw completion path", async () => {
+    const registry = makeFakeRegistry();
     const api = makeFakeApi();
     configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(registry.completeCalls).toHaveLength(1);
+    expect(registry.completeCalls[0].options).toMatchObject({ sessionId: "sess-1" });
+  });
+
+  it("forwards the Pi session id to the explicit reasoning path", async () => {
+    const registry = makeFakeRegistry(makeModel({ reasoning: true }));
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: {
+        provider: "test-provider",
+        model: "test-model",
+        thinkingLevel: "off",
+      },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1", registry),
+    );
+
+    expect(registry.streamSimpleCalls).toHaveLength(1);
+    expect(registry.streamSimpleCalls[0].options).toMatchObject({ sessionId: "sess-1" });
+    expect(registry.completeCalls).toHaveLength(0);
+  });
+
+  it("omits the session id entirely when no session manager is available", async () => {
+    const registry = makeFakeRegistry();
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
+    });
+
+    const result = await api.tool.execute(
+      "c1",
+      { url: "https://example.com", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx(undefined, registry),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(registry.completeCalls).toHaveLength(1);
+    expect(registry.completeCalls[0].options).not.toHaveProperty("sessionId");
+  });
+
+  it("rejects a missing extraction-model configuration with an actionable error", async () => {
+    const api = makeFakeApi();
+    // `null` simulates a machine with no webFetch.extractionModel settings;
+    // an otherwise-clear knob would read real global/project settings.
+    configureTestRuntime({
       storageRoot,
-      extractionModelSettings: undefined as unknown as ExtractionModelSettings,
+      extractionModelSettings: null,
       fetchFn: makeFetchMock(mockResponse(HTML_FIXTURE, 200, { "content-type": "text/html" })),
     });
 

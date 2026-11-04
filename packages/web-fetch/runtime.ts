@@ -20,8 +20,10 @@ export interface RuntimeKnobs {
   processLiveness?: ProcessLiveness;
   /** Override the default AI extraction budget policy (tests only). */
   extractionBudgetPolicy?: Partial<ExtractionModelBudgetPolicy>;
-  /** Override AI extraction model settings read from disk (tests only). */
-  extractionModelSettings?: ExtractionModelSettings;
+  /** Override AI extraction model settings read from disk (tests only).
+   *  `null` simulates a machine with no `webFetch.extractionModel` at all —
+   *  the nullish-coalescing fallback would otherwise read real settings. */
+  extractionModelSettings?: ExtractionModelSettings | null;
 }
 
 const knobs: RuntimeKnobs = {};

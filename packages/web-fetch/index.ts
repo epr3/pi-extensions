@@ -251,7 +251,13 @@ export default function (pi: ExtensionAPI) {
       const prompt = validatePrompt(rawPrompt);
       const urlStr = url.toString();
 
-      const settings = knobs.extractionModelSettings ?? readWebFetchSettings().extractionModel;
+      // `null` is the explicit "unconfigured" test sentinel; anything else
+      // nullish reads real global/project settings at call time.
+      const settingsSource = knobs.extractionModelSettings;
+      const settings =
+        settingsSource === null
+          ? undefined
+          : (settingsSource ?? readWebFetchSettings().extractionModel);
       const registry = resolveModelRegistry(ctx);
       const resolvedModel = resolveExtractionModel(registry, settings);
       const budgetPolicy = resolveBudgetPolicy(knobs.extractionBudgetPolicy);
@@ -350,6 +356,9 @@ export default function (pi: ExtensionAPI) {
             budgetPolicy,
             call.combinedSignal,
             thinkingPlan.effective,
+            // Providers with session-routed APIs (e.g. OpenCode's required
+            // `x-opencode-session` header) need the Pi session id; others ignore it.
+            resolveSessionId(ctx),
           );
         } catch (err) {
           if (err instanceof ExtractionModelError) {

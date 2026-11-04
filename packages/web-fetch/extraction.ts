@@ -235,6 +235,7 @@ async function completeWithReasoning(
     maxTokens: number;
     timeoutMs: number;
     reasoning?: ThinkingLevel;
+    sessionId?: string;
   },
 ): Promise<AssistantMessage> {
   const provider = registry.getProvider(model.provider);
@@ -252,6 +253,10 @@ async function completeWithReasoning(
     signal: options.signal,
     maxTokens: options.maxTokens,
     timeoutMs: options.timeoutMs,
+    // Providers that require session routing (e.g. OpenCode's required
+    // `x-opencode-session` header) map this field onto their transport;
+    // everyone else ignores it.
+    ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     ...(auth.apiKey !== undefined ? { apiKey: auth.apiKey } : {}),
     ...(auth.headers !== undefined ? { headers: auth.headers } : {}),
     ...(auth.env !== undefined ? { env: auth.env } : {}),
@@ -355,6 +360,7 @@ export async function extractAnswer(
   policy: ExtractionModelBudgetPolicy,
   signal?: AbortSignal,
   effectiveThinking?: ModelThinkingLevel,
+  sessionId?: string,
 ): Promise<ExtractionResult> {
   const { model, provider, modelId } = resolved;
   const outputTokens = baseOutputAllowance(model, policy);
@@ -403,6 +409,7 @@ export async function extractAnswer(
         signal,
         maxTokens: outputTokens,
         timeoutMs: policy.completionTimeoutMs,
+        ...(sessionId ? { sessionId } : {}),
       });
     } else {
       // Explicit preference: pass the base answer allowance; Pi's budget
@@ -412,6 +419,7 @@ export async function extractAnswer(
         maxTokens: outputTokens,
         timeoutMs: policy.completionTimeoutMs,
         ...(effectiveThinking !== "off" ? { reasoning: effectiveThinking } : {}),
+        ...(sessionId ? { sessionId } : {}),
       });
     }
   } catch (err) {
