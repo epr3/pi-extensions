@@ -11,7 +11,12 @@ vi.mock("../runner.ts", async (importOriginal) => {
 
 import extension from "../index.ts";
 import { runSubagent } from "../runner.ts";
-import { makeFakeApi, type CapturedCommand, type CapturedHandlers } from "./helpers.ts";
+import {
+  makeFakeApi,
+  type CapturedCommand,
+  type CapturedEntry,
+  type CapturedHandlers,
+} from "./helpers.ts";
 
 const runSubagentMock = vi.mocked(runSubagent);
 
@@ -29,6 +34,27 @@ const plainTheme = {
 // in the overlay tests: an Agent toolResult launch receipt and a persisted
 // subagent-outcome-record.
 
+function recordAsEntry(data: Record<string, unknown>) {
+  return {
+    type: "custom",
+    customType: "subagent-outcome-record",
+    data,
+  } as any;
+}
+
+function receiptEntry(runId: string, description = "refactor the parser") {
+  return {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolCallId: `tc_${runId}`,
+      toolName: "Agent",
+      content: [{ type: "text", text: `Subagent general "${description}" [run ${runId}]` }],
+      details: { agent_id: runId, agentId: runId, type: "general", description, status: "queued" },
+    },
+  } as any;
+}
+
 interface Seam {
   agentTool: ToolDefinition;
   commands: CapturedCommand[];
@@ -38,11 +64,17 @@ interface Seam {
 type Execute = NonNullable<ToolDefinition["execute"]>;
 
 /** A real session at the seam: the extension registered (runner mocked). */
-function setupSession(): Seam {
+function setupSession(extra: { appendEntries?: CapturedEntry[] } = {}): Seam {
   const captured: ToolDefinition[] = [];
   const commands: CapturedCommand[] = [];
   const handlers: CapturedHandlers = new Map();
-  extension(makeFakeApi(captured, { handlers, commands } as never));
+  extension(
+    makeFakeApi(captured, {
+      handlers,
+      commands,
+      appendEntries: extra.appendEntries,
+    } as never),
+  );
   const agentTool = captured.find((t) => t.name === "Agent");
   if (!agentTool?.execute) throw new Error("extension did not register the Agent tool");
   return { agentTool, commands, handlers };
@@ -281,6 +313,75 @@ describe("/subagents — live Subagent overview at the extension UI seam", () =>
     runner.release();
     await receipt;
     await vi.waitFor(() => expect(rendered(overlay)).toMatch(/completed/));
+  });
+
+  it("never duplicates a run when its outcome becomes available while the overview is open", async () => {
+    const appendEntries: CapturedEntry[] = [];
+    const seam = setupSession({ appendEntries });
+    const branchEntries: unknown[] = [];
+    const runner = hangingLauncher(seam);
+    const command = subagentsCommand(seam);
+    const { ctx, customCalls } = tuiCtx(branchEntries);
+
+    // One live running run, open overview, empty branch history.
+    const receiptA = await runner.launch({ description: "settle me" });
+    const idA = launchedRunId(receiptA);
+    await command.handler(undefined, ctx);
+    const overlay = customCalls[0]!;
+    expect(rendered(overlay).split(`[run ${idA}]`)).toHaveLength(2);
+
+    // The run settles: its branch-local outcome becomes available while the
+    // overview stays open (launch receipt in history plus the persisted
+    // outcome record written on settle).
+    runner.release();
+    await receiptA;
+    await vi.waitFor(() => expect(appendEntries.length).toBeGreaterThan(0));
+    const outcome = appendEntries.at(-1)!.data as Record<string, unknown>;
+    expect(outcome.runId).toBe(idA);
+    branchEntries.push(receiptEntry(idA), recordAsEntry(outcome));
+
+    // A further run lifecycle event rebuilds the rows — the run whose outcome
+    // became available must still appear exactly once, not once live and once
+    // reconstructed.
+    const receiptB = await runner.launch({ description: "another" });
+    await vi.waitFor(() => {
+      const text = rendered(overlay);
+      expect(text.split(`[run ${idA}]`)).toHaveLength(2);
+      expect(text).toContain(`[run ${launchedRunId(receiptB)}]`);
+      expect(text).toContain(`[run ${idA}] — general "settle me" — completed`);
+    });
+  });
+
+  it("never takes a dying session's shutdown update into its open overview", async () => {
+    const seam = setupSession();
+    const branchEntries: unknown[] = [];
+    const runner = hangingLauncher(seam);
+    const command = subagentsCommand(seam);
+    const { ctx, customCalls } = tuiCtx(branchEntries);
+
+    const receipt = await runner.launch({ description: "mine" });
+    await command.handler(undefined, ctx);
+    const overlay = customCalls[0]!;
+    expect(rendered(overlay)).toMatch(/running/);
+
+    // Session shutdown or replacement settles this session's runs to stopped
+    // — but the open overview is keyed to the dying session: none of those
+    // settles may re-render it (nothing stale may appear in the replacement
+    // session's own view).
+    const callsBeforeShutdown = rendered(overlay);
+    seam.handlers.get("session_shutdown")!({}, { hasUI: true, mode: "tui" });
+    await receipt;
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(rendered(overlay)).toBe(callsBeforeShutdown);
+    expect(rendered(overlay)).toMatch(/running/);
+    expect(rendered(overlay)).not.toMatch(/stopped/);
+
+    // The run registry belongs to its session: a successor context launches
+    // nothing through the dying session's manager.
+    await expect(runner.launch({ description: "too late" })).rejects.toThrow(
+      /shutdown|replacement/,
+    );
   });
 });
 
