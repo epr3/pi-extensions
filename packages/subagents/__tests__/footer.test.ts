@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 // Resolve the runner at the SDK boundary only: runSubagent builds a real Pi
@@ -9,7 +12,8 @@ vi.mock("../runner.ts", async (importOriginal) => {
 });
 
 import extension from "../index.ts";
-import { FOOTER_STATUS_KEY } from "../footer.ts";
+import { FOOTER_STATUS_KEY, DEFAULT_ACTIVE_RUN_WIDTH, activeRunSummary } from "../footer.ts";
+import type { AgentRecord, Status } from "../manager.ts";
 import { makeFakeApi, type CapturedHandlers } from "./helpers.ts";
 import { runSubagent } from "../runner.ts";
 
@@ -282,5 +286,105 @@ describe("active Subagent footer at the extension seam", () => {
         ctx as never,
       ),
     ).rejects.toThrow(/shutdown|replacement/);
+  });
+
+  it("keeps the total accurate when a long type exceeds the footer width budget", async () => {
+    // A Custom Subagent definition whose requested type name alone pushes
+    // the summary past our width budget: the built-in footer truncates its
+    // status line from the right, so the extension abbreviates the type
+    // breakdown itself instead of letting the truncation mislead.
+    const type = "long-custom-subagent-type-name-for-footer-tests";
+    const root = mkdtempSync(join(tmpdir(), "subagent-footer-"));
+    mkdirSync(join(root, ".pi", "agents"), { recursive: true });
+    writeFileSync(
+      join(root, ".pi", "agents", `${type}.md`),
+      `---\nname: ${type}\ndescription: footer width fixture\n---\nDo the work.\n`,
+    );
+    try {
+      const { agentTool } = setupSession();
+      const runner = hangingRunner();
+      const ctx = uiToolCtx();
+
+      const receipt = (agentTool.execute as Execute)(
+        "b1",
+        {
+          subagent_type: type,
+          prompt: "do it",
+          description: "d",
+          run_in_background: true,
+        },
+        undefined,
+        undefined,
+        { ...ctx, cwd: root } as never,
+      );
+      await vi.waitFor(() => expect(lastFooterText(ctx)).toBeDefined());
+
+      // Breakdown abbreviated, total exact — the total is what must never
+      // be misleading under a crowded footer.
+      expect(lastFooterText(ctx)).toBe("Subagents 1 (1 running)");
+      expect(lastFooterText(ctx)).not.toContain(type);
+
+      runner.release();
+      await receipt;
+      await vi.waitFor(() => expect(lastFooterText(ctx)).toBeUndefined());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The summary itself: accurate total, per-type groups, and a width ladder
+// that abbreviates the type breakdown before the running/queued split and
+// never the leading total.
+// ---------------------------------------------------------------------------
+
+/** Minimal run record carrying just what the summary reads. */
+function makeRun(type: string, status: Status, id = "sa_1_ab"): AgentRecord {
+  return {
+    id,
+    type,
+    description: "d",
+    status,
+    background: true,
+    tokens: 0,
+    toolUses: 0,
+  };
+}
+
+describe("activeRunSummary", () => {
+  it("is undefined when no run is queued or running — terminal runs do not occupy the footer", () => {
+    expect(activeRunSummary([makeRun("explore", "completed")])).toBeUndefined();
+    expect(activeRunSummary([])).toBeUndefined();
+  });
+
+  it("groups by requested type in first-appearance order", () => {
+    expect(
+      activeRunSummary([
+        makeRun("general", "running", "a"),
+        makeRun("explore", "queued", "b"),
+        makeRun("general", "queued", "c"),
+      ]),
+    ).toBe("Subagents 3 (1 running, 2 queued) — 2 general, 1 explore");
+  });
+
+  it("keeps the full breakdown inside the width budget", () => {
+    const runs = [makeRun("explore", "running", "a"), makeRun("explore", "queued", "b")];
+    const full = "Subagents 2 (1 running, 1 queued) — 2 explore";
+    expect(activeRunSummary(runs, DEFAULT_ACTIVE_RUN_WIDTH)).toBe(full);
+  });
+
+  it("drops whole type groups before the running/queued split as width shrinks", () => {
+    const runs = [
+      makeRun("general", "running", "a"),
+      makeRun("general", "running", "b"),
+      makeRun("explore", "queued", "c"),
+    ];
+    expect(activeRunSummary(runs, 33)).toBe("Subagents 3 (2 running, 1 queued)");
+    expect(activeRunSummary(runs, 12)).toBe("Subagents 3");
+  });
+
+  it("never returns less than the total alone, however narrow the budget", () => {
+    expect(activeRunSummary([makeRun("explore", "running")], 5)).toBe("Subagents 1");
   });
 });
