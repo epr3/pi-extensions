@@ -1,6 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 // Resolve the runner at the SDK boundary only: runSubagent builds a real Pi
 // sub-session (models, credentials) — not observable deterministically.
@@ -10,25 +8,16 @@ vi.mock("../runner.ts", async (importOriginal) => {
 });
 
 import extension from "../index.ts";
-import { runSubagent } from "../runner.ts";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
+  hangingRunner,
   makeFakeApi,
+  tuiCtx,
   type CapturedCommand,
   type CapturedEntry,
   type CapturedHandlers,
+  type OpenedOverlay,
 } from "./helpers.ts";
-
-const runSubagentMock = vi.mocked(runSubagent);
-
-// ---------------------------------------------------------------------------
-// Plain theme — no ANSI codes, just passes text through.
-// ---------------------------------------------------------------------------
-
-const plainTheme = {
-  fg: (_color: string, text: string) => text,
-  bg: (_color: string, text: string) => text,
-  bold: (text: string) => text,
-} as any;
 
 // Session-history fixtures — hand-built branch entries (receipt + record), as
 // in the overlay tests: an Agent toolResult launch receipt and a persisted
@@ -61,8 +50,6 @@ interface Seam {
   handlers: CapturedHandlers;
 }
 
-type Execute = NonNullable<ToolDefinition["execute"]>;
-
 /** A real session at the seam: the extension registered (runner mocked). */
 function setupSession(extra: { appendEntries?: CapturedEntry[] } = {}): Seam {
   const captured: ToolDefinition[] = [];
@@ -80,93 +67,11 @@ function setupSession(extra: { appendEntries?: CapturedEntry[] } = {}): Seam {
   return { agentTool, commands, handlers };
 }
 
-/** Tool-level ctx for launching live runs. */
-function toolCtx() {
-  return {
-    cwd: process.cwd(),
-    hasUI: false,
-    mode: "tui" as const,
-    signal: undefined,
-    model: undefined,
-    modelRegistry: { find: () => undefined },
-    ui: { notify: () => {} },
-  };
-}
-
-function launchParams(over: Record<string, unknown> = {}) {
-  return { subagent_type: "general", prompt: "do it", description: "d", ...over };
-}
-
 // ---------------------------------------------------------------------------
-// The fake interactive ctx: opens the /subagents overlay at the command seam
-// and keeps the component so tests can re-render it — that is exactly how the
-// open overview is observed while runs change under it.
+// The fake interactive ctx comes from the shared helpers: it opens the
+// /subagents overlay at the command seam and keeps the component so tests can
+// re-render it — exactly how the open overview is observed while runs change.
 // ---------------------------------------------------------------------------
-
-interface OpenedOverlay {
-  component: any;
-  overlayOptions: any;
-  /** Whether the component called done() — how dismissal is observed. */
-  result: { doneCalled: boolean };
-}
-
-function tuiCtx(branchEntries: readonly unknown[] = []): { ctx: any; customCalls: OpenedOverlay[] } {
-  const customCalls: OpenedOverlay[] = [];
-  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
-  const tui = { requestRender: () => {} };
-  const ctx = {
-    mode: "tui",
-    hasUI: true,
-    cwd: process.cwd(),
-    ui: {
-      notify: () => {},
-      custom: async (factory: Function, opts: unknown) => {
-        const result: OpenedOverlay["result"] = { doneCalled: false };
-        const component = await factory(tui, plainTheme, keybindings, () => {
-          result.doneCalled = true;
-        });
-        customCalls.push({ component, overlayOptions: opts, result });
-        return undefined;
-      },
-    },
-    sessionManager: { getBranch: () => branchEntries },
-  };
-  return { ctx, customCalls };
-}
-
-/**
- * Queue of manually released sub-session executions (hangs until released),
- * keyed in launch order — the same pattern the footer tests use.
- */
-function hangingLauncher(seam: Seam) {
-  const pending: Array<(o: unknown) => void> = [];
-  runSubagentMock.mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        pending.push(resolve);
-      }),
-  );
-  const done = { result: "done", tokens: 1, toolUses: 0 };
-  return {
-    /** Launch one hanging background run; resolves its receipt details. */
-    launch: (over: Record<string, unknown> = {}) =>
-      (seam.agentTool.execute as Execute)(
-        "t",
-        launchParams({ run_in_background: true, ...over }),
-        undefined,
-        undefined,
-        toolCtx(),
-      ),
-    /** Settle one hanging run (launch order); settles all when omitted. */
-    release: (which?: number) => {
-      if (which === undefined) {
-        for (const resolve of pending.splice(0)) resolve(done);
-        return;
-      }
-      pending.splice(which, 1)[0]?.(done);
-    },
-  };
-}
 
 function subagentsCommand(seam: Seam): CapturedCommand {
   const command = seam.commands.find((c) => c.name === "subagents");
@@ -193,7 +98,7 @@ function launchedRunId(receipt: any): string {
 describe("/subagents — live Subagent overview at the extension UI seam", () => {
   it("updates an open overview from running to completed without reopening it", async () => {
     const seam = setupSession();
-    const runner = hangingLauncher(seam);
+    const runner = hangingRunner(seam);
     const receipt = await runner.launch({ description: "watch me" });
     const command = subagentsCommand(seam);
     const { ctx, customCalls } = tuiCtx([]);
@@ -218,7 +123,7 @@ describe("/subagents — live Subagent overview at the extension UI seam", () =>
     process.env.PI_SUBAGENT_CONCURRENCY = "1";
     try {
       const seam = setupSession();
-      const runner = hangingLauncher(seam);
+      const runner = hangingRunner(seam);
       const command = subagentsCommand(seam);
       const { ctx, customCalls } = tuiCtx([]);
       // Open the overview before anything is launched: empty for now.
@@ -259,7 +164,7 @@ describe("/subagents — live Subagent overview at the extension UI seam", () =>
 
   it("reorders an open overview as runs settle — active first, terminal newest first", async () => {
     const seam = setupSession();
-    const runner = hangingLauncher(seam);
+    const runner = hangingRunner(seam);
     const command = subagentsCommand(seam);
     const { ctx, customCalls } = tuiCtx([]);
     await command.handler(undefined, ctx);
@@ -290,7 +195,7 @@ describe("/subagents — live Subagent overview at the extension UI seam", () =>
 
   it("replaces the empty state with rows as runs appear while the overview is open", async () => {
     const seam = setupSession();
-    const runner = hangingLauncher(seam);
+    const runner = hangingRunner(seam);
     const command = subagentsCommand(seam);
     const { ctx, customCalls } = tuiCtx([]);
     // Nothing is running and the branch is empty: the explicit empty state.
@@ -319,7 +224,7 @@ describe("/subagents — live Subagent overview at the extension UI seam", () =>
     const appendEntries: CapturedEntry[] = [];
     const seam = setupSession({ appendEntries });
     const branchEntries: unknown[] = [];
-    const runner = hangingLauncher(seam);
+    const runner = hangingRunner(seam);
     const command = subagentsCommand(seam);
     const { ctx, customCalls } = tuiCtx(branchEntries);
 
@@ -355,7 +260,7 @@ describe("/subagents — live Subagent overview at the extension UI seam", () =>
   it("never takes a dying session's shutdown update into its open overview", async () => {
     const seam = setupSession();
     const branchEntries: unknown[] = [];
-    const runner = hangingLauncher(seam);
+    const runner = hangingRunner(seam);
     const command = subagentsCommand(seam);
     const { ctx, customCalls } = tuiCtx(branchEntries);
 
@@ -384,4 +289,3 @@ describe("/subagents — live Subagent overview at the extension UI seam", () =>
     );
   });
 });
-

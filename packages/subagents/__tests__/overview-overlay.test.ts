@@ -1,6 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 // Resolve the runner at the SDK boundary only: runSubagent builds a real Pi
 // sub-session (models, credentials) — not observable deterministically.
@@ -10,20 +8,19 @@ vi.mock("../runner.ts", async (importOriginal) => {
 });
 
 import extension from "../index.ts";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { runSubagent } from "../runner.ts";
-import { makeFakeApi, type CapturedCommand, type CapturedHandlers } from "./helpers.ts";
+import {
+  launchParams,
+  makeFakeApi,
+  tuiCtx,
+  toolCtx,
+  type CapturedCommand,
+  type CapturedHandlers,
+  type OpenedOverlay,
+} from "./helpers.ts";
 
 const runSubagentMock = vi.mocked(runSubagent);
-
-// ---------------------------------------------------------------------------
-// Plain theme — no ANSI codes, just passes text through.
-// ---------------------------------------------------------------------------
-
-const plainTheme = {
-  fg: (_color: string, text: string) => text,
-  bg: (_color: string, text: string) => text,
-  bold: (text: string) => text,
-} as any;
 
 /** Raw terminal byte sequences the TUI sends a focused component. */
 const KEYS = {
@@ -79,49 +76,12 @@ function recordEntry(
 }
 
 // ---------------------------------------------------------------------------
-// The fake interactive ctx: records what /subagents shows, and captures the
-// overlay component the command hands to ctx.ui.custom so tests drive and
-// observe user-visible rendering and input at the seam.
+// The fake interactive ctx is the shared helper: it records what /subagents
+// shows and captures the overlay component the command hands to ctx.ui.custom
+// so tests drive and observe user-visible rendering and input at the seam.
 // ---------------------------------------------------------------------------
 
-interface OpenedOverlay {
-  component: any;
-  overlayOptions: any;
-  /** Whether the component called done() — how dismissal is observed. */
-  result: { doneCalled: boolean };
-}
-
-function tuiCtx(
-  branchEntries: readonly unknown[] = [],
-  options: { mode?: string } = {},
-): { ctx: any; notified: string[]; customCalls: OpenedOverlay[] } {
-  const notified: string[] = [];
-  const customCalls: OpenedOverlay[] = [];
-  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
-  const tui = { requestRender: () => {} };
-  const ctx = {
-    mode: options.mode ?? "tui",
-    hasUI: true,
-    cwd: process.cwd(),
-    ui: {
-      notify: (message: string) => {
-        notified.push(message);
-      },
-      custom: async (factory: Function, opts: unknown) => {
-        const result: OpenedOverlay["result"] = { doneCalled: false };
-        const component = await factory(tui, plainTheme, keybindings, () => {
-          result.doneCalled = true;
-        });
-        customCalls.push({ component, overlayOptions: opts, result });
-        return undefined;
-      },
-    },
-    sessionManager: { getBranch: () => branchEntries },
-  };
-  return { ctx, notified, customCalls };
-}
-
-function registerCommand(): CapturedCommand {
+function registerCommand() {
   const seam = setupSession();
   return subagentsCommand(seam);
 }
@@ -152,23 +112,6 @@ function setupSession(): Seam {
   const agentTool = captured.find((t) => t.name === "Agent");
   if (!agentTool?.execute) throw new Error("extension did not register the Agent tool");
   return { agentTool, commands, handlers };
-}
-
-/** Tool-level ctx for launching live runs. */
-function toolCtx() {
-  return {
-    cwd: process.cwd(),
-    hasUI: false,
-    mode: "tui" as const,
-    signal: undefined,
-    model: undefined,
-    modelRegistry: { find: () => undefined },
-    ui: { notify: () => {} },
-  };
-}
-
-function launchParams(over: Record<string, unknown> = {}) {
-  return { subagent_type: "general", prompt: "do it", description: "d", ...over };
 }
 
 /** Launch one background run whose work resolves immediately; returns its id. */
@@ -340,5 +283,29 @@ describe("/subagents — Subagent overview overlay", () => {
     expect(component.scrollTop).toBe(contentHeight - 5);
     component.handleInput(KEYS.pageUp);
     expect(component.scrollTop).toBeLessThan(contentHeight - 5);
+  });
+
+  it("scrolls a long list one line at a time with the up and down keys", async () => {
+    const command = registerCommand();
+    const entries = Array.from({ length: 12 }, (_, i) => [
+      receiptEntry(`sa_h_${i}`),
+      recordEntry(`sa_h_${i}`, "completed"),
+    ]).flat();
+    const { ctx, customCalls } = tuiCtx(entries);
+    await command.handler(undefined, ctx);
+    const component = customCalls[0]!.component;
+    component.updateLayout(rendered(customCalls[0]!, 80).split("\n").length, 5, () => {});
+    // Down steps one line from the top; further down steps climb exactly that
+    // fast — a line at a time, not a viewport at a time.
+    component.handleInput(KEYS.down);
+    expect(component.scrollTop).toBe(1);
+    component.handleInput(KEYS.down);
+    expect(component.scrollTop).toBe(2);
+    // Up steps back down the same way, and clamps without going above the top.
+    component.handleInput(KEYS.up);
+    expect(component.scrollTop).toBe(1);
+    component.handleInput(KEYS.up);
+    component.handleInput(KEYS.up);
+    expect(component.scrollTop).toBe(0);
   });
 });

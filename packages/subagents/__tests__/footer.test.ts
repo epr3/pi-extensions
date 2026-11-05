@@ -14,10 +14,7 @@ vi.mock("../runner.ts", async (importOriginal) => {
 import extension from "../index.ts";
 import { FOOTER_STATUS_KEY, DEFAULT_ACTIVE_RUN_WIDTH, activeRunSummary } from "../footer.ts";
 import type { AgentRecord, Status } from "../manager.ts";
-import { makeFakeApi, type CapturedHandlers } from "./helpers.ts";
-import { runSubagent } from "../runner.ts";
-
-const runSubagentMock = vi.mocked(runSubagent);
+import { hangingRunner, launchParams, makeFakeApi, type CapturedHandlers } from "./helpers.ts";
 
 function setupSession() {
   const captured: ToolDefinition[] = [];
@@ -47,35 +44,7 @@ function lastFooterText(ctx: ReturnType<typeof uiToolCtx>): string | undefined {
   return calls.at(-1)?.[1];
 }
 
-/** Contextual params the Agent tool accepts, minimal shape. */
-function launchParams(over: Record<string, unknown> = {}) {
-  return { subagent_type: "explore", prompt: "do it", description: "d", ...over };
-}
-
 type Execute = NonNullable<ToolDefinition["execute"]>;
-
-/** Queue of manually released sub-session executions (hangs until released). */
-function hangingRunner() {
-  const pending: Array<(o: unknown) => void> = [];
-  runSubagentMock.mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        pending.push(resolve);
-      }),
-  );
-  const done = { result: "done", tokens: 1, toolUses: 0 };
-  return {
-    /** Settle one hanging run (launch order); settles all when omitted. */
-    release: (which?: number) => {
-      if (which === undefined) {
-        for (const resolve of pending.splice(0)) resolve(done);
-        return;
-      }
-      const resolve = pending.splice(which, 1)[0];
-      resolve?.(done);
-    },
-  };
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // The footer counts active (queued or running) Subagent runs of the current
@@ -85,18 +54,12 @@ function hangingRunner() {
 describe("active Subagent footer at the extension seam", () => {
   it("shows a launched background run and clears when it settles", async () => {
     const { agentTool } = setupSession();
-    let release!: () => void;
-    runSubagentMock.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          release = () => resolve({ result: "done", tokens: 1, toolUses: 0 });
-        }),
-    );
+    const runner = hangingRunner();
     const ctx = uiToolCtx();
 
     const receipt = (agentTool.execute as Execute)(
       "t1",
-      launchParams({ run_in_background: true }),
+      launchParams({ subagent_type: "explore", run_in_background: true }),
       undefined,
       undefined,
       ctx as never,
@@ -109,7 +72,7 @@ describe("active Subagent footer at the extension seam", () => {
     expect(lastFooterText(ctx)).toContain("explore");
 
     // …and when it settles the footer is cleared, not left stale.
-    release();
+    runner.release();
     await receipt;
     await vi.waitFor(() => expect(lastFooterText(ctx)).toBeUndefined());
   });
@@ -123,7 +86,7 @@ describe("active Subagent footer at the extension seam", () => {
     const bgs = [
       (agentTool.execute as Execute)(
         "b1",
-        launchParams({ run_in_background: true, description: "a" }),
+        launchParams({ subagent_type: "explore", run_in_background: true, description: "a" }),
         undefined,
         undefined,
         ctx as never,
@@ -143,7 +106,7 @@ describe("active Subagent footer at the extension seam", () => {
     // …plus one foreground explore the parent is still awaiting.
     const fg = (agentTool.execute as Execute)(
       "f1",
-      launchParams({ description: "c" }),
+      launchParams({ subagent_type: "explore", description: "c" }),
       undefined,
       undefined,
       ctx as never,
@@ -170,14 +133,14 @@ describe("active Subagent footer at the extension seam", () => {
     await Promise.all([
       (agentTool.execute as Execute)(
         "b1",
-        launchParams({ run_in_background: true, description: "a" }),
+        launchParams({ subagent_type: "explore", run_in_background: true, description: "a" }),
         undefined,
         undefined,
         ctx as never,
       ),
       (agentTool.execute as Execute)(
         "b2",
-        launchParams({ run_in_background: true, description: "b" }),
+        launchParams({ subagent_type: "explore", run_in_background: true, description: "b" }),
         undefined,
         undefined,
         ctx as never,
@@ -286,6 +249,43 @@ describe("active Subagent footer at the extension seam", () => {
         ctx as never,
       ),
     ).rejects.toThrow(/shutdown|replacement/);
+  });
+
+  it("lets a fresh successor session track its own runs after a predecessor shut down", async () => {
+    // Each Pi session constructs a fresh extension: the deactivation above
+    // stops one footer instance — it cannot reach a successor session's own
+    // instance, which renders its registry from scratch.
+    const dead = setupSession();
+    hangingRunner();
+    const deadCtx = uiToolCtx();
+    const receipt = (dead.agentTool.execute as Execute)(
+      "b1",
+      launchParams({ run_in_background: true, description: "a" }),
+      undefined,
+      undefined,
+      deadCtx as never,
+    );
+    await vi.waitFor(() => expect(lastFooterText(deadCtx)).toContain("Subagents 1"));
+    dead.handlers.get("session_shutdown")!({}, { hasUI: true, mode: "tui" });
+    await receipt;
+
+    // A successor session: a NEW extension instance with a fresh footer and
+    // run registry — launching and counting work here again.
+    const fresh = setupSession();
+    const freshRunner = hangingRunner();
+    const freshCtx = uiToolCtx();
+    await expect(
+      (fresh.agentTool.execute as Execute)(
+        "b1",
+        launchParams({ run_in_background: true, description: "b" }),
+        undefined,
+        undefined,
+        freshCtx as never,
+      ),
+    ).resolves.toBeDefined();
+    await vi.waitFor(() => expect(lastFooterText(freshCtx)).toContain("Subagents 1"));
+    freshRunner.release();
+    await vi.waitFor(() => expect(lastFooterText(freshCtx)).toBeUndefined());
   });
 
   it("keeps the total accurate when a long type exceeds the footer width budget", async () => {

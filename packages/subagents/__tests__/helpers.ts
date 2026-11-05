@@ -1,4 +1,6 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
+import { runSubagent } from "../runner.ts";
 
 /** A captured pi.sendMessage call: the attributed message and its options. */
 export interface CapturedSend {
@@ -60,4 +62,118 @@ export function makeFakeApi(
     },
     events: { emit: () => {} },
   } as unknown as ExtensionAPI;
+}
+// ---------------------------------------------------------------------------
+// Fixtures shared by the footer and overview tests: a pass-through theme, the
+// tool-level launch context, launch params, a hanging runner queue, and the
+// fake TUI ctx that captures `/subagents` overlays.
+// ---------------------------------------------------------------------------
+
+/** Plain theme — no ANSI codes, just passes text through. */
+export const plainTheme = {
+  fg: (_color: string, text: string) => text,
+  bg: (_color: string, text: string) => text,
+  bold: (text: string) => text,
+} as any;
+
+/** Tool-level ctx for launching live runs (no UI, TUI mode). */
+export function toolCtx() {
+  return {
+    cwd: process.cwd(),
+    hasUI: false,
+    mode: "tui" as const,
+    signal: undefined,
+    model: undefined,
+    modelRegistry: { find: () => undefined },
+    ui: { notify: () => {} },
+  };
+}
+
+type Execute = NonNullable<ToolDefinition["execute"]>;
+
+/** Contextual params the Agent tool accepts, minimal shape. */
+export function launchParams(over: Record<string, unknown> = {}) {
+  return { subagent_type: "general", prompt: "do it", description: "d", ...over };
+}
+
+/**
+ * Queue of manually released sub-session executions (hangs until released),
+ * keyed in launch order. The mock only stubs the SDK boundary — the extension
+ * builds the real run around it. `launch` is available when the caller passes
+ * the session's Agent tool; tests that launch runs directly need only release.
+ */
+export function hangingRunner(seam?: { agentTool?: ToolDefinition }) {
+  const pending: Array<(o: unknown) => void> = [];
+  (runSubagent as any).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        pending.push(resolve);
+      }),
+  );
+  const done = { result: "done", tokens: 1, toolUses: 0 };
+  return {
+    /** Launch one hanging background run through the Agent tool. */
+    launch: (over: Record<string, unknown> = {}) => {
+      const execute = seam?.agentTool?.execute as Execute | undefined;
+      if (!execute) throw new Error("hangingRunner needs the session's Agent tool to launch");
+      return execute(
+        "t",
+        launchParams({ run_in_background: true, ...over }),
+        undefined,
+        undefined,
+        toolCtx(),
+      );
+    },
+    /** Settle one hanging run (launch order); settles all when omitted. */
+    release: (which?: number) => {
+      if (which === undefined) {
+        for (const resolve of pending.splice(0)) resolve(done);
+        return;
+      }
+      pending.splice(which, 1)[0]?.(done);
+    },
+  };
+}
+
+/** One `/subagents` overlay the fake TUI opened: the component plus dismissal. */
+export interface OpenedOverlay {
+  component: any;
+  overlayOptions: any;
+  /** Whether the component called done() — how dismissal is observed. */
+  result: { doneCalled: boolean };
+}
+
+/**
+ * The fake interactive TUI ctx: records `/subagents` notifications, captures
+ * the overlay components the command hands to ctx.ui.custom (driven later via
+ * handleInput / render), and reads the given branch entries.
+ */
+export function tuiCtx(
+  branchEntries: readonly unknown[] = [],
+  options: { mode?: string } = {},
+): { ctx: any; notified: string[]; customCalls: OpenedOverlay[] } {
+  const notified: string[] = [];
+  const customCalls: OpenedOverlay[] = [];
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+  const tui = { requestRender: () => {} };
+  const ctx = {
+    mode: options.mode ?? "tui",
+    hasUI: true,
+    cwd: process.cwd(),
+    ui: {
+      notify: (message: string) => {
+        notified.push(message);
+      },
+      custom: async (factory: Function, opts: unknown) => {
+        const result: OpenedOverlay["result"] = { doneCalled: false };
+        const component = await factory(tui, plainTheme, keybindings, () => {
+          result.doneCalled = true;
+        });
+        customCalls.push({ component, overlayOptions: opts, result });
+        return undefined;
+      },
+    },
+    sessionManager: { getBranch: () => branchEntries },
+  };
+  return { ctx, notified, customCalls };
 }
