@@ -19,7 +19,6 @@ import { buildOverviewRows, overviewRowLine, type OverviewRow } from "./overview
 
 /** Everything the overlay needs from the `ctx.ui.custom` factory arguments. */
 export interface SubagentsOverviewDeps {
-  theme: Theme;
   keybindings: { matches(data: string, keybinding: string): boolean };
   /** The custom component's own TUI handle — re-render after view changes. */
   requestRender: () => void;
@@ -44,7 +43,6 @@ export class SubagentsOverview extends ScrollView {
   /** Replace the rows and rebuild the visible content. Live-update seam: a
    *  new run state can refresh an open overview without reopening it. */
   setRows(rows: readonly OverviewRow[]): void {
-    this.deps.rows = rows;
     const lines = this.lines(rows);
     this.body.setText(lines.join("\n"));
     // The rows changed underneath the open component: ask the TUI to draw it
@@ -148,7 +146,6 @@ export class SubagentsOverviewUpdater {
     await ctx.ui.custom<void>(
       (tui, theme, keybindings, done) => {
         const component = new SubagentsOverview({
-          theme,
           keybindings,
           requestRender: () => tui.requestRender(),
           done: () => {
@@ -191,8 +188,8 @@ export class SubagentsOverviewUpdater {
 
   /** Available reconstructed current-branch history for row building. */
   private branchViews() {
-    return reconstructBranchRuns((this.getBranch?.() ?? []) as Parameters<
-      typeof reconstructBranchRuns
-    >[0]);
+    return reconstructBranchRuns(
+      (this.getBranch?.() ?? []) as Parameters<typeof reconstructBranchRuns>[0],
+    );
   }
 }
