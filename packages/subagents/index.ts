@@ -7,7 +7,6 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { resolveTypeRequest, exploreToolset } from "./agents.ts";
-
 import {
   discoverCustomSubagents,
   customSubagentScopes,
