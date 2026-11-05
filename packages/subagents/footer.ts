@@ -34,20 +34,22 @@ export interface ActiveRunCounts {
  * ones. Foreground and background runs count alike; terminal runs are gone.
  */
 export function activeRunCounts(runs: readonly AgentRecord[]): ActiveRunCounts | undefined {
-  const active = runs.filter((r) => r.status === "queued" || r.status === "running");
-  if (active.length === 0) return undefined;
+  let running = 0;
+  let queued = 0;
   const groups: Array<{ type: string; count: number }> = [];
-  for (const run of active) {
+  // One grouping pass over the runs: membership in the footer (queued or
+  // running), the running/queued split, and the per-type groups all fall out
+  // of the same traversal; terminal runs are gone.
+  for (const run of runs) {
+    if (run.status !== "queued" && run.status !== "running") continue;
+    if (run.status === "running") running += 1;
+    else queued += 1;
     const group = groups.find((g) => g.type === run.type);
     if (group) group.count += 1;
     else groups.push({ type: run.type, count: 1 });
   }
-  return {
-    total: active.length,
-    running: active.filter((r) => r.status === "running").length,
-    queued: active.filter((r) => r.status === "queued").length,
-    groups,
-  };
+  if (running + queued === 0) return undefined;
+  return { total: running + queued, running, queued, groups };
 }
 
 /**
