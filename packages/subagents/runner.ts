@@ -28,8 +28,9 @@ type AnyModel = Model<any>;
 /** Compact stream events from a foreground subagent run — UI-only progress. */
 export type StreamEvent =
   | { type: "text_delta"; delta: string }
-  | { type: "tool_start"; name: string }
-  | { type: "tool_end"; name: string; error?: boolean };
+  | { type: "tool_start"; name: string; callId?: string; args?: unknown }
+  | { type: "tool_output"; name: string; callId: string; text: string }
+  | { type: "tool_end"; name: string; callId?: string; error?: boolean; text?: string };
 
 export type StreamCallback = (event: StreamEvent) => void;
 
@@ -104,11 +105,30 @@ export async function runSubagentSession(opts: {
         break;
       }
       case "tool_execution_start":
-        onStream?.({ type: "tool_start", name: event.toolName });
+        onStream?.({
+          type: "tool_start",
+          name: event.toolName,
+          callId: event.toolCallId,
+          args: event.args,
+        });
+        break;
+      case "tool_execution_update":
+        onStream?.({
+          type: "tool_output",
+          name: event.toolName,
+          callId: event.toolCallId,
+          text: toolText(event.partialResult),
+        });
         break;
       case "tool_execution_end":
         toolUses++;
-        onStream?.({ type: "tool_end", name: event.toolName, error: event.isError });
+        onStream?.({
+          type: "tool_end",
+          name: event.toolName,
+          callId: event.toolCallId,
+          error: event.isError,
+          text: toolText(event.result),
+        });
         break;
     }
   });
@@ -245,6 +265,15 @@ export async function runSubagent(opts: {
     onStreamEvent: opts.onStreamEvent,
     abortSignal: opts.abortSignal,
   });
+}
+
+function toolText(result: any): string {
+  return Array.isArray(result?.content)
+    ? result.content
+        .filter((c: any) => c?.type === "text" && typeof c.text === "string")
+        .map((c: any) => c.text)
+        .join("\n")
+    : "";
 }
 
 function lastAssistantText(messages: any[]): string {

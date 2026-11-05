@@ -120,7 +120,14 @@ export interface AgentStreamDetails {
 /** Latest tool lifecycle marker with its word — status never rides on a
  *  symbol or color alone. */
 function toolMarkerText(entry: Extract<StreamEntry, { type: "tool_start" | "tool_end" }>): string {
-  if (entry.type === "tool_start") return `▶ started ${entry.name}`;
+  if (entry.type === "tool_start") {
+    const args =
+      entry.args && typeof entry.args === "object"
+        ? (entry.args as Record<string, unknown>)
+        : undefined;
+    const command = typeof args?.command === "string" ? `: ${args.command}` : "";
+    return `▶ started ${entry.name}${command}`;
+  }
   return entry.error ? `✗ failed ${entry.name}` : `✓ finished ${entry.name}`;
 }
 
@@ -146,7 +153,14 @@ export function formatExpandedStream(entries: StreamEntry[], omitted = 0): strin
       textBuffer = "";
     }
     if (!("name" in e) || typeof e.name !== "string") continue; // tolerate unknown entries
-    lines.push(toolMarkerText(e));
+    if (e.type === "tool_output") {
+      if (e.text) lines.push(e.text);
+    } else {
+      lines.push(toolMarkerText(e));
+      if (e.type === "tool_start" && e.args !== undefined)
+        lines.push(JSON.stringify(e.args, null, 2));
+      if (e.type === "tool_end" && e.text) lines.push(e.text);
+    }
   }
   if (textBuffer) lines.push(textBuffer);
   return lines.join("\n");
@@ -850,6 +864,17 @@ export default function (pi: ExtensionAPI) {
         if (background) {
           backgroundCapture.push(event);
           return;
+        }
+        if (entry.type === "tool_output" || (entry.type === "tool_end" && entry.callId)) {
+          const i = streamEntries.findIndex(
+            (e) => e.type === "tool_output" && e.callId === entry.callId,
+          );
+          if (i >= 0) {
+            const previous = streamEntries[i];
+            if (entry.type === "tool_end" && !entry.text && previous.type === "tool_output")
+              entry.text = previous.text;
+            streamEntries.splice(i, 1);
+          }
         }
         streamEntries.push(entry);
         const streamText = formatExpandedStream(streamEntries);

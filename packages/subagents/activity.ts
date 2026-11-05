@@ -7,8 +7,9 @@ import type { StreamEvent } from "./runner.ts";
  */
 export type StreamEntry =
   | { type: "text"; text: string }
-  | { type: "tool_start"; name: string }
-  | { type: "tool_end"; name: string; error: boolean };
+  | { type: "tool_start"; name: string; callId?: string; args?: unknown }
+  | { type: "tool_output"; name: string; callId: string; text: string }
+  | { type: "tool_end"; name: string; callId?: string; error: boolean; text?: string };
 
 /**
  * The shared bound for a Subagent run's UI-only Activity tail: at most 50
@@ -28,9 +29,9 @@ export function entryFromStreamEvent(event: StreamEvent): StreamEntry | undefine
   if (event.type === "text_delta") {
     return event.delta ? { type: "text", text: event.delta } : undefined;
   }
-  if (event.type === "tool_start") return { type: "tool_start", name: event.name };
-  if (event.type === "tool_end")
-    return { type: "tool_end", name: event.name, error: !!event.error };
+  if (event.type === "tool_start") return { ...event };
+  if (event.type === "tool_output") return { ...event };
+  if (event.type === "tool_end") return { ...event, error: !!event.error };
   return undefined;
 }
 
@@ -79,6 +80,17 @@ export class ActivityCapture {
   }
 
   private append(entry: StreamEntry): void {
+    if (entry.type === "tool_output" || (entry.type === "tool_end" && entry.callId)) {
+      const i = this.entries.findIndex(
+        (e) => e.type === "tool_output" && e.callId === entry.callId,
+      );
+      if (i >= 0) {
+        const previous = this.entries[i];
+        if (entry.type === "tool_end" && !entry.text && previous.type === "tool_output")
+          entry.text = previous.text;
+        this.entries.splice(i, 1);
+      }
+    }
     this.entries.push(entry);
     if (this.entries.length > this.limit) {
       this.entries.shift();
