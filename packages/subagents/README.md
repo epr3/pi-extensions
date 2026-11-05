@@ -431,8 +431,8 @@ replaces them, never mutates anything, and never redelivers an outcome.
   replacement session's.
 - When neither the session nor the branch history has Subagent runs, the
   overview says so explicitly — it does not render an empty shell.
-- Where a TUI overlay is unavailable (print / json mode), the command keeps
-  the textual notification listing instead.
+- Outside the TUI (print, json, and rpc modes), the command keeps the textual
+  notification listing instead.
 
 The overview revises an earlier design note that restricted Subagent run
 presentation to inline rows only: it is a bounded, on-demand summary, so the
