@@ -15,8 +15,8 @@ export const FOOTER_STATUS_KEY = "subagents";
  * Conservative width budget for the summary. The built-in footer joins every
  * extension's status on one line and truncates from the right with an
  * ellipsis, so a too-wide entry risks being misleadingly cut. Keeping our
- * text within this budget bounds the damage: under crowding the type
- * breakdown abbreviates first and the accurate total always leads the line.
+ * text within this budget bounds the damage: the accurate total and type
+ * breakdown lead, followed by the running/queued split when space permits.
  */
 export const DEFAULT_ACTIVE_RUN_WIDTH = 60;
 
@@ -54,9 +54,8 @@ export function activeRunCounts(runs: readonly AgentRecord[]): ActiveRunCounts |
 
 /**
  * One-line footer summary, or undefined when no run is active (the caller
- * clears its status key). The accurate total always leads; under a narrow
- * `maxWidth` the type breakdown abbreviates group by group before the
- * running/queued split — never the total, so crowding cannot mislead.
+ * clears its status key). The accurate total and type groups lead so they
+ * remain visible under crowding; the running/queued split is omitted first.
  */
 export function activeRunSummary(
   runs: readonly AgentRecord[],
@@ -74,11 +73,12 @@ export function activeRunSummary(
         : `(${counts.queued} queued)`;
   const groupTexts = counts.groups.map((g) => `${g.count} ${g.type}`);
 
-  // Candidate summaries, widest first: what gets dropped stays covered
-  // by the leading total, so abbreviating never misleads.
-  const candidates: string[] = [];
-  for (let keep = groupTexts.length; keep >= 1; keep--) {
-    candidates.push(`${lead} ${state} — ${groupTexts.slice(0, keep).join(", ")}`);
+  // Keep all types before the state split, then show as many whole groups
+  // as fit. The total remains accurate even when some groups are omitted.
+  const breakdown = `${lead} — ${groupTexts.join(", ")}`;
+  const candidates = [`${breakdown} ${state}`, breakdown];
+  for (let keep = groupTexts.length - 1; keep >= 1; keep--) {
+    candidates.push(`${lead} — ${groupTexts.slice(0, keep).join(", ")} …`);
   }
   candidates.push(`${lead} ${state}`, lead);
   return candidates.find((candidate) => visibleWidth(candidate) <= maxWidth) ?? lead;

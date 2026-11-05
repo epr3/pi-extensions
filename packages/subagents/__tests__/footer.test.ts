@@ -335,8 +335,8 @@ describe("active Subagent footer at the extension seam", () => {
 
 // ---------------------------------------------------------------------------
 // The summary itself: accurate total, per-type groups, and a width ladder
-// that abbreviates the type breakdown before the running/queued split and
-// never the leading total.
+// that prioritizes the type breakdown over the running/queued split and
+// never drops the leading total.
 // ---------------------------------------------------------------------------
 
 /** Minimal run record carrying just what the summary reads. */
@@ -365,22 +365,23 @@ describe("activeRunSummary", () => {
         makeRun("explore", "queued", "b"),
         makeRun("general", "queued", "c"),
       ]),
-    ).toBe("Subagents 3 (1 running, 2 queued) — 2 general, 1 explore");
+    ).toBe("Subagents 3 — 2 general, 1 explore (1 running, 2 queued)");
   });
 
   it("keeps the full breakdown inside the width budget", () => {
     const runs = [makeRun("explore", "running", "a"), makeRun("explore", "queued", "b")];
-    const full = "Subagents 2 (1 running, 1 queued) — 2 explore";
+    const full = "Subagents 2 — 2 explore (1 running, 1 queued)";
     expect(activeRunSummary(runs, DEFAULT_ACTIVE_RUN_WIDTH)).toBe(full);
   });
 
-  it("drops whole type groups before the running/queued split as width shrinks", () => {
+  it("keeps types before the running/queued split as width shrinks", () => {
     const runs = [
       makeRun("general", "running", "a"),
       makeRun("general", "running", "b"),
       makeRun("explore", "queued", "c"),
     ];
-    expect(activeRunSummary(runs, 33)).toBe("Subagents 3 (2 running, 1 queued)");
+    expect(activeRunSummary(runs, 34)).toBe("Subagents 3 — 2 general, 1 explore");
+    expect(activeRunSummary(runs, 25)).toBe("Subagents 3 — 2 general …");
     expect(activeRunSummary(runs, 12)).toBe("Subagents 3");
   });
 
