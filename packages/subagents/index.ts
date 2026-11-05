@@ -357,8 +357,20 @@ export function renderRetrievalResult(
     (id ? theme.fg("muted", ` · [run ${id}]`) : "");
   const reason = details.error ?? details.stopReason;
   const reasonLine = reason ? `\n${theme.fg("muted", reason)}` : "";
+  const sourceLine = details.reconstructed ? `\n${theme.fg("muted", "From branch history")}` : "";
   if (options.isPartial || !options.expanded) {
-    return new SubagentCardBody(theme, `${head}${reasonLine}`);
+    const preview =
+      status === "completed" && !options.isPartial ? retrievalPreview(details.result) : "";
+    const partial =
+      status === "failed" || status === "stopped"
+        ? "\nAny partial output is incomplete; expand for details."
+        : "";
+    const unavailable =
+      details.outcome === "unavailable" ? "\nOutcome unavailable on this branch." : "";
+    return new SubagentCardBody(
+      theme,
+      `${head}${reasonLine}${sourceLine}${unavailable}${partial}${preview ? `\n${theme.fg("toolOutput", preview)}` : ""}`,
+    );
   }
   const contentText = result.content
     .filter(isTextContent)
@@ -366,8 +378,21 @@ export function renderRetrievalResult(
     .join("\n");
   return new SubagentCardBody(
     theme,
-    `${head}${reasonLine}\n\n${theme.fg("toolOutput", contentText)}`,
+    `${head}${reasonLine}${sourceLine}\n\n${theme.fg("toolOutput", contentText)}`,
   );
+}
+
+function retrievalPreview(result: string | undefined): string {
+  if (!result) return "";
+  const line = result.split(/\r?\n/).map((part) => part.trim()).find(Boolean);
+  if (!line) return "";
+  // Keep the preview compact and prevent terminal control characters from
+  // affecting the surrounding card. The authoritative text stays unchanged.
+  const clean = line
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\x00-\x1f\x7f]/g, "");
+  const chars = Array.from(clean);
+  return chars.length > 120 ? `${chars.slice(0, 119).join("")}…` : clean;
 }
 
 function statsText(toolUses?: number, tokens?: number): string | undefined {
@@ -1100,8 +1125,17 @@ export default function (pi: ExtensionAPI) {
         const data = view.record;
         return textResult(reconstructedRetrievalText(view), {
           agent_id: params.agent_id,
+          type: view.receipt?.type ?? data?.type,
+          description: view.receipt?.description ?? data?.description,
           ...(data
-            ? { status: data.status, tokens: data.tokens, toolUses: data.toolUses }
+            ? {
+                status: data.status,
+                tokens: data.tokens,
+                toolUses: data.toolUses,
+                result: data.result,
+                error: data.error,
+                stopReason: data.stopReason,
+              }
             : { outcome: "unavailable" }),
           reconstructed: true,
         });

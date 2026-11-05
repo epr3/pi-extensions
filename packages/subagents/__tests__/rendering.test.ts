@@ -444,7 +444,27 @@ describe("get_subagent_result rendering", () => {
     expect(text).toContain("scout");
     expect(text).toContain("sa_1_ab");
     expect(text).toContain("2 tool uses");
-    expect(text).not.toContain("the answer");
+    expect(text).toContain("the answer");
+  });
+
+  it("limits the completed preview to the first nonempty line", () => {
+    const text = render(
+      { content: [{ type: "text", text: "full output" }], details: { ...details, result: `\n${"x".repeat(150)}\nsecond line` } },
+      { expanded: false, isPartial: false },
+    );
+    expect(text).toContain("…");
+    expect(text).not.toContain("second line");
+    expect(text).not.toContain("x".repeat(120));
+  });
+
+  it("identifies reconstructed and unavailable outcomes", () => {
+    const text = render(
+      { content: [], details: { agent_id: "sa_1_ab", outcome: "unavailable", reconstructed: true } },
+      { expanded: false, isPartial: false },
+    );
+    expect(text).toContain("unavailable");
+    expect(text).toContain("From branch history");
+    expect(text).toContain("Outcome unavailable on this branch");
   });
 
   it("renders the authoritative text when expanded", () => {
@@ -473,5 +493,6 @@ describe("get_subagent_result rendering", () => {
       { expanded: false, isPartial: false },
     );
     expect(text).toContain("provider 500");
+    expect(text).toContain("partial output is incomplete");
   });
 });
