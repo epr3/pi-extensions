@@ -14,7 +14,6 @@ import type { ProcessLiveness } from "./liveness.ts";
 export interface RuntimeKnobs {
   fetchFn?: typeof globalThis.fetch;
   extractPdfFn?: PdfExtractFn;
-  pdfPageLimit?: number;
   fetchTimeoutMs?: number;
   storageRoot?: string;
   processLiveness?: ProcessLiveness;

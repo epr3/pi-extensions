@@ -12,7 +12,10 @@
  * Run: pnpm test  (from this package)
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import webSearchExtension from "../index.ts";
 import {
@@ -20,13 +23,15 @@ import {
   normalizeTerm,
   normalizeSite,
   resolveCredentials,
+  defaultCredentialsPath,
   shapeApiError,
   formatSearchResults,
   searchGoogle,
   cleanInput,
   CredentialsError,
+  SearchError,
 } from "../search.ts";
-import type { SearchResponseDetails, SearchResult } from "../search.ts";
+import type { SearchResponseDetails, SearchResult, WebSearchDetails } from "../search.ts";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -52,6 +57,69 @@ function jsonResponse(body: unknown, init: { status?: number; ok?: boolean } = {
     status: init.status ?? 200,
     text: async () => JSON.stringify(body),
   } as Response;
+}
+
+/**
+ * Fetch mock whose headers never arrive. `honorSignal: false` models a
+ * transport that ignores the request signal, so the deadline must not depend
+ * on the transport reacting to it. The recorded signals make request release
+ * observable.
+ */
+function makeStalledHeadersFetch(opts: { honorSignal?: boolean } = {}): {
+  fetchFn: typeof globalThis.fetch;
+  signals: () => Array<AbortSignal | undefined>;
+} {
+  const signals: Array<AbortSignal | undefined> = [];
+  const fetchFn: typeof globalThis.fetch = (_url, init) => {
+    const signal = (init as RequestInit | undefined)?.signal ?? undefined;
+    signals.push(signal);
+    if (opts.honorSignal === false) return new Promise<Response>(() => {});
+    return new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+        once: true,
+      });
+    });
+  };
+  return { fetchFn, signals: () => signals };
+}
+
+/**
+ * Fetch mock whose headers arrive immediately but whose body never yields.
+ * Reports how often the body stream was cancelled so cleanup is observable.
+ */
+function makeStalledBodyFetch(opts: { honorSignal?: boolean } = {}): {
+  fetchFn: typeof globalThis.fetch;
+  signals: () => Array<AbortSignal | undefined>;
+  cancels: () => number;
+} {
+  const signals: Array<AbortSignal | undefined> = [];
+  let cancelCount = 0;
+  const fetchFn: typeof globalThis.fetch = async (_url, init) => {
+    const signal = (init as RequestInit | undefined)?.signal ?? undefined;
+    signals.push(signal);
+    return {
+      ok: true,
+      status: 200,
+      text: () =>
+        new Promise<string>((_resolve, reject) => {
+          if (opts.honorSignal === false) return;
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+      body: new ReadableStream<Uint8Array>({
+        pull() {
+          return new Promise<void>(() => {});
+        },
+        cancel() {
+          cancelCount += 1;
+        },
+      }),
+    } as unknown as Response;
+  };
+  return { fetchFn, signals: () => signals, cancels: () => cancelCount };
 }
 
 // ─── Tool metadata ──────────────────────────────────────────────────────────
@@ -178,6 +246,18 @@ describe("composeQuery", () => {
     expect(d.composedQuery).toContain("-ugly");
   });
 
+  it("passes multiword exclusions through unquoted after the minus prefix", () => {
+    const d = composeQuery({ query: "hello", excludeTerms: ["bad phrase"] });
+    expect(d.excludeTerms).toEqual(["bad phrase"]);
+    expect(d.composedQuery).toBe("hello -bad phrase");
+  });
+
+  it("passes embedded quotation marks through in exact phrases", () => {
+    const d = composeQuery({ query: "hello", exactPhrases: ['a "quoted" phrase'] });
+    expect(d.exactPhrases).toEqual(['a "quoted" phrase']);
+    expect(d.composedQuery).toBe('hello "a "quoted" phrase"');
+  });
+
   it("normalizes the site restriction and appends `site:<host>`", () => {
     const d = composeQuery({ query: "hello", site: "https://www.example.com/" });
     expect(d.composedQuery).toContain("site:example.com");
@@ -218,35 +298,131 @@ describe("composeQuery", () => {
 // ─── Credentials ────────────────────────────────────────────────────────────
 
 describe("resolveCredentials", () => {
+  // Every credential test points at a temp auth path so the host's own
+  // ~/.pi/agent/auth/web-search.json can never influence the result.
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(tmpdir(), "pi-web-search-creds-"));
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function writeAuthFile(contents: string, name = "web-search.json"): string {
+    const filePath = path.join(tempDir, name);
+    writeFileSync(filePath, contents, "utf8");
+    return filePath;
+  }
+
+  function missingAuthPath(): string {
+    return path.join(tempDir, "absent.json");
+  }
+
   it("returns API key + CSE ID read from env vars", () => {
-    const creds = resolveCredentials({ GOOGLE_API_KEY: "key123", GOOGLE_CSE_ID: "cse456" });
+    const creds = resolveCredentials(
+      { GOOGLE_API_KEY: "key123", GOOGLE_CSE_ID: "cse456" },
+      { authPath: missingAuthPath() },
+    );
     expect(creds.apiKey).toBe("key123");
     expect(creds.cseId).toBe("cse456");
   });
 
   it("throws CredentialsError when both env vars are missing", () => {
-    expect(() => resolveCredentials({})).toThrow(CredentialsError);
+    expect(() => resolveCredentials({}, { authPath: missingAuthPath() })).toThrow(CredentialsError);
   });
 
   it("throws when only GOOGLE_API_KEY is set", () => {
-    expect(() => resolveCredentials({ GOOGLE_API_KEY: "key" })).toThrow(CredentialsError);
+    expect(() =>
+      resolveCredentials({ GOOGLE_API_KEY: "key" }, { authPath: missingAuthPath() }),
+    ).toThrow(CredentialsError);
   });
 
   it("throws when only GOOGLE_CSE_ID is set", () => {
-    expect(() => resolveCredentials({ GOOGLE_CSE_ID: "cse" })).toThrow(CredentialsError);
+    expect(() =>
+      resolveCredentials({ GOOGLE_CSE_ID: "cse" }, { authPath: missingAuthPath() }),
+    ).toThrow(CredentialsError);
   });
 
   it("CredentialsError names both env vars, the auth file path, and the docs URL", () => {
+    const authPath = path.join(tempDir, "web-search.json");
     try {
-      resolveCredentials({});
+      resolveCredentials({}, { authPath });
     } catch (e) {
       expect(e).toBeInstanceOf(CredentialsError);
       const msg = (e as CredentialsError).message;
       expect(msg).toContain("GOOGLE_API_KEY");
       expect(msg).toContain("GOOGLE_CSE_ID");
+      expect(msg).toContain(authPath);
       expect(msg).toContain("web-search.json");
       expect(msg).toContain("developers.google.com");
     }
+  });
+
+  it("falls back to the auth file when the environment has no credentials", () => {
+    const authPath = writeAuthFile('{ "apiKey": "file-key", "cseId": "file-cse" }');
+    const creds = resolveCredentials({}, { authPath });
+    expect(creds.apiKey).toBe("file-key");
+    expect(creds.cseId).toBe("file-cse");
+  });
+
+  it("trims surrounding whitespace in auth file values", () => {
+    const authPath = writeAuthFile('{ "apiKey": "  file-key  ", "cseId": "\\nfile-cse\\n" }');
+    const creds = resolveCredentials({}, { authPath });
+    expect(creds.apiKey).toBe("file-key");
+    expect(creds.cseId).toBe("file-cse");
+  });
+
+  it("prefers complete environment credentials over a valid auth file", () => {
+    const authPath = writeAuthFile('{ "apiKey": "file-key", "cseId": "file-cse" }');
+    const creds = resolveCredentials(
+      { GOOGLE_API_KEY: "env-key", GOOGLE_CSE_ID: "env-cse" },
+      { authPath },
+    );
+    expect(creds.apiKey).toBe("env-key");
+    expect(creds.cseId).toBe("env-cse");
+  });
+
+  it("uses the auth file as a whole when the environment is only partially set", () => {
+    const authPath = writeAuthFile('{ "apiKey": "file-key", "cseId": "file-cse" }');
+    const creds = resolveCredentials({ GOOGLE_API_KEY: "env-key" }, { authPath });
+    expect(creds.apiKey).toBe("file-key");
+    expect(creds.cseId).toBe("file-cse");
+  });
+
+  it("throws when the auth file is malformed JSON", () => {
+    const authPath = writeAuthFile('{ "apiKey": "super-secret-api-key", ');
+    expect(() => resolveCredentials({}, { authPath })).toThrow(CredentialsError);
+  });
+
+  it("throws when the auth file lacks a usable apiKey or cseId", () => {
+    const missingCse = writeAuthFile('{ "apiKey": "file-key" }', "missing-cse.json");
+    expect(() => resolveCredentials({}, { authPath: missingCse })).toThrow(CredentialsError);
+
+    const nonString = writeAuthFile('{ "apiKey": 42, "cseId": ["file-cse"] }', "non-string.json");
+    expect(() => resolveCredentials({}, { authPath: nonString })).toThrow(CredentialsError);
+
+    const emptyStrings = writeAuthFile('{ "apiKey": "  ", "cseId": "" }', "empty.json");
+    expect(() => resolveCredentials({}, { authPath: emptyStrings })).toThrow(CredentialsError);
+  });
+
+  it("never includes auth file secrets in the missing-credentials message", () => {
+    const authPath = writeAuthFile('{ "apiKey": "super-secret-api-key", "cseId": ');
+    try {
+      resolveCredentials({}, { authPath });
+      expect.unreachable("expected CredentialsError");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CredentialsError);
+      const msg = (e as CredentialsError).message;
+      expect(msg).not.toContain("super-secret-api-key");
+    }
+  });
+
+  it("documents the default auth file under the Pi agent auth directory", () => {
+    expect(
+      defaultCredentialsPath().endsWith(path.join(".pi", "agent", "auth", "web-search.json")),
+    ).toBe(true);
   });
 });
 
@@ -323,7 +499,9 @@ describe("searchGoogle (mocked fetch)", () => {
       }),
     );
 
-    const { results, totalResults } = await searchGoogle("test", "key", "cse", 2, mockFetch);
+    const { results, totalResults } = await searchGoogle("test", "key", "cse", 2, {
+      fetchFn: mockFetch,
+    });
     expect(results).toHaveLength(2);
     expect(results[0]?.title).toBe("Result One");
     expect(results[1]?.url).toBe("https://example.com/2");
@@ -340,7 +518,7 @@ describe("searchGoogle (mocked fetch)", () => {
         ),
       );
 
-    await expect(searchGoogle("test", "key", "cse", 2, mockFetch)).rejects.toThrow(
+    await expect(searchGoogle("test", "key", "cse", 2, { fetchFn: mockFetch })).rejects.toThrow(
       /Daily limit exceeded/,
     );
   });
@@ -350,7 +528,9 @@ describe("searchGoogle (mocked fetch)", () => {
       .fn<typeof globalThis.fetch>()
       .mockResolvedValue(jsonResponse({ searchInformation: { totalResults: "0" } }));
 
-    const { results, totalResults } = await searchGoogle("test", "key", "cse", 5, mockFetch);
+    const { results, totalResults } = await searchGoogle("test", "key", "cse", 5, {
+      fetchFn: mockFetch,
+    });
     expect(results).toHaveLength(0);
     expect(totalResults).toBe(0);
   });
@@ -362,9 +542,66 @@ describe("searchGoogle (mocked fetch)", () => {
       text: async () => "Internal Server Error",
     } as Response);
 
-    await expect(searchGoogle("test", "key", "cse", 2, mockFetch)).rejects.toThrow(
+    await expect(searchGoogle("test", "key", "cse", 2, { fetchFn: mockFetch })).rejects.toThrow(
       /Google Custom Search API error \(500\)/,
     );
+  });
+});
+
+// ─── registered tool: returned results in details ───────────────────────────
+
+describe("web_search tool — returned results in details", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  async function executeWith(
+    apiBody: unknown,
+    params: { query: string; count?: number },
+  ): Promise<WebSearchDetails> {
+    vi.stubEnv("GOOGLE_API_KEY", "test-key");
+    vi.stubEnv("GOOGLE_CSE_ID", "test-cse");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>().mockResolvedValue(jsonResponse(apiBody)),
+    );
+
+    const tool = registerWebSearch();
+    const result = await tool.execute(
+      "call-1",
+      params as never,
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    return result.details as WebSearchDetails;
+  }
+
+  it("carries the results actually returned when the API returns fewer than requested", async () => {
+    const details = await executeWith(
+      {
+        items: [{ title: "Only Hit", link: "https://example.com/only", snippet: "Snippet" }],
+        searchInformation: { totalResults: "1234" },
+      },
+      { query: "test", count: 5 },
+    );
+
+    expect(details.results).toHaveLength(1);
+    expect(details.results[0]?.url).toBe("https://example.com/only");
+    // The requested count is still recorded separately from what came back.
+    expect(details.resultCount).toBe(5);
+    expect(details.totalResults).toBe(1234);
+  });
+
+  it("carries an empty results list when the API returns no items", async () => {
+    const details = await executeWith(
+      { searchInformation: { totalResults: "0" } },
+      { query: "test", count: 5 },
+    );
+
+    expect(details.results).toEqual([]);
+    expect(details.resultCount).toBe(5);
   });
 });
 
@@ -387,5 +624,199 @@ describe("SearchResponseDetails shape", () => {
       resultCount: 4,
       composedQuery: 'hello world "a b" -c site:example.com',
     });
+  });
+});
+// ─── Deadline and cancellation ──────────────────────────────────────────────
+
+const credentialEnv = { GOOGLE_API_KEY: "key123", GOOGLE_CSE_ID: "cse456" };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
+
+describe("searchGoogle deadline (mocked fetch)", () => {
+  it("times out when headers never arrive, even if the transport ignores the signal", async () => {
+    const stalled = makeStalledHeadersFetch({ honorSignal: false });
+    const pending = searchGoogle("test", "key", "cse", 5, {
+      fetchFn: stalled.fetchFn,
+      timeoutMs: 50,
+    });
+    await expect(pending).rejects.toThrowError(/Search timed out after 50ms/);
+    // The request was aborted so a cooperative transport can release it.
+    expect(stalled.signals()[0]?.aborted).toBe(true);
+  });
+
+  it("keeps the 15-second default deadline through the response body", async () => {
+    vi.useFakeTimers();
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    const pending = searchGoogle("test", "key", "cse", 5, { fetchFn: stalled.fetchFn });
+    const settled = pending.catch((err: Error) => err);
+
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(stalled.cancels()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const err = await settled;
+    expect(err).toBeInstanceOf(SearchError);
+    expect(err.message).toMatch(/Search timed out after 15000ms/);
+    expect(stalled.cancels()).toBe(1);
+    expect(stalled.signals()[0]?.aborted).toBe(true);
+  });
+
+  it("times out when the body stalls after headers arrive", async () => {
+    const stalled = makeStalledBodyFetch();
+    await expect(
+      searchGoogle("test", "key", "cse", 5, { fetchFn: stalled.fetchFn, timeoutMs: 50 }),
+    ).rejects.toThrowError(/Search timed out after 50ms/);
+    expect(stalled.cancels()).toBe(1);
+  });
+
+  it("reports caller cancellation during stalled headers as a cancellation, not a timeout", async () => {
+    const controller = new AbortController();
+    const stalled = makeStalledHeadersFetch({ honorSignal: false });
+    const pending = searchGoogle("test", "key", "cse", 5, {
+      fetchFn: stalled.fetchFn,
+      signal: controller.signal,
+    });
+    const settled = pending.catch((err: Error) => err);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    const err = await settled;
+    expect(err).toBeInstanceOf(SearchError);
+    expect(err.message).toMatch(/cancel/i);
+    expect(err.message).not.toMatch(/timed out/);
+  });
+
+  it("reports caller cancellation during a stalled body as a cancellation, not a timeout", async () => {
+    const controller = new AbortController();
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    const pending = searchGoogle("test", "key", "cse", 5, {
+      fetchFn: stalled.fetchFn,
+      signal: controller.signal,
+    });
+    const settled = pending.catch((err: Error) => err);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    const err = await settled;
+    expect(err).toBeInstanceOf(SearchError);
+    expect(err.message).toMatch(/cancel/i);
+    expect(err.message).not.toMatch(/timed out/);
+    expect(stalled.cancels()).toBe(1);
+  });
+
+  it("does not consult the deadline when the caller already cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const stalled = makeStalledHeadersFetch({ honorSignal: false });
+    await expect(
+      searchGoogle("test", "key", "cse", 5, {
+        fetchFn: stalled.fetchFn,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrowError(/cancel/i);
+  });
+
+  it("reports a network failure distinctly from a timeout", async () => {
+    const failingFetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockRejectedValue(new Error("getaddrinfo ENOTFOUND www.googleapis.com"));
+    await expect(
+      searchGoogle("test", "key", "cse", 5, { fetchFn: failingFetch }),
+    ).rejects.toThrowError(/Network error:.*ENOTFOUND/);
+  });
+
+  it("clears its deadline timer once the search completes", async () => {
+    vi.useFakeTimers();
+    const mockFetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(jsonResponse({ items: [] }));
+    await searchGoogle("test", "key", "cse", 5, { fetchFn: mockFetch });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+// ─── Deadline and cancellation through the registered tool ──────────────────
+
+function executeThroughTool(
+  params: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const tool = registerWebSearch();
+  return tool.execute("call-1", params as never, signal, undefined, {} as never);
+}
+
+describe("web_search tool deadline and cancellation", () => {
+  it("times out when headers never arrive and reports a timeout", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("GOOGLE_API_KEY", credentialEnv.GOOGLE_API_KEY);
+    vi.stubEnv("GOOGLE_CSE_ID", credentialEnv.GOOGLE_CSE_ID);
+    const stalled = makeStalledHeadersFetch({ honorSignal: false });
+    vi.stubGlobal("fetch", stalled.fetchFn);
+
+    const pending = executeThroughTool({ query: "pi coding agent" }).catch((err: Error) => err);
+    await vi.advanceTimersByTimeAsync(15_000);
+    const err = await pending;
+
+    expect(err).toBeInstanceOf(SearchError);
+    expect(err.message).toMatch(/Search timed out after 15000ms/);
+    expect(stalled.signals()[0]?.aborted).toBe(true);
+  });
+
+  it("times out when the body stalls after headers and releases the body", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("GOOGLE_API_KEY", credentialEnv.GOOGLE_API_KEY);
+    vi.stubEnv("GOOGLE_CSE_ID", credentialEnv.GOOGLE_CSE_ID);
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    vi.stubGlobal("fetch", stalled.fetchFn);
+
+    const pending = executeThroughTool({ query: "pi coding agent" }).catch((err: Error) => err);
+    await vi.advanceTimersByTimeAsync(15_000);
+    const err = await pending;
+
+    expect(err).toBeInstanceOf(SearchError);
+    expect(err.message).toMatch(/Search timed out after 15000ms/);
+    expect(stalled.cancels()).toBe(1);
+  });
+
+  it("propagates caller cancellation as a cancellation, not a timeout", async () => {
+    vi.stubEnv("GOOGLE_API_KEY", credentialEnv.GOOGLE_API_KEY);
+    vi.stubEnv("GOOGLE_CSE_ID", credentialEnv.GOOGLE_CSE_ID);
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    vi.stubGlobal("fetch", stalled.fetchFn);
+    const controller = new AbortController();
+
+    const pending = executeThroughTool({ query: "pi coding agent" }, controller.signal).catch(
+      (err: Error) => err,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    const err = await pending;
+
+    expect(err).toBeInstanceOf(SearchError);
+    expect(err.message).toMatch(/cancel/i);
+    expect(err.message).not.toMatch(/timed out/);
+    expect(stalled.cancels()).toBe(1);
+  });
+
+  it("returns results normally when the response arrives in time", async () => {
+    vi.stubEnv("GOOGLE_API_KEY", credentialEnv.GOOGLE_API_KEY);
+    vi.stubEnv("GOOGLE_CSE_ID", credentialEnv.GOOGLE_CSE_ID);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+        jsonResponse({
+          items: [{ title: "Result One", link: "https://example.com/1", snippet: "Snippet 1" }],
+        }),
+      ),
+    );
+
+    const result = (await executeThroughTool({ query: "pi coding agent" })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+    expect(result.content[0]?.text).toContain("Found 1 result");
   });
 });

@@ -7,15 +7,12 @@ import {
   formatSearchResults,
   cleanInput,
 } from "./search.ts";
-import type { SearchResponseDetails, SearchResult } from "./search.ts";
+import type { WebSearchDetails } from "./search.ts";
 import { renderWebSearchCall, renderWebSearchResult } from "./render.ts";
 
 // ─── Dual-result helper ──────────────────────────────────────────────────────
 
-function textResult(
-  text: string,
-  details: SearchResponseDetails & { results: SearchResult[]; totalResults: number },
-): AgentToolResult<SearchResponseDetails> {
+function textResult(text: string, details: WebSearchDetails): AgentToolResult<WebSearchDetails> {
   return { content: [{ type: "text" as const, text }], details };
 }
 
@@ -72,7 +69,7 @@ export default function (pi: ExtensionAPI) {
     parameters,
     renderCall: renderWebSearchCall,
     renderResult: renderWebSearchResult,
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal) {
       // Clean and validate inputs
       const query = cleanInput(params.query as string);
       const exactPhrases = ((params.exactPhrases as string[] | undefined) ?? [])
@@ -90,12 +87,15 @@ export default function (pi: ExtensionAPI) {
       // Resolve credentials (may throw CredentialsError)
       const credentials = resolveCredentials();
 
-      // Execute search
+      // Execute search. The caller's cancellation reaches the request and the
+      // body read, so an abandoned search stops promptly and is reported as a
+      // cancellation rather than a timeout.
       const { results, totalResults } = await searchGoogle(
         details.composedQuery,
         credentials.apiKey,
         credentials.cseId,
         count,
+        { signal },
       );
 
       // Format results and return dual result

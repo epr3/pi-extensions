@@ -20,7 +20,12 @@ export interface LogEntry {
   text?: string;
 }
 
-export type PublishMode = "versioned" | "unversioned" | "silent";
+export type PublishMode =
+  | "versioned"
+  | "unversioned"
+  | "silent"
+  | "stale-then-current"
+  | "stale-only";
 
 export interface WsOptions {
   publishMode?: PublishMode;

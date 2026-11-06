@@ -77,7 +77,10 @@ interface FakeUiState {
   setStatusCalls: Array<{ key: string; text: string | undefined }>;
 }
 
-function makeFakeCtxWithTracking(): { ctx: any; uiState: FakeUiState } {
+function makeFakeCtxWithTracking(overrides?: Record<string, any>): {
+  ctx: any;
+  uiState: FakeUiState;
+} {
   const uiState: FakeUiState = {
     notifyCalls: [],
     setStatusCalls: [],
@@ -92,6 +95,7 @@ function makeFakeCtxWithTracking(): { ctx: any; uiState: FakeUiState } {
         uiState.setStatusCalls.push({ key, text });
       },
     },
+    ...overrides,
   });
   return { ctx, uiState };
 }
@@ -222,6 +226,50 @@ describe("model-presets extension wiring", () => {
     expect(state.setThinkingLevelCalls).toContain("low");
   });
 
+  it("cycles duplicate-model presets in order starting after an unambiguous repair target", async () => {
+    const duplicateCatalog = createCatalog({
+      cycle: ["low", "high"],
+      presets: {
+        low: { provider: "p", model: "m", thinkingLevel: "low", repairDefault: true },
+        high: { provider: "p", model: "m", thinkingLevel: "high" },
+      },
+    });
+    const { api, state } = makeFakePi();
+    extension(api, duplicateCatalog);
+    const shortcut = state.shortcuts.find((s) => s.shortcut === "ctrl+shift+m")!;
+    const ctx = makeFakeCtx({
+      model: { id: "m", provider: "p" },
+      modelRegistry: { find: (provider: string, model: string) => ({ id: model, provider }) },
+    });
+
+    await shortcut.handler(ctx);
+    await shortcut.handler(ctx);
+    await shortcut.handler(ctx);
+
+    expect(state.setThinkingLevelCalls).toEqual(["high", "low", "high"]);
+  });
+
+  it("starts at the first cycle entry when duplicate-model selection is ambiguous", async () => {
+    const duplicateCatalog = createCatalog({
+      cycle: ["low", "high"],
+      presets: {
+        low: { provider: "p", model: "m", thinkingLevel: "low" },
+        high: { provider: "p", model: "m", thinkingLevel: "high" },
+      },
+    });
+    const { api, state } = makeFakePi();
+    extension(api, duplicateCatalog);
+    const shortcut = state.shortcuts.find((s) => s.shortcut === "ctrl+shift+m")!;
+    const ctx = makeFakeCtx({
+      model: { id: "m", provider: "p" },
+      modelRegistry: { find: (provider: string, model: string) => ({ id: model, provider }) },
+    });
+
+    await shortcut.handler(ctx);
+
+    expect(state.setThinkingLevelCalls).toEqual(["low"]);
+  });
+
   it("warns when no presets configured", async () => {
     const { api, state } = makeFakePi();
     const emptyCatalog = createCatalog({ cycle: [], presets: {} });
@@ -283,7 +331,7 @@ describe("model-presets extension wiring", () => {
     });
   });
 
-  it("model_select no match does not touch thinking level or status", async () => {
+  it("model_select no match clears stale preset status without touching thinking", async () => {
     const { api, state } = makeFakePi();
     extension(api, testCatalog);
     const handler = state.eventHandlers["model_select"];
@@ -294,10 +342,47 @@ describe("model-presets extension wiring", () => {
     // Fire model_select with a completely unknown provider/model
     await handler({ model: { provider: "nonexistent", id: "ghost-model" } }, ctx);
 
-    // No calls to any Pi API or UI
+    // Thinking level is left alone (no repair)
     expect(state.setThinkingLevelCalls).toHaveLength(0);
+    // No repair happened, so there is nothing to warn about
     expect(uiState.notifyCalls).toHaveLength(0);
-    expect(uiState.setStatusCalls).toHaveLength(0);
+    // Any previously displayed preset label is now obsolete
+    expect(uiState.setStatusCalls).toEqual([{ key: "model-presets", text: undefined }]);
+  });
+
+  it("model_select ambiguous match with one repairDefault still repairs and reports its label", async () => {
+    const dupCatalog = createCatalog({
+      cycle: ["low", "high"],
+      presets: {
+        low: {
+          label: "GPT 5.5 low",
+          provider: "openai-codex",
+          model: "gpt-5.5",
+          thinkingLevel: "low",
+        },
+        high: {
+          label: "GPT 5.5 high",
+          provider: "openai-codex",
+          model: "gpt-5.5",
+          thinkingLevel: "high",
+          repairDefault: true,
+        },
+      },
+    });
+
+    const { api, state } = makeFakePi();
+    extension(api, dupCatalog);
+    const handler = state.eventHandlers["model_select"];
+    expect(handler).toBeDefined();
+
+    const { ctx, uiState } = makeFakeCtxWithTracking();
+
+    await handler({ model: { provider: "openai-codex", id: "gpt-5.5" } }, ctx);
+
+    // Existing unambiguous repair-default rule is preserved
+    expect(state.setThinkingLevelCalls).toEqual(["high"]);
+    expect(uiState.notifyCalls).toHaveLength(0);
+    expect(uiState.setStatusCalls).toEqual([{ key: "model-presets", text: "GPT 5.5 high" }]);
   });
 
   it("model_select clamped thinking level warns the user", async () => {
@@ -326,7 +411,7 @@ describe("model-presets extension wiring", () => {
     expect(clampWarning).toBeDefined();
   });
 
-  it("model_select duplicate provider/model without repairDefault does not repair", async () => {
+  it("model_select duplicate provider/model without repairDefault does not repair but clears stale status", async () => {
     const dupCatalog = createCatalog({
       cycle: ["low", "high"],
       presets: {
@@ -353,10 +438,11 @@ describe("model-presets extension wiring", () => {
     // Both presets match openai-codex/gpt-5.5, neither is repairDefault
     await handler({ model: { provider: "openai-codex", id: "gpt-5.5" } }, ctx);
 
-    // Ambiguous match — no repair
+    // Ambiguous match — no repair, thinking stays as the user selected it
     expect(state.setThinkingLevelCalls).toHaveLength(0);
     expect(uiState.notifyCalls).toHaveLength(0);
-    expect(uiState.setStatusCalls).toHaveLength(0);
+    // …but no single preset describes the selection, so the stale label is cleared
+    expect(uiState.setStatusCalls).toEqual([{ key: "model-presets", text: undefined }]);
   });
 
   it("model_select repair never calls setModel", async () => {
@@ -373,5 +459,135 @@ describe("model-presets extension wiring", () => {
     // Repair only touches thinking level, never the model
     expect(state.setThinkingLevelCalls.length).toBeGreaterThan(0);
     expect(state.setModelCalls).toHaveLength(0);
+  });
+});
+// ─── Malformed catalog entries ───────────────────────────────────────────────
+
+const mixedCatalog: ModelPresetCatalog = createCatalog({
+  cycle: ["default", "broken", "ghost"],
+  presets: {
+    default: {
+      label: "GPT 5.5 medium",
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      thinkingLevel: "medium",
+    },
+    broken: {
+      provider: "opencode-go",
+      model: "minimax-m3",
+      thinkingLevel: "ultra",
+    } as any,
+    "no-provider": {
+      model: "gpt-5.5",
+      thinkingLevel: "high",
+    } as any,
+  },
+});
+
+describe("model-presets extension with a malformed catalog", () => {
+  it("reports malformed catalog entries on session start without touching model state", async () => {
+    const { api, state } = makeFakePi();
+    extension(api, mixedCatalog);
+    const handler = state.eventHandlers["session_start"];
+    expect(handler).toBeDefined();
+
+    const { ctx, uiState } = makeFakeCtxWithTracking();
+    await handler({ type: "session_start", reason: "startup" }, ctx);
+
+    // Both malformed presets are reported, with actionable settings locations.
+    expect(uiState.notifyCalls).toHaveLength(2);
+    expect(uiState.notifyCalls.every((n) => n.type === "warning")).toBe(true);
+    const messages = uiState.notifyCalls.map((n) => n.message);
+    expect(messages.some((m) => m.includes('modelPresets.presets["broken"]'))).toBe(true);
+    expect(messages.some((m) => m.includes('modelPresets.presets["no-provider"]'))).toBe(true);
+
+    // Reporting a malformed catalog never changes the active model.
+    expect(state.setModelCalls).toHaveLength(0);
+    expect(state.setThinkingLevelCalls).toHaveLength(0);
+    expect(uiState.setStatusCalls).toHaveLength(0);
+  });
+
+  it("stays silent on session start for a valid catalog", async () => {
+    const { api, state } = makeFakePi();
+    extension(api, testCatalog);
+    const { ctx, uiState } = makeFakeCtxWithTracking();
+
+    await state.eventHandlers["session_start"]({ type: "session_start", reason: "startup" }, ctx);
+
+    expect(uiState.notifyCalls).toHaveLength(0);
+  });
+
+  it("opens the selector with valid presets only", async () => {
+    const { api, state } = makeFakePi();
+    extension(api, mixedCatalog);
+    const cmd = state.commands.find((c) => c.name === "model-preset")!;
+
+    let offered: string[] = [];
+    const ctx = makeFakeCtx({
+      ui: {
+        notify: () => {},
+        select: async (_title: string, options: string[]) => {
+          offered = options;
+          return undefined;
+        },
+        setStatus: () => {},
+      },
+    });
+
+    await cmd.handler("", ctx);
+
+    expect(offered).toHaveLength(1);
+    expect(offered[0]).toContain("GPT 5.5 medium");
+  });
+
+  it("reports the catalog issue for a malformed preset name and leaves the model unchanged", async () => {
+    const { api, state } = makeFakePi();
+    extension(api, mixedCatalog);
+    const cmd = state.commands.find((c) => c.name === "model-preset")!;
+
+    const { ctx, uiState } = makeFakeCtxWithTracking();
+    await cmd.handler("broken", ctx);
+
+    expect(uiState.notifyCalls).toHaveLength(1);
+    expect(uiState.notifyCalls[0].type).toBe("error");
+    expect(uiState.notifyCalls[0].message).toContain('modelPresets.presets["broken"]');
+    expect(state.setModelCalls).toHaveLength(0);
+    expect(state.setThinkingLevelCalls).toHaveLength(0);
+  });
+
+  it("still activates a valid preset in a catalog that has malformed entries", async () => {
+    const { api, state } = makeFakePi();
+    extension(api, mixedCatalog);
+    const cmd = state.commands.find((c) => c.name === "model-preset")!;
+
+    const ctx = makeFakeCtx({
+      modelRegistry: { find: () => ({ id: "gpt-5.5", provider: "openai-codex" }) },
+    });
+
+    await cmd.handler("default", ctx);
+
+    expect(state.setModelCalls).toHaveLength(1);
+    expect(state.setThinkingLevelCalls).toContain("medium");
+  });
+
+  it("warns about invalid and missing cycle entries while cycling through valid ones", async () => {
+    const { api, state } = makeFakePi();
+    extension(api, mixedCatalog);
+    const shortcut = state.shortcuts.find((s) => s.shortcut === "ctrl+shift+m")!;
+
+    const { ctx, uiState } = makeFakeCtxWithTracking({
+      modelRegistry: { find: (provider: string, model: string) => ({ id: model, provider }) },
+    });
+    await shortcut.handler(ctx);
+
+    const messages = uiState.notifyCalls.map((n) => n.message);
+    expect(messages.some((m) => m.includes('modelPresets.presets["broken"]'))).toBe(true);
+    expect(messages.some((m) => m.includes('Preset "ghost" in cycle but not in catalog'))).toBe(
+      true,
+    );
+
+    // Cycling still works across the valid entries (only "default" is valid here).
+    expect(state.setModelCalls).toHaveLength(1);
+    expect(state.setModelCalls[0]).toEqual({ id: "gpt-5.5", provider: "openai-codex" });
   });
 });

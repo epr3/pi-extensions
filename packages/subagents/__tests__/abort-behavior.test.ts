@@ -7,6 +7,8 @@ import {
 } from "../runner.ts";
 import { AgentManager } from "../manager.ts";
 import { formatExpandedStream, type StreamEntry } from "../index.ts";
+import { RESULT_TEXT_LIMIT } from "../result-limit.ts";
+import { sdkAbortResolvingSession } from "./helpers.ts";
 
 // ---------------------------------------------------------------------------
 // Fake session for runner-level abort tests
@@ -183,7 +185,13 @@ describe("runner abort behavior", () => {
     const err: any = await promise.catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toBe("Subagent aborted");
-    expect(err.partialText).toBe("Working on it… found the bug");
+    expect(err.partialCapture).toEqual({
+      text: "Working on it… found the bug",
+      truncated: false,
+      // 30 UTF-8 bytes: the ellipsis is three.
+      originalBytes: 30,
+      retainedBytes: 30,
+    });
   });
 
   it("attaches partial output to a non-abort failure too", async () => {
@@ -204,7 +212,7 @@ describe("runner abort behavior", () => {
 
     const err: any = await promise.catch((e) => e);
     expect(err.message).toBe("model exploded");
-    expect(err.partialText).toBe("partial findings");
+    expect(err.partialCapture.text).toBe("partial findings");
   });
 
   it("omits partial output when no assistant text was captured", async () => {
@@ -222,7 +230,132 @@ describe("runner abort behavior", () => {
 
     const err: any = await promise.catch((e) => e);
     expect(err.message).toBe("Subagent aborted");
-    expect(err.partialText).toBeUndefined();
+    expect(err.partialCapture).toBeUndefined();
+  });
+
+  it("bounds partial output captured during the run and reports byte counts", async () => {
+    const session = createFakeSession();
+    const controller = new AbortController();
+
+    const promise = runSubagentSession({
+      session,
+      prompt: "test",
+      abortSignal: controller.signal,
+    });
+
+    // 25,000 bytes of assistant text arrive in 1,000-byte deltas; the capture
+    // stops retaining at the 20,000-byte limit and keeps counting.
+    for (let i = 0; i < 25; i++) {
+      session.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "a".repeat(1_000) },
+      });
+    }
+    controller.abort();
+
+    const err: any = await promise.catch((e) => e);
+    expect(err.partialCapture).toEqual({
+      text: "a".repeat(RESULT_TEXT_LIMIT),
+      truncated: true,
+      originalBytes: 25_000,
+      retainedBytes: RESULT_TEXT_LIMIT,
+    });
+  });
+
+  it("keeps character boundaries when a delta splits a multibyte character", async () => {
+    const session = createFakeSession();
+    const controller = new AbortController();
+
+    const promise = runSubagentSession({
+      session,
+      prompt: "test",
+      abortSignal: controller.signal,
+    });
+
+    session.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "\uD83D" },
+    });
+    session.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "\uDE00 done" },
+    });
+    controller.abort();
+
+    const err: any = await promise.catch((e) => e);
+    expect(err.partialCapture.text).toBe("\u{1F600} done");
+    expect(err.partialCapture.originalBytes).toBe(9);
+    expect(err.partialCapture.truncated).toBe(false);
+  });
+
+  it("still streams every delta to the UI after the capture is full", async () => {
+    const session = createFakeSession();
+    const controller = new AbortController();
+    const deltas: string[] = [];
+
+    const promise = runSubagentSession({
+      session,
+      prompt: "test",
+      onStreamEvent: (e) => {
+        if (e.type === "text_delta") deltas.push(e.delta);
+      },
+      abortSignal: controller.signal,
+    });
+
+    for (let i = 0; i < 21; i++) {
+      session.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "b".repeat(1_000) },
+      });
+    }
+    controller.abort();
+
+    const err: any = await promise.catch((e) => e);
+    // The UI stream is not bounded by the capture: every delta is forwarded.
+    expect(deltas).toHaveLength(21);
+    expect(err.partialCapture.retainedBytes).toBe(RESULT_TEXT_LIMIT);
+    expect(err.partialCapture.originalBytes).toBe(21_000);
+  });
+
+  it("reports an abort as aborted even when the session resolves its prompt", async () => {
+    // Pi's agent loop ends an aborted run by returning a terminal assistant
+    // message with stopReason "aborted" and resolving prompt() — it does not
+    // reject. The runner must still report the aborted outcome instead of
+    // promoting the cut-short turn to a completed result.
+    const session = sdkAbortResolvingSession();
+    const controller = new AbortController();
+
+    const promise = runSubagentSession({
+      session,
+      prompt: "test",
+      abortSignal: controller.signal,
+    });
+
+    session.emitText("findings so far");
+    controller.abort();
+
+    const err: any = await promise.catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("Subagent aborted");
+    expect(err.partialCapture.text).toBe("findings so far");
+    expect(session.disposed).toBe(true);
+  });
+
+  it("still completes a run the session finished without an abort", async () => {
+    // Guard against over-reporting: a session that ends normally keeps its
+    // completed result even though an abort signal was supplied.
+    const session = sdkAbortResolvingSession();
+    const controller = new AbortController();
+
+    const promise = runSubagentSession({
+      session,
+      prompt: "test",
+      abortSignal: controller.signal,
+    });
+
+    session.finish("all done");
+
+    await expect(promise).resolves.toMatchObject({ result: "all done" });
   });
 
   it("forwards non-abort errors unchanged", async () => {
@@ -239,6 +372,32 @@ describe("runner abort behavior", () => {
 
     await expect(promise).rejects.toThrow(/Something else broke/);
     expect(session.disposed).toBe(true);
+  });
+});
+
+describe("manager partial output from a real runner capture", () => {
+  it("delivers the bounded capture with its original and retained byte counts", async () => {
+    // Real wiring: the manager's exec thunk is runSubagentSession over a fake
+    // session, so this covers the runner -> manager hand-off.
+    const session = createFakeSession();
+    const manager = new AgentManager({ maxConcurrency: 1 });
+    const { record, done } = manager.launch(
+      { type: "general", description: "streamy", background: true },
+      (signal: AbortSignal) => runSubagentSession({ session, prompt: "work", abortSignal: signal }),
+    );
+
+    for (let i = 0; i < 25; i++) {
+      session.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "a".repeat(1_000) },
+      });
+    }
+    await manager.stop(record.id);
+    const settled = await done;
+
+    expect(settled.status).toBe("stopped");
+    expect(settled.partialText!.startsWith("a".repeat(RESULT_TEXT_LIMIT))).toBe(true);
+    expect(settled.partialText).toContain("[Truncated: showing the first 20,000 of 25,000 bytes.]");
   });
 });
 

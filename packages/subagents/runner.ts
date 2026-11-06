@@ -18,6 +18,7 @@ import {
   type AgentType,
 } from "./agents.ts";
 import type { CustomSubagentDef } from "./discovery.ts";
+import { createBoundedTextCapture, type BoundedResultText } from "./result-limit.ts";
 import type { PreloadedSkill } from "./skills.ts";
 import { composeCustomSystemPrompt } from "./skills-prompt.ts";
 
@@ -58,11 +59,15 @@ export interface SubagentSession {
  * drive it with a fake.
  *
  * When `abortSignal` fires, the session is aborted, stream forwarding stops,
- * and the promise rejects with "Subagent aborted". Partial stream text is
- * never promoted into a successful `RunResult`, but assistant text captured
- * before an abort or failure is attached to the thrown error as
- * `partialText` (assistant prose only — no tool transcripts, no hidden
- * reasoning) so a parent-facing stop can expose it as clearly incomplete.
+ * and the promise rejects with "Subagent aborted" — whether the SDK rejects or
+ * (as Pi does) resolves the prompt with an `aborted` terminal message. Partial
+ * stream text is never promoted into a successful `RunResult`, but assistant
+ * text captured before an abort or failure is attached to the thrown error as
+ * `partialCapture` (assistant prose only — no tool transcripts, no hidden
+ * reasoning) so a parent-facing stop can expose it as clearly incomplete. The
+ * capture is bounded to the shared result-text limit as the run proceeds and
+ * carries accurate original/retained byte counts; it does not bound the child
+ * session's own memory, and the UI stream still receives every delta.
  */
 export async function runSubagentSession(opts: {
   session: SubagentSession;
@@ -74,10 +79,11 @@ export async function runSubagentSession(opts: {
 }): Promise<RunResult> {
   const { session, prompt, onStreamEvent: onStream, abortSignal } = opts;
   let toolUses = 0;
-  // Assistant text captured from deltas for error attachment. Tool lifecycle
-  // events and thinking deltas are deliberately excluded: partial output is
-  // assistant prose only.
-  const capturedText: string[] = [];
+  // Assistant text captured from deltas for error attachment, bounded as it
+  // arrives so a long stream cannot accumulate without limit here. Tool
+  // lifecycle events and thinking deltas are deliberately excluded: partial
+  // output is assistant prose only.
+  const captured = createBoundedTextCapture();
 
   const onAbort = () => {
     session.abort();
@@ -98,7 +104,7 @@ export async function runSubagentSession(opts: {
       case "message_update": {
         const msg = event.assistantMessageEvent;
         if (msg?.type === "text_delta" && msg.delta) {
-          capturedText.push(msg.delta);
+          captured.append(msg.delta);
           onStream?.({ type: "text_delta", delta: msg.delta });
         }
         // thinking_delta deliberately ignored — model-internal reasoning
@@ -134,15 +140,26 @@ export async function runSubagentSession(opts: {
   });
 
   const withPartial = (e: Error): Error => {
-    if (capturedText.length > 0) (e as any).partialText = capturedText.join("");
+    const partial: BoundedResultText = captured.snapshot();
+    if (partial.text.length > 0) (e as any).partialCapture = partial;
     return e;
   };
 
   try {
     await session.prompt(prompt);
-    const text = lastAssistantText(session.messages);
-    const tokens = totalTokens(session.messages);
-    return { result: text, tokens, toolUses };
+    // Pi ends an aborted run by resolving the prompt with a terminal assistant
+    // message whose `stopReason` is "aborted" (its agent loop emits
+    // `agent_end` and returns) — it does not reject. Report that aborted
+    // outcome instead of promoting the cut-short turn to a completed result;
+    // the assistant text captured before the abort still rides along as
+    // `partialCapture`.
+    const aborted =
+      abortSignal?.aborted === true || lastAssistantStopReason(session.messages) === "aborted";
+    if (!aborted) {
+      const text = lastAssistantText(session.messages);
+      const tokens = totalTokens(session.messages);
+      return { result: text, tokens, toolUses };
+    }
   } catch (e: any) {
     // If the signal caused the abort, throw a clean error. Either way, hand
     // back whatever assistant text arrived before the failure — the caller
@@ -154,6 +171,10 @@ export async function runSubagentSession(opts: {
     unsubscribe();
     session.dispose();
   }
+  // Reached only when the session settled without a rejection yet reports an
+  // aborted terminal outcome: the same stopped/aborted result, however the SDK
+  // chose to deliver it.
+  throw withPartial(new Error("Subagent aborted"));
 }
 
 /**
@@ -274,6 +295,17 @@ function toolText(result: any): string {
         .map((c: any) => c.text)
         .join("\n")
     : "";
+}
+
+/** The terminal stop reason of the last assistant message, if any. Pi records
+ *  a cancelled turn there as "aborted" instead of rejecting the prompt. */
+function lastAssistantStopReason(messages: any[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== "assistant") continue;
+    return typeof m.stopReason === "string" ? m.stopReason : undefined;
+  }
+  return undefined;
 }
 
 function lastAssistantText(messages: any[]): string {

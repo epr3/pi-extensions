@@ -38,9 +38,6 @@ function makeDialog(overrides?: {
     title: overrides?.title ?? "Pick one?",
     options: overrides?.options ?? [{ label: "Yes" }, { label: "No" }],
     freeTextLabel: overrides?.freeTextLabel ?? "Type your answer",
-    freeTextDisplay: overrides?.freeTextLabel
-      ? `✎ ${overrides.freeTextLabel} — Write a custom response`
-      : "✎ Type your answer — Write a custom response",
     maxLines: overrides?.maxLines,
     maxWidth: overrides?.maxWidth,
   });
@@ -85,7 +82,7 @@ describe("item navigation — one press per answer item", () => {
 
     d.handleInput(ENTER);
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Beta");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Beta");
   });
 });
 
@@ -119,7 +116,7 @@ describe("explicit label paging — PageUp/PageDown", () => {
     d.onSelect = onSelect;
     d.handleInput(ENTER);
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Alpha");
   });
 
   it("PageDown repeatedly pages through a taller-than-viewport label", () => {
@@ -143,7 +140,7 @@ describe("explicit label paging — PageUp/PageDown", () => {
     const out = d.render(80).join("\n");
     expect(out).toContain("readable TALLEND");
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Tallest");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Tallest");
   });
 });
 
@@ -183,7 +180,7 @@ describe("label viewport resets on revisit; page nav has no side effects", () =>
 
     expect(d.render(80).join("\n")).toContain("Alpha this option has an");
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Alpha");
   });
 
   it("paging a one-row label is a no-op and still confirms the item", () => {
@@ -201,7 +198,7 @@ describe("label viewport resets on revisit; page nav has no side effects", () =>
     expect(after).toBe(before);
 
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Beta");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Beta");
   });
 
   it("Up/Down wraparound still holds across a paged long label", () => {
@@ -220,7 +217,7 @@ describe("label viewport resets on revisit; page nav has no side effects", () =>
     const out = d.render(80).join("\n");
     expect(out).toContain("Alpha this option has an");
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Alpha");
   });
 
   it("paging never fires onSelect or onCancel", () => {

@@ -96,6 +96,13 @@ describe("shipped model-presets config bundle", () => {
     expect(catalog.cycle).toEqual(["default", "fast-codex", "coding-fallback", "deep-reasoning"]);
   });
 
+  it("reports no malformed catalog entries", () => {
+    const settings = readShippedSettings();
+    const catalog = createCatalog(settings.modelPresets);
+
+    expect(catalog.invalid).toEqual([]);
+  });
+
   it("resolves cycle with no missing entries", () => {
     const settings = readShippedSettings();
     const catalog = createCatalog(settings.modelPresets as any);

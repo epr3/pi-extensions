@@ -1,10 +1,10 @@
 // Pure degradation model — no Pi, no IO. This is the test surface: given used
-// tokens and a window, where on the cliff are we? Effective context is an
-// *absolute* budget, not a fraction of the advertised window: NoLiMa / RULER
-// show degradation sets in past a fixed token count regardless of how big the
-// nominal window is. Zones therefore map onto a fixed effective limit
-// (default 200k tokens, clamped to the nominal window for small models), and
-// each boundary is a real step down, not a gradient.
+// tokens and a window, where on the cliff are we? The effective context budget
+// is *absolute*, not a fraction of the advertised window: the cliff-not-slope
+// evidence (NoLiMa / RULER) puts degradation past a token count that does not
+// scale with the nominal window. That count is therefore a configurable
+// heuristic — default 200k tokens, clamped to the nominal window for small
+// models — and each zone boundary is a real step down, not a gradient.
 
 export type Zone = "sharp" | "fading" | "risky" | "caveman";
 
@@ -37,40 +37,6 @@ export const ZONE_DEFAULTS: ZoneConfig = {
   effectiveLimit: 200_000,
   thresholds: { sharp: 1 / 3, fading: 2 / 3, risky: 1 },
 };
-
-function num(v: string | undefined, fallback: number): number {
-  const n = v ? Number(v) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-/** Token counts accept k/M suffixes: "200k", "0.5M", or plain "200000". */
-function tokens(v: string | undefined, fallback: number): number {
-  if (!v) return fallback;
-  const m = /^(\d+(?:\.\d+)?)\s*([kKmM]?)$/.exec(v.trim());
-  if (!m) return fallback;
-  const mult = m[2]!.toLowerCase() === "m" ? 1_000_000 : m[2]!.toLowerCase() === "k" ? 1_000 : 1;
-  const n = Number(m[1]) * mult;
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-/**
- * Layer env tunables (EFFECTIVE_LIMIT in tokens, Z_SHARP, Z_FADING, Z_RISKY)
- * over a base config — the base being either the code defaults or settings
- * already loaded from Pi's settings.json. Env wins: it's the quick-experiment layer.
- */
-export function configFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-  base: ZoneConfig = ZONE_DEFAULTS,
-): ZoneConfig {
-  return {
-    effectiveLimit: tokens(env.EFFECTIVE_LIMIT, base.effectiveLimit),
-    thresholds: {
-      sharp: num(env.Z_SHARP, base.thresholds.sharp),
-      fading: num(env.Z_FADING, base.thresholds.fading),
-      risky: num(env.Z_RISKY, base.thresholds.risky),
-    },
-  };
-}
 
 export function classify(
   usedTokens: number,

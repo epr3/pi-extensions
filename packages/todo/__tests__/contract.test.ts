@@ -37,11 +37,24 @@ describe("todo tool registration", () => {
     expect(read.label).toBe("Read Todos");
   });
 
-  it("write description advertises checklist workflow and single in_progress rule", () => {
+  it("write description advertises the checklist workflow and the at-most-one active rule", () => {
     const { write } = registerTodos();
     expect(write.description).toContain("break an issue into steps");
     expect(write.description).toContain("vertical slices");
-    expect(write.description).toContain("exactly one");
+    expect(write.description).toContain("at most one");
+    expect(write.description).not.toContain("exactly one");
+    // Guidance permits the two valid empty-active states.
+    expect(write.description).toContain("empty list");
+    expect(write.description).toContain("completed list");
+    // Guidance names the advisory invalid state instead of implying rejection.
+    expect(write.description).toContain("invalid workflow state");
+  });
+
+  it("write prompt guidelines repeat the at-most-one rule", () => {
+    const { write } = registerTodos();
+    const guidelines = (write.promptGuidelines ?? []).join("\n");
+    expect(guidelines).toContain("at most one");
+    expect(guidelines).not.toContain("exactly one");
   });
 });
 

@@ -6,6 +6,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import os from "node:os";
 import { join } from "node:path";
 import { DefaultProcessLiveness, type ProcessIdentity, type ProcessLiveness } from "./liveness.ts";
+import type { ArtifactCompleteness } from "./fetch.ts";
 
 /**
  * Private extension-owned temporary area name. All downloads and Readable
@@ -30,7 +31,7 @@ export interface OwnerRecord {
   /** ISO 8601 process start time for conservative PID-reuse detection. */
   pidStartTime?: string;
   createdAt: string;
-  artifacts: { path: string; kind: ArtifactKind; complete: boolean }[];
+  artifacts: { path: string; kind: ArtifactKind; artifactCompleteness: ArtifactCompleteness }[];
   incomplete: string[];
 }
 
@@ -261,8 +262,12 @@ export class SessionRun {
   }
 
   /** Record a finalized readable artifact. */
-  async settleArtifact(path: string, kind: ArtifactKind, complete: boolean): Promise<void> {
-    this.record.artifacts.push({ path, kind, complete });
+  async settleArtifact(
+    path: string,
+    kind: ArtifactKind,
+    artifactCompleteness: ArtifactCompleteness,
+  ): Promise<void> {
+    this.record.artifacts.push({ path, kind, artifactCompleteness });
     await this.persistRecord();
   }
 
@@ -412,10 +417,14 @@ export class ArtifactStore {
   }
 
   /** Record a finalized artifact for a call. */
-  async settleArtifact(call: PendingCall, kind: ArtifactKind, complete: boolean): Promise<void> {
+  async settleArtifact(
+    call: PendingCall,
+    kind: ArtifactKind,
+    artifactCompleteness: ArtifactCompleteness,
+  ): Promise<void> {
     const run = this.runs.get(call.sessionId);
     if (!run || !call.artifactPath) return;
-    await run.settleArtifact(call.artifactPath, kind, complete);
+    await run.settleArtifact(call.artifactPath, kind, artifactCompleteness);
     call.artifactSettled = true;
   }
 

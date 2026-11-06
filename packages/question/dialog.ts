@@ -30,8 +30,6 @@ export interface BoundedQuestionDialogOptions {
   options: DialogOption[];
   /** Label used for the free-prose escape hatch (e.g. "Type your answer"). */
   freeTextLabel: string;
-  /** Full display string for the free-prose escape hatch (e.g. "✎ Type your answer — Write a custom response"). */
-  freeTextDisplay: string;
   /** Maximum total rendered lines. */
   maxLines?: number;
   /** Maximum visible width of any rendered line. */
@@ -66,17 +64,41 @@ const MAX_EDITOR_TITLE_CHARS = 60;
 /** Display string for the Done completion button in multi-select mode. */
 export const DONE_DISPLAY = "✓ Done";
 
+/**
+ * SelectItem value for the preset option at `index` in the dialog's `options`.
+ *
+ * Item values are opaque identities, never display text: distinct labels can
+ * format to the same string, and no label can collide with a control. Callers
+ * map a value back through the same `options` array they passed in.
+ */
+export function presetOptionValue(index: number): string {
+  return `option:${index}`;
+}
+
+/** SelectItem value for the Free prose answer row. */
+export const FREE_TEXT_VALUE = "freeText";
+
+/** SelectItem value for the Done completion control. */
+export const DONE_VALUE = "done";
+
 // ── Public helpers ──────────────────────────────────────────────────────
 
 /**
  * Produce a short bounded title for the free-prose editor, preferring the
  * header (short by design) or a capped question prefix so the editor path
- * cannot reintroduce unbounded prompt rendering.
+ * cannot reintroduce unbounded prompt rendering. The header is a caller-supplied
+ * string and is bounded too: a long one would otherwise overflow the editor
+ * prompt unopposed.
  */
 export function boundedEditorTitle(header: string | undefined, question: string): string {
-  if (header) return header;
-  if (question.length <= MAX_EDITOR_TITLE_CHARS) return question;
-  return question.slice(0, MAX_EDITOR_TITLE_CHARS - 1) + TRUNCATION_SUFFIX;
+  if (header) return capEditorTitle(header);
+  return capEditorTitle(question);
+}
+
+/** Cap an editor title to MAX_EDITOR_TITLE_CHARS, marking truncation with an ellipsis. */
+function capEditorTitle(text: string): string {
+  if (text.length <= MAX_EDITOR_TITLE_CHARS) return text;
+  return text.slice(0, MAX_EDITOR_TITLE_CHARS - 1) + TRUNCATION_SUFFIX;
 }
 
 // ── Wrapped list ───────────────────────────────────────────────────────
@@ -92,10 +114,14 @@ const LIST_UNSELECTED_PREFIX = "  ";
  * to its first line; PageUp/PageDown pages only the focused item's wrapped
  * label so an oversized Scrollable option label stays fully readable without
  * changing focus.
+ *
+ * Not a pi-tui Component itself: the dialog owns rendering and tells this list
+ * how many rows the shared Display budget leaves for it.
  */
-class WrappedSelectList implements Component {
+class WrappedSelectList {
   private items: SelectItem[];
-  private maxVisible: number;
+  /** Visible rows granted by the most recent render; page steps use it. */
+  private maxVisible = 1;
   /** Index of the focused item. */
   private focusIndex = 0;
   /** Lines scrolled past at the top of the focused item's wrapped label. */
@@ -106,9 +132,8 @@ class WrappedSelectList implements Component {
   onSelect?: (item: SelectItem) => void;
   onCancel?: () => void;
 
-  constructor(items: SelectItem[], maxVisible: number, initialFocusValue?: string) {
+  constructor(items: SelectItem[], initialFocusValue?: string) {
     this.items = items;
-    this.maxVisible = Math.max(1, maxVisible);
     const requested =
       initialFocusValue === undefined
         ? -1
@@ -120,7 +145,14 @@ class WrappedSelectList implements Component {
     // No cached state to invalidate.
   }
 
-  render(width: number): string[] {
+  /**
+   * Render the list into `maxVisible` rows around the focused item.
+   * The viewport height is supplied per render because it depends on how many
+   * lines the header wraps to at the render width — the header and the list
+   * share one Display budget.
+   */
+  render(width: number, maxVisible: number): string[] {
+    this.maxVisible = Math.max(1, maxVisible);
     const wrapWidth = Math.max(1, width - LIST_PREFIX_WIDTH);
     const wrapped = this.items.map((item) => {
       const text = item.description ? `${item.label} — ${item.description}` : item.label;
@@ -182,14 +214,6 @@ class WrappedSelectList implements Component {
 
 // ── SelectItem helpers ─────────────────────────────────────────────────
 
-/** Build the display string used to map a selection back to its option. */
-function optionDisplay(o: DialogOption): string {
-  let s = o.label;
-  if (o.recommended) s += "  (recommended)";
-  if (o.description) s += ` — ${o.description}`;
-  return s;
-}
-
 /**
  * Build a bounded count-only selection summary for multi-select mode, e.g.
  * `[2 selected]` — never lists (or truncates) chosen labels, since the option
@@ -203,20 +227,28 @@ export function boundedSelectionSummary(chosenLabels: string[], maxWidth: number
   return visibleWidth(countOnly) <= maxWidth ? countOnly : `[${chosenLabels.length}]`;
 }
 
-/** Build a SelectItem for one preset option. */
-function presetSelectItem(o: DialogOption): SelectItem {
+/** Build a SelectItem for the preset option at `index`. */
+function presetSelectItem(
+  o: DialogOption,
+  index: number,
+  collidingDisplays: ReadonlySet<string>,
+): SelectItem {
   const label = o.recommended ? `${o.label}  (recommended)` : o.label;
+  const display = o.description ? `${label} — ${o.description}` : label;
+  const disambiguatedLabel = collidingDisplays.has(display)
+    ? `${JSON.stringify(o.label)}${o.recommended ? "  (recommended)" : ""}`
+    : label;
   return {
-    value: optionDisplay(o),
-    label,
+    value: presetOptionValue(index),
+    label: disambiguatedLabel,
     description: o.description,
   };
 }
 
 /** Build the free-prose SelectItem. */
-function freeTextSelectItem(freeTextLabel: string, freeTextDisplay: string): SelectItem {
+function freeTextSelectItem(freeTextLabel: string): SelectItem {
   return {
-    value: freeTextDisplay,
+    value: FREE_TEXT_VALUE,
     label: `✎ ${freeTextLabel} — Write a custom response`,
     description: undefined,
   };
@@ -227,20 +259,27 @@ function freeTextSelectItem(freeTextLabel: string, freeTextDisplay: string): Sel
  */
 function doneSelectItem(): SelectItem {
   return {
-    value: DONE_DISPLAY,
+    value: DONE_VALUE,
     label: DONE_DISPLAY,
     description: undefined,
   };
 }
 
 /** Build the list of SelectItems for single-select mode (presets + free text). */
-function buildSingleSelectItems(
-  options: DialogOption[],
-  freeTextLabel: string,
-  freeTextDisplay: string,
-): SelectItem[] {
-  const items: SelectItem[] = options.map(presetSelectItem);
-  items.push(freeTextSelectItem(freeTextLabel, freeTextDisplay));
+function buildSingleSelectItems(options: DialogOption[], freeTextLabel: string): SelectItem[] {
+  const formattedDisplays = options.map((option) => {
+    const label = option.recommended ? `${option.label}  (recommended)` : option.label;
+    return option.description ? `${label} — ${option.description}` : label;
+  });
+  const counts = new Map<string, number>();
+  for (const display of formattedDisplays) counts.set(display, (counts.get(display) ?? 0) + 1);
+  const collidingDisplays = new Set(
+    [...counts].filter(([, count]) => count > 1).map(([display]) => display),
+  );
+  const items: SelectItem[] = options.map((option, index) =>
+    presetSelectItem(option, index, collidingDisplays),
+  );
+  items.push(freeTextSelectItem(freeTextLabel));
   return items;
 }
 
@@ -249,26 +288,33 @@ function multiSelectItems(
   options: DialogOption[],
   chosenLabels: string[],
   freeTextLabel: string,
-  freeTextDisplay: string,
   hasFreeText: boolean,
 ): SelectItem[] {
   const chosenSet = new Set(chosenLabels);
+  const formattedDisplays = options.map((option) => {
+    const label = `${option.label}${option.recommended ? "  (recommended)" : ""}`;
+    return `${option.recommended ? "○ " : "○ "}${label}${option.description ? ` — ${option.description}` : ""}`;
+  });
+  const counts = new Map<string, number>();
+  for (const display of formattedDisplays) counts.set(display, (counts.get(display) ?? 0) + 1);
+  const collidingDisplays = new Set(
+    [...counts].filter(([, count]) => count > 1).map(([display]) => display),
+  );
   const items: SelectItem[] = [];
 
-  for (const opt of options) {
+  options.forEach((opt, index) => {
     const isChosen = chosenSet.has(opt.label);
     const checkbox = isChosen ? "✓ " : "○ ";
     items.push({
-      // value stays as the canonical display for byDisplay() lookup
-      value: optionDisplay(opt),
-      label: `${checkbox}${opt.label}${opt.recommended ? "  (recommended)" : ""}`,
+      value: presetOptionValue(index),
+      label: `${checkbox}${collidingDisplays.has(formattedDisplays[index]!) ? JSON.stringify(opt.label) : opt.label}${opt.recommended ? "  (recommended)" : ""}`,
       description: opt.description,
     });
-  }
+  });
 
   // Free text option — only shown if not yet used
   if (!hasFreeText) {
-    items.push(freeTextSelectItem(freeTextLabel, freeTextDisplay));
+    items.push(freeTextSelectItem(freeTextLabel));
   }
 
   // Done button
@@ -285,7 +331,7 @@ function multiSelectItems(
  *
  * Usage (deterministic test):
  * ```
- * const d = new BoundedQuestionDialog({ title, options, freeTextLabel, freeTextDisplay });
+ * const d = new BoundedQuestionDialog({ title, options, freeTextLabel });
  * const lines = d.render(80);
  * expect(lines.length).toBeLessThanOrEqual(d.maxLines);
  * d.handleInput("enter");       // confirm current selection
@@ -341,20 +387,11 @@ export class BoundedQuestionDialog implements Component {
           opts.options,
           this.chosenLabels as string[],
           opts.freeTextLabel,
-          opts.freeTextDisplay,
           this.hasFreeText,
         )
-      : buildSingleSelectItems(opts.options, opts.freeTextLabel, opts.freeTextDisplay);
+      : buildSingleSelectItems(opts.options, opts.freeTextLabel);
 
-    // Reserve lines for the header and the separator — remaining lines go to
-    // the list viewport. Counting the separator avoids slicing the viewport's
-    // last row off the display, which would make a tall final label (e.g. the
-    // free-prose choice) unreadable in full.
-    const headerLines = this.computeHeaderLines(this.maxWidth);
-    const separatorBudget = headerLines.length > 0 ? 1 : 0;
-    const listBudget = Math.max(1, this.maxLines - headerLines.length - separatorBudget);
-
-    this.selectList = new WrappedSelectList(items, listBudget, opts.initialFocusValue);
+    this.selectList = new WrappedSelectList(items, opts.initialFocusValue);
   }
 
   // ── Component interface ────────────────────────────────────────────
@@ -362,7 +399,15 @@ export class BoundedQuestionDialog implements Component {
   render(width: number): string[] {
     const renderWidth = Math.min(width, this.maxWidth);
     const headerLines = this.computeHeaderLines(renderWidth);
-    const listLines = this.selectList.render(renderWidth);
+    // Reserve the header and the separator before handing the rest of the
+    // Display budget to the list. Counting the separator avoids slicing the
+    // viewport's last row off the display, which would make a tall final label
+    // (e.g. the free-prose choice) unreadable in full. Both are measured at the
+    // render width, since a narrow terminal wraps the header onto more lines
+    // than it occupies at maxWidth and would otherwise overrun the budget.
+    const separatorBudget = headerLines.length > 0 ? 1 : 0;
+    const listBudget = Math.max(1, this.maxLines - headerLines.length - separatorBudget);
+    const listLines = this.selectList.render(renderWidth, listBudget);
 
     const separator = headerLines.length > 0 && listLines.length > 0 ? [""] : [];
     const allLines = [...headerLines, ...separator, ...listLines].slice(0, this.maxLines);

@@ -11,6 +11,8 @@ export interface ServerDef {
 
 export class LspManager {
   private clients = new Map<string, LspClient>();
+  /** In-flight startup per language, so concurrent first requests share one server. */
+  private starting = new Map<string, Promise<LspClient>>();
   private extIndex = new Map<string, string>();
 
   private servers: Record<string, ServerDef>;
@@ -37,20 +39,42 @@ export class LspManager {
           `no 'lsp.servers' entry owns this extension. Add or fix a mapping under 'lsp.servers' in ` +
           `settings.json, or fall back to grep-based tools for this file type.`,
       );
-    let client = this.clients.get(langId);
+    const running = this.clients.get(langId);
     // A server that exited mid-session is discarded; the next tool call spawns it again.
-    if (client && !client.running) this.clients.delete(langId);
-    if (!client || !this.clients.has(langId)) {
-      const def = this.servers[langId]!;
-      client = new LspClient({
-        cmd: def.cmd,
-        args: def.args ?? [],
-        languageId: langId,
-        rootPath: this.rootPath,
-      });
-      await client.start();
-      this.clients.set(langId, client);
+    if (running) {
+      if (running.running) return running;
+      this.clients.delete(langId);
     }
+    // Concurrent first requests share one startup instead of racing to spawn
+    // duplicate servers — the client is cached only after initialize completes.
+    const inFlight = this.starting.get(langId);
+    if (inFlight) return inFlight;
+    const startup = this.startServer(langId);
+    this.starting.set(langId, startup);
+    try {
+      return await startup;
+    } finally {
+      this.starting.delete(langId);
+    }
+  }
+
+  private async startServer(langId: string): Promise<LspClient> {
+    const def = this.servers[langId]!;
+    const client = new LspClient({
+      cmd: def.cmd,
+      args: def.args ?? [],
+      languageId: langId,
+      rootPath: this.rootPath,
+    });
+    try {
+      await client.start();
+    } catch (e) {
+      // Failed startup leaves nothing cached: the next request retries cleanly
+      // instead of reusing a client that never finished its handshake.
+      await client.stop().catch(() => {});
+      throw e;
+    }
+    this.clients.set(langId, client);
     return client;
   }
 
@@ -504,17 +528,20 @@ export function lspToolSpecs(
       name: "lsp_diagnostics",
       label: "LSP Diagnostics",
       description:
-        "Compiler/linter diagnostics for a file \u2014 ground-truth errors and warnings. Prefer over guessing whether a file compiles.",
-      promptSnippet: "Get compiler/linter diagnostics for a file",
+        "Compiler/linter diagnostics for a file, with a confidence state: only `current` diagnostics \u2014 version-correlated with the file's saved contents \u2014 are conclusive. `pending` (the server has not published yet) and `uncertain` (freshness could not be established) results say nothing about whether the file is clean. Prefer over guessing whether a file compiles.",
+      promptSnippet: "Get compiler/linter diagnostics for a file, with a confidence state",
       promptGuidelines: [
         "Use lsp_diagnostics to verify a file compiles cleanly after edits, instead of guessing.",
+        "Read the confidence lsp_diagnostics reports before trusting the result: only `current` is conclusive, while `pending` (nothing published yet) and `uncertain` (freshness not established) are not evidence the file is clean \u2014 re-run after saving when cleanliness matters.",
       ],
       paramKind: "file",
       async run(a) {
         const { client, uri } = await openAt(a);
         // Bounded budget — a timeout is never proof of current diagnostics.
-        // Wait only until a publish correlated with the current document
-        // version arrives (or the budget expires), then report the state.
+        // A publish for an older document version does not end the wait: keep
+        // looking for one correlated with the current version until it arrives
+        // or the budget expires, then report the state. A publish with no
+        // version at all ends the wait, since that server cannot correlate.
         await client.waitForDiagnostics(uri, diagnosticsDelayMs);
         const { state, diagnostics: raw, sinceVersion } = client.getDiagnostics(uri);
         const toRecord = (d: any) => ({

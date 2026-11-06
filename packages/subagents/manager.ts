@@ -1,5 +1,9 @@
 import type { AgentType } from "./agents.ts";
-import { appendTruncationNotice } from "./result-limit.ts";
+import {
+  appendTruncationNotice,
+  composeBoundedResult,
+  type BoundedResultText,
+} from "./result-limit.ts";
 
 // Deep module: a concurrency-limited scheduler that owns sub-agent records,
 // the queue, the running count, and lifecycle notifications. Callers see only
@@ -37,8 +41,9 @@ export interface AgentRecord {
   /** Why the run stopped (stop_subagent); never set for completed/failed. */
   stopReason?: string;
   /** Assistant text captured before a stop or failure for stopped/failed
-   *  runs, already bounded with the shared result limit. Undefined when no
-   *  assistant text was available. */
+   *  runs, already bounded with the shared result limit (and carrying its
+   *  truncation notice when the capture was cut). Undefined when no assistant
+   *  text was available. */
   partialText?: string;
   tokens: number;
   toolUses: number;
@@ -291,8 +296,7 @@ export class AgentManager {
     } catch (e: any) {
       // Assistant text captured before the failure becomes the stopped/failed
       // partial output, bounded with the shared limit like any result text.
-      const partial = typeof e?.partialText === "string" ? e.partialText : undefined;
-      const partialPatch = partial ? { partialText: appendTruncationNotice(partial) } : {};
+      const partialPatch = partialOutputPatch(e);
       if (job.stopRequested) {
         // The first terminal outcome is "stopped" — either stop_subagent or
         // session shutdown won the race with the run's own completion.
@@ -324,4 +328,32 @@ export class AgentManager {
       void this.run(job);
     }
   }
+}
+
+/** A capture shaped like the runner's bounded partial-output attachment. */
+function isBoundedCapture(value: any): value is BoundedResultText {
+  return (
+    typeof value?.text === "string" &&
+    typeof value?.truncated === "boolean" &&
+    typeof value?.originalBytes === "number" &&
+    typeof value?.retainedBytes === "number"
+  );
+}
+
+/**
+ * The `partialText` patch for a failed run. The runner attaches a capture that
+ * was already bounded during the run, so its byte counts — not a fresh measure
+ * of the retained prefix — drive the truncation notice. Exec thunks that only
+ * have the text attach `partialText`, which is bounded and counted here.
+ */
+function partialOutputPatch(e: any): { partialText?: string } {
+  const capture = e?.partialCapture;
+  if (isBoundedCapture(capture) && capture.text.length > 0) {
+    return { partialText: composeBoundedResult(capture) };
+  }
+  const text = e?.partialText;
+  if (typeof text === "string" && text.length > 0) {
+    return { partialText: appendTruncationNotice(text) };
+  }
+  return {};
 }

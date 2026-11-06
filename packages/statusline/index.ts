@@ -2,12 +2,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import {
   classify,
   meter,
-  configFromEnv,
   ZONE_COLOR,
-  ZONE_DEFAULTS,
   formatStatusSegments,
   AWAITING_CONTEXT_TEXT,
 } from "./zone.ts";
+import { resolveStatuslineConfig } from "./config.ts";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -20,16 +19,18 @@ import path from "node:path";
  *
  * Anatomy (plain Unicode, no Nerd Font needed):
  *
- *   checkout-service │ ⎇ feat/login │ ◑ RISKY ██████▋░░░ 65% eff · 130k/200k · 33% nom
+ *   checkout-service │ ⎇ feat/login │ ◑ RISKY ███████░░░ 70% eff · 140k/400k · 35% nom
  *   └─ dim ─────────────────────────┘ └ zone color ──┘└dim┘└zone┘ └─────── dim ───────┘
  *
  * The circle glyph shows *remaining* effective headroom (● → ◕ → ◑ → ◔); the
- * meter is a contiguous whole-cell bar over a dim track.
+ * meter is a contiguous whole-cell bar over a dim track. Percentages before
+ * "eff" measure the configurable Effective limit; "nom" measures the model's
+ * nominal context window. See README.md for both boundaries.
  */
 
 // Settings: this extension reads its own top-level "statusline" key from Pi's
-// settings files (global then project; project wins), inline and self-contained
-// — no shared loader. Env vars override on top.
+// settings files (global then project, shallow-merged; project keys win),
+// inline and self-contained — no shared loader. Env vars override on top.
 function settingsKey(): Record<string, any> {
   const out: Record<string, any> = {};
   for (const f of [
@@ -46,15 +47,7 @@ function settingsKey(): Record<string, any> {
 }
 
 const raw = settingsKey();
-const config = configFromEnv(process.env, {
-  effectiveLimit:
-    Number(raw.effectiveLimit) > 0 ? Number(raw.effectiveLimit) : ZONE_DEFAULTS.effectiveLimit,
-  thresholds: { ...ZONE_DEFAULTS.thresholds, ...raw.thresholds },
-});
-const meterWidth = Math.max(
-  4,
-  Math.floor(Number(raw.meterWidth) > 0 ? Number(raw.meterWidth) : 10),
-);
+const { config, meterWidth, issues: configIssues } = resolveStatuslineConfig(raw, process.env);
 
 function basename(p: string | undefined): string {
   if (!p) return "";
@@ -64,6 +57,14 @@ function basename(p: string | undefined): string {
 
 export default function (pi: ExtensionAPI) {
   let branch = "";
+
+  /** Surface rejected configuration once per session, with the value used instead. */
+  function reportConfigIssues(ctx: ExtensionContext) {
+    if (!ctx.hasUI) return;
+    for (const issue of configIssues) {
+      ctx.ui.notify(`statusline: ${issue.message}`, "warning");
+    }
+  }
 
   async function refreshBranch() {
     try {
@@ -110,6 +111,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    reportConfigIssues(ctx);
     await refreshBranch();
     render(ctx);
   });

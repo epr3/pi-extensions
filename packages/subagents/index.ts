@@ -516,12 +516,15 @@ export function retrievalDetails(rec: AgentRecord): RetrievalDetails {
 export function stopResultText(outcome: StopOutcome): string {
   const rec = outcome.record;
   if (outcome.action === "unchanged") {
+    // The stop cannot observe whether the terminal event preceded the request
+    // or landed while the stop was being applied, so it never claims that
+    // ordering — only the outcome it actually found.
     const why =
       rec.status === "completed"
-        ? "already completed before the stop request"
+        ? "had already reached its completed outcome before the stop could be applied"
         : rec.status === "failed"
-          ? `already failed with: ${rec.error}`
-          : "was already stopped";
+          ? `had already failed before the stop could be applied, with: ${rec.error}`
+          : "had already been stopped";
     return `Subagent ${rec.id} (${rec.type}, ${rec.description}) ${why}. The stop did not change the outcome.`;
   }
   const head = `Stopped ${rec.type} (${rec.description}) \u2014 ${rec.stopReason ?? "stopped by request"}.`;

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { AgentManager } from "../manager.ts";
-import { RESULT_TEXT_LIMIT } from "../result-limit.ts";
+import { BoundedResultText, RESULT_TEXT_LIMIT, createBoundedTextCapture } from "../result-limit.ts";
 
 const { runSubagentMock } = vi.hoisted(() => ({
   runSubagentMock: vi.fn(),
@@ -54,6 +54,15 @@ function launchAndWait(exec: () => Promise<any>): Promise<any> {
   return done;
 }
 
+/** Reject like the runner does: assistant text captured as a bounded capture. */
+function rejectWithCapture(partialCapture: BoundedResultText): () => Promise<any> {
+  return () => {
+    const err: any = new Error("Subagent aborted");
+    err.partialCapture = partialCapture;
+    return Promise.reject(err);
+  };
+}
+
 describe("bounded record results at the manager seam", () => {
   it("bounds a completed record's result text to 20,000 bytes with a truncation notice", async () => {
     const rec = await launchAndWait(() =>
@@ -83,6 +92,44 @@ describe("bounded record results at the manager seam", () => {
     const rec = await launchAndWait(() => Promise.reject(new Error(reason)));
     expect(rec.status).toBe("failed");
     expect(rec.error).toBe(reason);
+  });
+});
+
+describe("bounded partial output at the manager seam", () => {
+  it("reports a truncated capture's original and retained byte counts", async () => {
+    const capture = createBoundedTextCapture();
+    capture.append("a".repeat(25_000)); // one long delta, cut at the limit
+    const rec = await launchAndWait(rejectWithCapture(capture.snapshot()));
+    expect(rec.status).toBe("failed");
+    // The capture already dropped 5,000 bytes during the run; the record must
+    // still report the original count rather than re-measuring the prefix.
+    expect(rec.partialText!.startsWith("a".repeat(RESULT_TEXT_LIMIT))).toBe(true);
+    expect(rec.partialText).toContain("[Truncated: showing the first 20,000 of 25,000 bytes.]");
+  });
+
+  it("leaves a capture below the limit unchanged with no notice", async () => {
+    const capture = createBoundedTextCapture();
+    capture.append("half-finished answer");
+    const rec = await launchAndWait(rejectWithCapture(capture.snapshot()));
+    expect(rec.status).toBe("failed");
+    expect(rec.partialText).toBe("half-finished answer");
+  });
+
+  it("omits partial output when the capture retained no text", async () => {
+    const rec = await launchAndWait(rejectWithCapture(createBoundedTextCapture().snapshot()));
+    expect(rec.status).toBe("failed");
+    expect(rec.partialText).toBeUndefined();
+  });
+
+  it("still bounds a plain partial-text string from an exec thunk", async () => {
+    const rec = await launchAndWait(() => {
+      const err: any = new Error("Subagent aborted");
+      err.partialText = "b".repeat(20_050);
+      return Promise.reject(err);
+    });
+    expect(rec.status).toBe("failed");
+    expect(rec.partialText!.startsWith("b".repeat(RESULT_TEXT_LIMIT))).toBe(true);
+    expect(rec.partialText).toContain("[Truncated: showing the first 20,000 of 20,050 bytes.]");
   });
 });
 

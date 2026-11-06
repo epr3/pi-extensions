@@ -291,3 +291,154 @@ describe("findRepairTarget", () => {
     });
   });
 });
+describe("catalog validation", () => {
+  it("keeps valid presets selectable and reports malformed ones actionably", () => {
+    const catalog = createCatalog({
+      cycle: ["good", "no-provider", "bad-level"],
+      presets: {
+        good: {
+          provider: "openai-codex",
+          model: "gpt-5.5",
+          thinkingLevel: "medium",
+        },
+        "no-provider": {
+          model: "gpt-5.5",
+          thinkingLevel: "medium",
+        } as any,
+        "bad-level": {
+          provider: "opencode-go",
+          model: "minimax-m3",
+          thinkingLevel: "ultra",
+        } as any,
+      },
+    });
+
+    // Valid entries stay selectable.
+    expect([...catalog.presets.keys()]).toEqual(["good"]);
+
+    // Malformed entries are reported by name with a settings location and the
+    // offending field, so the user can repair them.
+    expect(catalog.invalid.map((issue) => issue.preset)).toEqual(["no-provider", "bad-level"]);
+    const [noProvider, badLevel] = catalog.invalid;
+    expect(noProvider.message).toContain('modelPresets.presets["no-provider"]');
+    expect(noProvider.message).toContain("provider");
+    expect(badLevel.message).toContain('modelPresets.presets["bad-level"]');
+    expect(badLevel.message).toContain("thinkingLevel");
+    expect(badLevel.message).toContain("ultra");
+  });
+
+  it("does not throw on a null preset entry", () => {
+    const catalog = createCatalog({
+      cycle: ["broken"],
+      presets: {
+        broken: null,
+      } as any,
+    });
+
+    expect(catalog.presets.size).toBe(0);
+    expect(catalog.invalid).toHaveLength(1);
+    expect(catalog.invalid[0].preset).toBe("broken");
+    expect(catalog.invalid[0].message).toContain("object");
+  });
+
+  it("rejects a preset with an empty provider, empty model or non-boolean repairDefault", () => {
+    const catalog = createCatalog({
+      cycle: [],
+      presets: {
+        empty: { provider: "  ", model: "", thinkingLevel: "low" } as any,
+        repair: {
+          provider: "p",
+          model: "m",
+          thinkingLevel: "low",
+          repairDefault: "yes",
+        } as any,
+      },
+    });
+
+    expect(catalog.presets.size).toBe(0);
+    expect(catalog.invalid).toHaveLength(2);
+    expect(catalog.invalid[0].message).toContain("provider");
+    expect(catalog.invalid[0].message).toContain("model");
+    expect(catalog.invalid[1].message).toContain("repairDefault");
+  });
+
+  it("reports a non-object presets section instead of inventing presets", () => {
+    const catalog = createCatalog({ cycle: [], presets: ["nope"] } as any);
+
+    expect(catalog.presets.size).toBe(0);
+    expect(catalog.invalid).toHaveLength(1);
+    expect(catalog.invalid[0].message).toContain("modelPresets.presets");
+  });
+
+  it("reports a malformed cycle without discarding valid preset data", () => {
+    const catalog = createCatalog({
+      cycle: ["good", 42, null],
+      presets: {
+        good: { provider: "p", model: "m", thinkingLevel: "medium" },
+      },
+    } as any);
+
+    expect(catalog.presets.size).toBe(1);
+    expect(catalog.cycle).toEqual(["good"]);
+    expect(catalog.invalid).toHaveLength(2);
+    expect(catalog.invalid[0].message).toContain("modelPresets.cycle");
+  });
+
+  it("reports a non-array cycle without discarding valid presets", () => {
+    const catalog = createCatalog({
+      cycle: "default",
+      presets: {
+        good: { provider: "p", model: "m", thinkingLevel: "medium" },
+      },
+    } as any);
+
+    expect(catalog.presets.size).toBe(1);
+    expect(catalog.cycle).toEqual([]);
+    expect(catalog.invalid).toHaveLength(1);
+    expect(catalog.invalid[0].message).toContain("modelPresets.cycle");
+  });
+
+  it("accepts a catalog with no problems", () => {
+    const catalog = createCatalog({
+      cycle: ["good"],
+      presets: {
+        good: { provider: "p", model: "m", thinkingLevel: "medium" },
+      },
+    });
+
+    expect(catalog.invalid).toEqual([]);
+  });
+});
+
+describe("resolveCycle with malformed entries", () => {
+  const catalog = createCatalog({
+    cycle: ["good", "broken", "absent"],
+    presets: {
+      good: { provider: "p", model: "m", thinkingLevel: "medium" },
+      broken: { provider: "p", thinkingLevel: "medium" } as any,
+    },
+  });
+
+  it("keeps valid entries in order while reporting malformed cycle entries separately from missing ones", () => {
+    const result = resolveCycle(catalog);
+    expect(result.entries.map((p) => p.name)).toEqual(["good"]);
+    expect(result.invalid).toEqual(["broken"]);
+    expect(result.missing).toEqual(["absent"]);
+  });
+});
+
+describe("catalog absent shapes", () => {
+  it("stays silent when the catalog sections are absent", () => {
+    expect(createCatalog({}).invalid).toEqual([]);
+    expect(createCatalog({}).presets.size).toBe(0);
+    expect(createCatalog({}).cycle).toEqual([]);
+    expect(createCatalog(undefined).invalid).toEqual([]);
+  });
+
+  it("reports a non-object catalog input instead of throwing", () => {
+    const catalog = createCatalog("modelPresets");
+    expect(catalog.presets.size).toBe(0);
+    expect(catalog.invalid).toHaveLength(1);
+    expect(catalog.invalid[0].message).toContain("modelPresets");
+  });
+});

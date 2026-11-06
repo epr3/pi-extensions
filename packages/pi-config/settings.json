@@ -35,7 +35,7 @@
     }
   },
   "statusline": {
-    "//": "Absolute degradation budget: at-or-over the effective limit = caveman. Thresholds are fractions of the limit. Env EFFECTIVE_LIMIT / Z_* override.",
+    "//": "Absolute degradation budget: at-or-over the effective limit = caveman. Thresholds are fractions of the limit (0-1, increasing). meterWidth is 4-40 cells. Env EFFECTIVE_LIMIT / Z_* override; invalid values fall back and warn (see packages/statusline/README.md).",
     "effectiveLimit": 200000,
     "thresholds": {
       "sharp": 0.3333333333,

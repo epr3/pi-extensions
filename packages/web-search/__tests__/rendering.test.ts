@@ -11,7 +11,18 @@
 import { describe, it, expect } from "vitest";
 import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
 import { renderWebSearchCall, renderWebSearchResult } from "../render.ts";
-import type { SearchResponseDetails } from "../search.ts";
+import type { SearchResult, WebSearchDetails } from "../search.ts";
+
+const RESULT_ONE: SearchResult = {
+  title: "First Result",
+  url: "https://example.com/1",
+  snippet: "First snippet",
+};
+const RESULT_TWO: SearchResult = {
+  title: "Second Result",
+  url: "https://example.com/2",
+  snippet: "Second snippet",
+};
 
 // Plain theme: pass-through, no styling.
 const plainTheme = {
@@ -27,7 +38,7 @@ function callText(args: { query?: string; exactPhrases?: string[]; site?: string
 }
 
 function resultText(
-  result: AgentToolResult<SearchResponseDetails>,
+  result: AgentToolResult<WebSearchDetails>,
   isPartial = false,
   expanded = false,
 ): string {
@@ -36,7 +47,7 @@ function resultText(
     .join("\n");
 }
 
-function makeDetails(overrides: Partial<SearchResponseDetails> = {}): SearchResponseDetails {
+function makeDetails(overrides: Partial<WebSearchDetails> = {}): WebSearchDetails {
   return {
     normalizedQuery: "test query",
     exactPhrases: [],
@@ -44,18 +55,20 @@ function makeDetails(overrides: Partial<SearchResponseDetails> = {}): SearchResp
     siteRestriction: null,
     resultCount: 5,
     composedQuery: "test query",
+    results: [],
+    totalResults: 0,
     ...overrides,
   };
 }
 
 function makeResult(
   content: string,
-  details?: SearchResponseDetails,
-): AgentToolResult<SearchResponseDetails> {
+  details?: WebSearchDetails,
+): AgentToolResult<WebSearchDetails> {
   return {
     content: [{ type: "text" as const, text: content }],
     details,
-  } as AgentToolResult<SearchResponseDetails>;
+  } as AgentToolResult<WebSearchDetails>;
 }
 
 // ─── renderWebSearchCall ────────────────────────────────────────────────────
@@ -101,7 +114,10 @@ describe("renderWebSearchCall", () => {
 
 describe("renderWebSearchResult (collapsed)", () => {
   it("shows the result count", () => {
-    const details = makeDetails({ resultCount: 3 });
+    const details = makeDetails({
+      resultCount: 3,
+      results: [RESULT_ONE, RESULT_TWO, { ...RESULT_ONE, url: "https://example.com/3" }],
+    });
     const result = makeResult(
       "Found 3 results for: test query\n\n1. Title\n   https://example.com\n   Snippet",
       details,
@@ -124,6 +140,75 @@ describe("renderWebSearchResult (collapsed)", () => {
     expect(text).toMatch(/…$|…\s*$/);
     // And the truncated prefix is present.
     expect(text).toContain(longQuery.slice(0, 50));
+  });
+});
+
+// ─── renderWebSearchResult — returned vs requested count ────────────────────
+
+describe("renderWebSearchResult — returned result count", () => {
+  it("shows the returned count when the API returns fewer results than requested", () => {
+    const details = makeDetails({ resultCount: 5, results: [RESULT_ONE, RESULT_TWO] });
+    const result = makeResult(
+      [
+        "Found 2 results for: test query",
+        "",
+        "1. First Result",
+        "   https://example.com/1",
+        "   First snippet",
+        "",
+        "2. Second Result",
+        "   https://example.com/2",
+        "   Second snippet",
+      ].join("\n"),
+      details,
+    );
+
+    const text = resultText(result);
+    expect(text).toContain("2 results");
+    expect(text).not.toContain("5 results");
+  });
+
+  it("reports no results even when a count was requested and none came back", () => {
+    const details = makeDetails({ resultCount: 5, results: [] });
+    const result = makeResult("No results for: test query", details);
+
+    const text = resultText(result);
+    expect(text).toContain("no results");
+    expect(text).not.toContain("5 results");
+  });
+
+  it("uses the singular 'result' for a single returned hit", () => {
+    const details = makeDetails({ resultCount: 5, results: [RESULT_ONE] });
+    const result = makeResult(
+      "Found 1 result for: test query\n\n1. First Result\n   https://example.com/1\n   First snippet",
+      details,
+    );
+
+    const text = resultText(result);
+    expect(text).toContain("1 result");
+    expect(text).not.toContain("1 results");
+    expect(text).not.toContain("5 results");
+  });
+
+  it("shows the full count when every requested result came back", () => {
+    const details = makeDetails({
+      resultCount: 3,
+      results: [RESULT_ONE, RESULT_TWO, { ...RESULT_ONE, url: "https://example.com/3" }],
+    });
+    const result = makeResult("Found 3 results for: test query", details);
+
+    expect(resultText(result)).toContain("3 results");
+  });
+
+  it("omits a count rather than reporting the requested count when details carry no results", () => {
+    // Legacy persisted details from before results were part of the contract.
+    const details = { ...makeDetails({ resultCount: 5 }) } as Partial<WebSearchDetails>;
+    delete details.results;
+    const result = makeResult("Found 2 results for: test query", details as WebSearchDetails);
+
+    const text = resultText(result);
+    expect(text).not.toContain("5 results");
+    expect(text).toContain("test query");
   });
 });
 

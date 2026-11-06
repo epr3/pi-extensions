@@ -78,12 +78,20 @@ export function renderWebFetchResult(
     lines.push(theme.fg("muted", "Deleted when you leave this session — refetch to regenerate."));
   }
   if (d.pageCount !== undefined) {
-    const pageInfo = d.truncated ? `Pages: ${d.pageCount} (truncated)` : `Pages: ${d.pageCount}`;
-    lines.push(theme.fg("muted", pageInfo));
+    lines.push(theme.fg("muted", `Pages: ${d.pageCount}`));
+  } else if (d.source === "pdf") {
+    lines.push(theme.fg("muted", "Pages: unknown"));
   }
-  if (d.artifactComplete === false) {
+  if (d.artifactCompleteness === "partial") {
     lines.push(
       theme.fg("warning", "Warning: artifact is partial — it does not contain the full source."),
+    );
+  } else if (d.artifactCompleteness === "unknown") {
+    lines.push(
+      theme.fg(
+        "muted",
+        "Artifact completeness: unverified — the extractor cannot confirm every page's text.",
+      ),
     );
   }
   if (d.modelInputTruncated) {

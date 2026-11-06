@@ -14,6 +14,7 @@ import type {
 import { adjustMaxTokensForThinking } from "@earendil-works/pi-ai/api/simple-options";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ExtractionModelSettings } from "./settings.ts";
+import type { ArtifactCompleteness } from "./fetch.ts";
 
 // ─── Budget policy ───────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ export function resolveBudgetPolicy(
 export class ExtractionModelError extends Error {
   public readonly url: string;
   public readonly artifactPath: string;
-  public readonly artifactComplete: boolean;
+  public readonly artifactCompleteness: ArtifactCompleteness;
   public readonly usage?: Usage;
   public readonly cause?: unknown;
 
@@ -81,7 +82,7 @@ export class ExtractionModelError extends Error {
     message: string,
     url: string,
     artifactPath: string,
-    artifactComplete: boolean,
+    artifactCompleteness: ArtifactCompleteness,
     usage?: Usage,
     cause?: unknown,
   ) {
@@ -92,7 +93,7 @@ export class ExtractionModelError extends Error {
     this.name = "ExtractionModelError";
     this.url = url;
     this.artifactPath = artifactPath;
-    this.artifactComplete = artifactComplete;
+    this.artifactCompleteness = artifactCompleteness;
     this.usage = usage;
     this.cause = cause;
   }
@@ -333,7 +334,7 @@ export interface ExtractionRequest {
   title: string;
   prompt: string;
   artifactPath: string;
-  artifactComplete: boolean;
+  artifactCompleteness: ArtifactCompleteness;
 }
 
 export interface ExtractionResult {
@@ -427,7 +428,7 @@ export async function extractAnswer(
       `Extraction model request failed: ${(err as Error).message}`,
       request.url,
       request.artifactPath,
-      request.artifactComplete,
+      request.artifactCompleteness,
       undefined,
       err,
     );
@@ -438,7 +439,7 @@ export async function extractAnswer(
       "Extraction model call was aborted.",
       request.url,
       request.artifactPath,
-      request.artifactComplete,
+      request.artifactCompleteness,
       assistant.usage,
     );
   }
@@ -448,7 +449,7 @@ export async function extractAnswer(
       assistant.errorMessage ?? "Extraction model returned an error.",
       request.url,
       request.artifactPath,
-      request.artifactComplete,
+      request.artifactCompleteness,
       assistant.usage,
     );
   }
@@ -459,7 +460,7 @@ export async function extractAnswer(
       "Extraction model returned an empty or unusable answer.",
       request.url,
       request.artifactPath,
-      request.artifactComplete,
+      request.artifactCompleteness,
       assistant.usage,
     );
   }

@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import type { SearchResponseDetails } from "./search.ts";
+import type { WebSearchDetails } from "./search.ts";
 
 /**
  * Render the web_search tool call row — compact query summary.
@@ -31,11 +31,11 @@ export function renderWebSearchCall(
 /**
  * Render the web_search tool result row.
  *
- * Collapsed: one line — result count + truncated composed query.
+ * Collapsed: one line — returned result count + truncated composed query.
  * Expanded: full result list with theming.
  */
 export function renderWebSearchResult(
-  result: AgentToolResult<SearchResponseDetails>,
+  result: AgentToolResult<WebSearchDetails>,
   options: ToolRenderResultOptions,
   theme: Theme,
   _ctx: unknown,
@@ -50,15 +50,20 @@ export function renderWebSearchResult(
     return new Text(theme.fg("toolOutput", text), 0, 0);
   }
 
-  // Evaluate result count from structured details.
-  const count = d.resultCount > 0 ? d.resultCount : 0;
+  // Count what the API actually returned; `resultCount` is only what we asked for.
+  // Legacy persisted details predate `results`, so the count can be unknown.
+  const returnedCount = Array.isArray(d.results) ? d.results.length : undefined;
 
   if (!options.expanded) {
     // Collapsed: one-liner
-    const prefix = count > 0 ? `${count} result${count !== 1 ? "s" : ""}` : "no results";
     const query = d.composedQuery;
     const displayQuery = query.length > 60 ? `${query.slice(0, 57)}…` : query;
-    const color = count > 0 ? "success" : "muted";
+    if (returnedCount === undefined) {
+      return new Text(theme.fg("muted", displayQuery), 0, 0);
+    }
+    const prefix =
+      returnedCount > 0 ? `${returnedCount} result${returnedCount !== 1 ? "s" : ""}` : "no results";
+    const color = returnedCount > 0 ? "success" : "muted";
     return new Text(theme.fg(color, `${prefix}  ${displayQuery}`), 0, 0);
   }
 

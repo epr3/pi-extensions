@@ -26,6 +26,7 @@ This repo uses a multi-context layout mirroring the tracked Pi Extension package
 - **Package test suite** is the test ownership boundary for an **Extension package**.
 - **Test script contract** makes package tests CI-friendly while keeping **Coverage report** available from the root.
 - **Package test suite** contains **Deterministic package tests**, especially for web and LSP boundaries.
+- **Real-Pi smoke workflow** supplements **Deterministic package tests** for lifecycle claims a fake `ExtensionAPI` cannot show; a coverage gap alone never establishes a lifecycle defect.
 - Skills depend on these tools only when available and keep prose or direct-tool fallbacks.
 - **Tool presentation** uses a dual result contract: stable plain-text `content` for the model plus structured `details` for user-facing renderers or session state.
 - **Model-aware compaction Extension package** measures the **Model context window**; the statusline's **Effective limit** stays fixed and independent.
@@ -64,6 +65,9 @@ _Avoid_: Script setup, test commands, npm scripts.
 
 **Deterministic package test**: Package behavior test that avoids live external services and credentials by mocking network and other IO boundaries, except local fixture reads.
 _Avoid_: Unit test, mocked test, offline test.
+
+**Real-Pi smoke workflow**: Hand-run verification that starts the actual Pi process with an Extension package loaded, replaces only the model endpoint with a deterministic local stub, and checks lifecycle evidence Pi itself produced (its session event stream, stored tool results, session files, and an extension-side lifecycle probe) instead of simulated events.
+_Avoid_: Integration test, e2e test, live test.
 
 **Atomic model preset**: User-selectable model choice that binds provider, model id, and thinking level into one switch operation.
 _Avoid_: Model selector entry, enabled model, profile.

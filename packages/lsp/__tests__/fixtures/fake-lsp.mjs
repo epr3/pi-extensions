@@ -11,9 +11,14 @@
 //
 // Publish modes (after each accepted didOpen/didChange, following an optional
 // delay):
-//   versioned   — textDocument/publishDiagnostics WITH the document version
-//   unversioned — publishDiagnostics WITHOUT any version field
-//   silent      — never publishes diagnostics at all
+//   versioned         — textDocument/publishDiagnostics WITH the document version
+//   unversioned       — publishDiagnostics WITHOUT any version field
+//   silent            — never publishes diagnostics at all
+//   stale-then-current — publishes for the PREVIOUS document state first (older
+//                        version, previous text), then for the current one after
+//                        the delay
+//   stale-only        — publishes only for the previous document state, never
+//                        catching up with the current version
 
 import fs from "node:fs";
 import process from "node:process";
@@ -84,8 +89,29 @@ function diagnosticsFor(uri) {
 
 function publish(uri, version) {
   const params = { uri, diagnostics: diagnosticsFor(uri) };
-  if (publishMode === "versioned") params.version = version;
+  if (publishMode !== "unversioned") params.version = version;
   send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params });
+}
+
+// Diagnostics for a document state the server analyzed BEFORE the current one:
+// the previous version and its previous text (empty on first open).
+function publishStale(uri, version, previousText) {
+  const diagnostics = (previousText ?? "").split(/\r?\n/).reduce((acc, lineText, line) => {
+    const m = /FIXME/.exec(lineText);
+    if (m) {
+      acc.push({
+        severity: 1,
+        message: `synthetic error: ${lineText.trim()}`,
+        range: { start: { line, character: m.index }, end: { line, character: lineText.length } },
+      });
+    }
+    return acc;
+  }, []);
+  send({
+    jsonrpc: "2.0",
+    method: "textDocument/publishDiagnostics",
+    params: { uri, diagnostics, version: Math.max(0, version - 1) },
+  });
 }
 
 // Top-level `function NAME` lines, zero-based index by position in held text.
@@ -99,6 +125,17 @@ function functionSymbols(uri) {
     }
     return acc;
   }, []);
+}
+
+// Publish per the configured mode: an immediate stale publish (previous state)
+// for the lagging modes, then the current-state publish after the delay.
+function schedule(uri, version, previousText) {
+  if (publishMode === "silent") return;
+  if (publishMode === "stale-then-current" || publishMode === "stale-only") {
+    setTimeout(() => publishStale(uri, version, previousText), 0);
+  }
+  if (publishMode === "stale-only") return;
+  setTimeout(() => publish(uri, version), publishDelayMs);
 }
 
 function handle(msg) {
@@ -125,15 +162,16 @@ function handle(msg) {
     const td = msg.params.textDocument;
     docs.set(td.uri, td.text);
     log({ method: "didOpen", version: td.version, text: td.text });
-    if (publishMode !== "silent") setTimeout(() => publish(td.uri, td.version), publishDelayMs);
+    schedule(td.uri, td.version, undefined);
     return;
   }
   if (msg.method === "textDocument/didChange") {
     const td = msg.params.textDocument;
+    const previousText = docs.get(td.uri);
     const text = msg.params.contentChanges.at(-1).text;
     docs.set(td.uri, text);
     log({ method: "didChange", version: td.version, text });
-    if (publishMode !== "silent") setTimeout(() => publish(td.uri, td.version), publishDelayMs);
+    schedule(td.uri, td.version, previousText);
     return;
   }
   if (msg.id !== undefined && msg.id !== null) {

@@ -1,6 +1,7 @@
 import type {
   AgentToolResult,
   ExtensionAPI,
+  ExtensionContext,
   Theme,
   ThemeColor,
   ToolRenderResultOptions,
@@ -23,8 +24,9 @@ function textResult(
  * facility Claude Code provides; this restores it.
  *
  * State lives in tool-result `details` (the documented branch-safe pattern) and
- * is reconstructed from the session branch on session_start, so it survives
- * turns, reloads, and tree navigation.
+ * is reconstructed from the active session branch whenever Pi replaces that
+ * branch: `session_start` (startup, reload, new, resume, fork) and
+ * `session_tree` (`/tree` navigation, which fires no `session_start`).
  */
 
 export type Status = "pending" | "in_progress" | "completed";
@@ -93,6 +95,21 @@ function fmtCurrentLine(current: CurrentItemResult): string {
     return "Current: (multiple: see details)";
   }
   return "Current: none";
+}
+
+/**
+ * Plain-text body of a todo result: done/total summary, current-item line and
+ * the full checklist, plus an advisory line when more than one item is
+ * in_progress. The warning never rejects the list; derived details
+ * (`activeCandidates`) remain the structured form of the same invalid state.
+ */
+function fmtResult(items: Item[], current: CurrentItemResult): string {
+  const txt = `${summary(items)}\n${fmtCurrentLine(current)}\n${fmt(items)}`;
+  const active = items.filter((t) => t.status === "in_progress").length;
+  if (active <= 1) {
+    return txt;
+  }
+  return `${txt}\n(warning: invalid workflow state — ${active} items in_progress; at most one item may be in_progress)`;
 }
 
 // ─── Tool presentation ──────────────────────────────────────────────────────
@@ -209,8 +226,11 @@ export function renderTodoResult(
 export default function (pi: ExtensionAPI) {
   let items: Item[] = [];
 
-  // Reconstruct from the latest todo_write result on the current branch.
-  pi.on("session_start", async (_event, ctx) => {
+  // Reconstruct from the latest todo_write result on the active branch. Both
+  // session_start and session_tree replace the active branch, and session_tree
+  // fires no session_start, so both must resync or the list goes stale after
+  // navigation.
+  const reconstructFromBranch = (ctx: Pick<ExtensionContext, "sessionManager">) => {
     items = [];
     for (const entry of ctx.sessionManager.getBranch()) {
       if (
@@ -221,6 +241,14 @@ export default function (pi: ExtensionAPI) {
         items = (entry.message.details?.items as Item[]) ?? items;
       }
     }
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    reconstructFromBranch(ctx);
+  });
+
+  pi.on("session_tree", async (_event, ctx) => {
+    reconstructFromBranch(ctx);
   });
 
   pi.registerTool({
@@ -228,10 +256,13 @@ export default function (pi: ExtensionAPI) {
     label: "Write Todos",
     description:
       "Replace the todo list. Use to break an issue into steps or a plan into vertical slices, then " +
-      "keep it current. Keep exactly one item in_progress at a time; mark items completed as you finish.",
+      "keep it current. Keep at most one item in_progress at a time; an empty list or an all-completed " +
+      "list is valid. Mark items completed as you finish; a list with several in_progress items is " +
+      "reported as invalid workflow state so you can repair it.",
     promptSnippet: "Track a checklist of steps/slices",
     promptGuidelines: [
       "Use todo_write to plan multi-step work (breaking an issue into steps or a plan into slices) and keep the list updated as you progress.",
+      "Keep at most one item in_progress; an empty or fully completed list is fine, and several in_progress items are reported as invalid workflow state.",
     ],
     parameters: writeParams,
     renderCall: (args, theme) => renderTodoCall(args as Record<string, unknown>, theme),
@@ -240,12 +271,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params) {
       items = (params.todos as Item[]).map((t) => ({ content: t.content, status: t.status }));
       const current = deriveCurrentItem(items);
-      const active = items.filter((t) => t.status === "in_progress").length;
-      let txt = `${summary(items)}\n${fmtCurrentLine(current)}\n${fmt(items)}`;
-      if (active > 1) {
-        txt += `\n(warning: invalid workflow state — ${active} items in_progress)`;
-      }
-      return textResult(txt, { items: [...items], ...current });
+      return textResult(fmtResult(items, current), { items: [...items], ...current });
     },
   });
 
@@ -258,8 +284,7 @@ export default function (pi: ExtensionAPI) {
     renderResult: renderTodoResult,
     async execute() {
       const current = deriveCurrentItem(items);
-      const txt = `${summary(items)}\n${fmtCurrentLine(current)}\n${fmt(items)}`;
-      return textResult(txt, { items: [...items], ...current });
+      return textResult(fmtResult(items, current), { items: [...items], ...current });
     },
   });
 }

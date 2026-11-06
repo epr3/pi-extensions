@@ -210,6 +210,46 @@ describe("failure visibility and retry", () => {
     expect(session.notifications[0].message).toContain("provider down");
   });
 
+  it("notifies the user when the compaction call throws synchronously", () => {
+    const session = setup(usage(180_000), () => {
+      throw new Error("session inactive");
+    });
+
+    session.fireTurnEnd();
+
+    expect(session.notifications).toHaveLength(1);
+    expect(session.notifications[0].type).toBe("error");
+    expect(session.notifications[0].message).toContain("session inactive");
+  });
+
+  it("retries after a synchronous failure on a later completed turn still at or above the threshold", () => {
+    let throwOnce = true;
+    const session = setup(usage(180_000), () => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error("session inactive");
+      }
+    });
+
+    session.fireTurnEnd();
+    session.fireTurnEnd();
+
+    expect(session.notifications).toHaveLength(1);
+    expect(session.compactOptions).toHaveLength(2);
+  });
+
+  it("does not retry after a synchronous failure on a later completed turn below the threshold", () => {
+    const session = setup(usage(180_000), () => {
+      throw new Error("session inactive");
+    });
+
+    session.fireTurnEnd();
+    session.setUsage(usage(99_999));
+    session.fireTurnEnd();
+
+    expect(session.compactOptions).toHaveLength(1);
+  });
+
   it("does not notify the user on success", () => {
     const session = setup(usage(180_000));
     startCompaction(session).onComplete?.(compactionResult());

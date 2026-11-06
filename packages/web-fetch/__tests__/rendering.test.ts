@@ -43,7 +43,7 @@ function makeDetails(overrides: Partial<WebFetchDetails> = {}): WebFetchDetails 
     contentType: "text/html",
     source: "html",
     artifactPath: "/tmp/pi-web-fetch/sess-1/run-1/call-1-artifact.md",
-    artifactComplete: true,
+    artifactCompleteness: "complete",
     answer: "Answer text",
     answerLength: 11,
     sourceLength: 100,
@@ -160,24 +160,42 @@ describe("renderWebFetchResult (expanded)", () => {
     expect(text).not.toContain("truncated");
   });
 
-  it("shows truncation note and partial-artifact warning when a PDF exceeds the limit", () => {
+  it("shows an unknown page count and unverified completeness for a PDF", () => {
+    const details = makeDetails({
+      url: "https://example.com/doc.pdf",
+      title: "PDF Document",
+      contentType: "application/pdf",
+      answer: "PDF text content",
+      answerLength: 5000,
+      sourceLength: 20_000,
+      source: "pdf",
+      artifactCompleteness: "unknown",
+    });
+    const text = resultText(makeResult("PDF text content", details), false, true);
+
+    expect(text).toContain("[pdf]");
+    expect(text).toContain("Pages: unknown");
+    expect(text).toContain("Artifact completeness: unverified");
+    expect(text).not.toContain("Warning: artifact is partial");
+  });
+
+  it("warns about a known-partial PDF artifact without claiming a page limit", () => {
     const details = makeDetails({
       url: "https://example.com/large.pdf",
       title: "Large PDF",
       contentType: "application/pdf",
-      answer: "Truncated PDF content",
+      answer: "Partial PDF content",
       answerLength: 5000,
       sourceLength: 500_000,
       source: "pdf",
       pageCount: 100,
-      truncated: true,
-      artifactComplete: false,
+      artifactCompleteness: "partial",
     });
-    const text = resultText(makeResult("Truncated PDF content", details), false, true);
+    const text = resultText(makeResult("Partial PDF content", details), false, true);
 
     expect(text).toContain("Pages: 100");
-    expect(text).toContain("truncated");
     expect(text).toContain("Warning: artifact is partial");
+    expect(text).not.toMatch(/truncated|page limit|50 pages/i);
   });
 
   it("shows model-input truncation warning independently of artifact completeness", () => {
@@ -186,7 +204,7 @@ describe("renderWebFetchResult (expanded)", () => {
       answerLength: 12,
       sourceLength: 50_000,
       modelInputTruncated: true,
-      artifactComplete: true,
+      artifactCompleteness: "complete",
     });
     const text = resultText(makeResult("Short answer", details), false, true);
 
@@ -198,6 +216,7 @@ describe("renderWebFetchResult (expanded)", () => {
     const details = makeDetails({ answer: "Body" });
     const text = resultText(makeResult("Body", details), false, true);
     expect(text).not.toContain("artifact is partial");
+    expect(text).not.toContain("completeness: unverified");
   });
 });
 

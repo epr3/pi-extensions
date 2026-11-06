@@ -2,6 +2,12 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isAtOrAboveThreshold } from "./trigger.ts";
 import { CONTINUATION_CONTEXT, isInterruptedWork } from "./resume.ts";
 
+/** Report a compaction failure to the user, whichever way the request failed. */
+function notifyFailure(ctx: ExtensionContext, reason: unknown): void {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  ctx.ui.notify(`Automatic compaction failed: ${message}`, "error");
+}
+
 /**
  * Model-aware compaction Extension package.
  *
@@ -53,12 +59,13 @@ export default function (pi: ExtensionAPI): void {
         onError: (error) => {
           // Notify + release the guard; the next breached turn retries.
           settle();
-          ctx.ui.notify(`Automatic compaction failed: ${error.message}`, "error");
+          notifyFailure(ctx, error);
         },
       });
-    } catch {
+    } catch (error) {
       // The request never started, so it is not active: release the guard.
       settle();
+      notifyFailure(ctx, error);
     }
   });
 }

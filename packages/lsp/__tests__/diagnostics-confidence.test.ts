@@ -90,6 +90,90 @@ describe("lsp_diagnostics confidence", () => {
     expect(elapsed).toBeLessThan(2000); // resolved early, not by budget expiry
   });
 
+  it("reports current, correlated diagnostics after an earlier stale publish", async () => {
+    // The server publishes for the previous state first (stale version), then
+    // catches up with the opened document version inside the wait budget.
+    ws = startWorkspace({
+      publishMode: "stale-then-current",
+      publishDelayMs: 30,
+      diagnosticsDelayMs: 300,
+    });
+    const sample = ws.writeSample("function alpha() {}\n// FIXME alpha is broken\n");
+
+    const first = await ws.tool("lsp_diagnostics").run({ file: sample });
+    const firstDetails = detailsOf(ws, first);
+    expect(firstDetails.confidence).toBe("current");
+    expect(firstDetails.sinceVersion).toBe(1);
+    expect((firstDetails.diagnostics as unknown[]).length).toBe(1);
+
+    // Saved edit: the stale publish still carries the old error for version 1,
+    // so only the correlated version-2 publish may be reported as clean.
+    ws.writeSample("function alpha() {}\nfunction beta() {}\n");
+    const second = await ws.tool("lsp_diagnostics").run({ file: sample });
+    const secondDetails = detailsOf(ws, second);
+    expect(secondDetails.confidence).toBe("current");
+    expect(secondDetails.sinceVersion).toBe(2);
+    expect(secondDetails.diagnostics).toEqual([]);
+    expect(second.text).toBe("no diagnostics");
+  });
+
+  it("waits out the budget for a lagging server, then keeps its uncertainty", async () => {
+    const budget = 200;
+    ws = startWorkspace({
+      publishMode: "stale-only",
+      publishDelayMs: 10,
+      diagnosticsDelayMs: budget,
+    });
+    const sample = ws.writeSample("function alpha() {}\n// FIXME alpha is broken\n");
+    // First call opens the document at version 1; the lagging server answers
+    // for version 0, so even the open is uncertain.
+    const opened = await ws.tool("lsp_diagnostics").run({ file: sample });
+    expect(detailsOf(ws, opened).confidence).toBe("uncertain");
+
+    // Saved edit: the lagging server re-publishes the state it analyzed before
+    // (version 1, one error) and never reaches the current version 2.
+    ws.writeSample("function alpha() {}\n// FIXME alpha is broken\n// FIXME beta is broken\n");
+
+    const t0 = Date.now();
+    const result = await ws.tool("lsp_diagnostics").run({ file: sample });
+    const elapsed = Date.now() - t0;
+    const details = detailsOf(ws, result);
+
+    // An uncorrelated publish is not the answer: the wait runs to the budget
+    // and then reports the uncertainty, keeping the observed items.
+    expect(elapsed).toBeGreaterThanOrEqual(budget * 0.75);
+    expect(elapsed).toBeLessThan(budget + 2000);
+    expect(details.confidence).toBe("uncertain");
+    expect(details.sinceVersion).toBe(1);
+    const diags = details.diagnostics as Array<Record<string, unknown>>;
+    expect(diags).toHaveLength(1);
+    expect(String(diags[0]!.message)).toContain("FIXME alpha is broken");
+    expect(result.text).toContain("freshness could not be established");
+  });
+
+  it("gives up the wait as soon as a versionless server publishes", async () => {
+    // A server that never versions its publishes cannot be correlated, so the
+    // remaining budget must not be spent waiting for a result that cannot come.
+    const budget = 2000;
+    ws = startWorkspace({
+      publishMode: "unversioned",
+      publishDelayMs: 10,
+      diagnosticsDelayMs: budget,
+    });
+    const sample = ws.writeSample("function alpha() {}\n// FIXME alpha is broken\n");
+
+    const t0 = Date.now();
+    const result = await ws.tool("lsp_diagnostics").run({ file: sample });
+    const elapsed = Date.now() - t0;
+    const details = detailsOf(ws, result);
+
+    expect(elapsed).toBeLessThan(budget / 2);
+    expect(details.confidence).toBe("uncertain");
+    expect(details.sinceVersion).toBeNull();
+    expect((details.diagnostics as unknown[]).length).toBe(1);
+    expect(result.text).toContain("freshness could not be established");
+  });
+
   it("marks unversioned server responses uncertain, even when they report items", async () => {
     ws = startWorkspace({ publishMode: "unversioned", diagnosticsDelayMs: 300 });
     const sample = ws.writeSample("function alpha() {}\n// FIXME alpha is broken\n");

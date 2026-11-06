@@ -3,7 +3,13 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { createCatalog, resolveCycle, resolvePreset, findRepairTarget } from "./catalog.ts";
+import {
+  createCatalog,
+  findPresetIssue,
+  resolveCycle,
+  resolvePreset,
+  findRepairTarget,
+} from "./catalog.ts";
 import { activatePreset } from "./activate.ts";
 import type { ModelPresetCatalog } from "./catalog.ts";
 import { readFileSync } from "node:fs";
@@ -15,39 +21,60 @@ import path from "node:path";
 /**
  * Read the modelPresets settings from global and project settings files.
  * Global settings are read first, then project settings override.
+ *
+ * Unreadable or malformed files are skipped here; file-level diagnostics belong
+ * to settings loading. The catalog validator reports malformed catalog entries.
  */
-function readSettings(): Record<string, unknown> {
+export function readSettingsFiles(files: string[]): {
+  settings: Record<string, unknown>;
+  issues: string[];
+} {
   const merged: Record<string, unknown> = {};
-  const files = [
-    path.join(homedir(), ".pi", "agent", "settings.json"),
-    path.join(process.cwd(), ".pi", "settings.json"),
-  ];
+  const issues: string[] = [];
   for (const file of files) {
+    let text: string;
     try {
-      const content = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
-      const section = content["modelPresets"] as Record<string, unknown> | undefined;
-      if (section) {
-        Object.assign(merged, section);
-      }
-    } catch {
-      // File doesn't exist or isn't valid JSON — skip
+      text = readFileSync(file, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      issues.push(`Could not read settings file ${file}: ${(error as Error).message}`);
+      continue;
+    }
+    let content: unknown;
+    try {
+      content = JSON.parse(text);
+    } catch (error) {
+      issues.push(`Invalid JSON in settings file ${file}: ${(error as Error).message}`);
+      continue;
+    }
+    if (content === null || typeof content !== "object" || Array.isArray(content)) {
+      issues.push(`Settings file ${file} must contain a JSON object`);
+      continue;
+    }
+    const section = (content as Record<string, unknown>)["modelPresets"];
+    if (section && typeof section === "object" && !Array.isArray(section)) {
+      Object.assign(merged, section);
     }
   }
-  return merged;
+  return { settings: merged, issues };
 }
 
 /**
  * Build a catalog from settings files.
- * Returns an empty catalog when settings are absent.
+ * Returns an empty catalog when settings are absent. Raw settings shape is
+ * validated in `createCatalog`, which reports malformed entries instead of
+ * throwing or silently substituting values.
  */
 function readCatalog(): ModelPresetCatalog {
-  const settings = readSettings();
-  const cycle = Array.isArray(settings.cycle) ? (settings.cycle as string[]) : [];
-  const presets =
-    typeof settings.presets === "object" && settings.presets !== null
-      ? (settings.presets as Record<string, unknown>)
-      : {};
-  return createCatalog({ cycle, presets } as any);
+  const { settings, issues } = readSettingsFiles([
+    path.join(homedir(), ".pi", "agent", "settings.json"),
+    path.join(process.cwd(), ".pi", "settings.json"),
+  ]);
+  const catalog = createCatalog(settings);
+  return {
+    ...catalog,
+    invalid: [...issues.map((message) => ({ message })), ...catalog.invalid],
+  };
 }
 
 // ─── Extension factory ───────────────────────────────────────────────────────
@@ -59,9 +86,11 @@ function readCatalog(): ModelPresetCatalog {
  * - `/model-preset` command with argument-based and selector-based activation
  * - `Ctrl+Shift+M` shortcut to cycle through presets
  * - `model_select` event listener to repair thinking level on catalog matches
+ * - `session_start` listener that reports malformed catalog entries once
  */
 export default function (pi: ExtensionAPI, catalog?: ModelPresetCatalog): void {
   const cat = catalog ?? readCatalog();
+  let lastCycledPresetName: string | undefined;
 
   // ── /model-preset command ──────────────────────────────────────────────────
 
@@ -73,10 +102,11 @@ export default function (pi: ExtensionAPI, catalog?: ModelPresetCatalog): void {
       if (trimmed) {
         // Direct activation by name
         const preset = resolvePreset(cat, trimmed);
-        if (!preset) {
+        if (!preset && !findPresetIssue(cat, trimmed)) {
           ctx.ui.notify(`Unknown preset "${trimmed}"`, "error");
           return;
         }
+        // activatePreset reports the catalog issue for a malformed preset.
         await doActivate(cat, trimmed, pi, ctx);
       } else {
         // Open selector
@@ -113,35 +143,65 @@ export default function (pi: ExtensionAPI, catalog?: ModelPresetCatalog): void {
         ctx.ui.notify(`Preset "${missing}" in cycle but not in catalog`, "warning");
       }
 
+      // Warn about malformed cycle entries with their repair instructions
+      for (const invalidName of cycleResult.invalid) {
+        const issue = findPresetIssue(cat, invalidName);
+        if (issue) ctx.ui.notify(issue.message, "warning");
+      }
+
       if (cycleResult.entries.length === 0) {
         ctx.ui.notify("No model presets configured", "warning");
         return;
       }
 
-      // Find current position based on active model
-      const currentModel = ctx.model;
-      let currentIndex = -1;
-      if (currentModel) {
-        currentIndex = cycleResult.entries.findIndex(
-          (p) => p.provider === currentModel!.provider && p.model === currentModel!.id,
-        );
+      // Use the last preset selected by this shortcut when available. A duplicate
+      // model cannot identify its active thinking preset from ctx.model alone.
+      let currentIndex = lastCycledPresetName
+        ? cycleResult.entries.findIndex((preset) => preset.name === lastCycledPresetName)
+        : -1;
+
+      // On the first cycle after a raw model selection, only an unambiguous
+      // repair target can identify the current preset. Ambiguous matches start
+      // at the first cycle entry.
+      if (currentIndex === -1 && ctx.model) {
+        const repairTarget = findRepairTarget(cat, ctx.model.provider, ctx.model.id);
+        if (repairTarget) {
+          currentIndex = cycleResult.entries.findIndex(
+            (preset) => preset.name === repairTarget.name,
+          );
+        }
       }
 
-      // Cycle to next
       const nextIndex = (currentIndex + 1) % cycleResult.entries.length;
       const nextPreset = cycleResult.entries[nextIndex];
 
       await doActivate(cat, nextPreset.name, pi, ctx);
+      lastCycledPresetName = nextPreset.name;
     },
+  });
+
+  // ── session_start event: report malformed catalog entries once ────────────
+
+  pi.on("session_start", (_event, ctx: ExtensionContext) => {
+    for (const issue of cat.invalid) {
+      ctx.ui.notify(issue.message, "warning");
+    }
   });
 
   // ── model_select event: repair thinking on catalog match ──────────────────
 
   pi.on("model_select", async (event: ModelSelectEvent, ctx: ExtensionContext) => {
     const target = findRepairTarget(cat, event.model.provider, event.model.id);
-    if (!target) return; // no match — leave raw
+    if (!target) {
+      lastCycledPresetName = undefined;
+      // No unambiguous preset describes this selection: leave thinking untouched
+      // but drop any label that no longer matches the active model.
+      ctx.ui.setStatus("model-presets", undefined);
+      return;
+    }
 
     // Reapply the preset's thinking level
+    lastCycledPresetName = target.name;
     pi.setThinkingLevel(target.thinkingLevel);
 
     const effectiveLevel = pi.getThinkingLevel();

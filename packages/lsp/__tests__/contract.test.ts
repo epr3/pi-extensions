@@ -172,6 +172,48 @@ describe("semantic navigation preference guidance", () => {
   });
 });
 
+describe("diagnostics confidence guidance", () => {
+  const diagnosticsGuidance = async (): Promise<string> => {
+    const tools = await registerLsp();
+    const diagnostics = tools.find((t) => t.name === "lsp_diagnostics");
+    expect(diagnostics).toBeDefined();
+    return guidanceOf(diagnostics!);
+  };
+
+  it("names the confidence states a diagnostics result can carry", async () => {
+    const guidance = (await diagnosticsGuidance()).toLowerCase();
+    expect(/confidence/.test(guidance)).toBe(true);
+    expect(/current/.test(guidance)).toBe(true);
+    expect(/pending/.test(guidance)).toBe(true);
+    expect(/uncertain/.test(guidance)).toBe(true);
+  });
+
+  it("claims conclusiveness only for current diagnostics", async () => {
+    const guidance = await diagnosticsGuidance();
+    expect(
+      /only[^.]{0,80}current[^.]{0,80}(conclusive|authoritative|trustworthy)/i.test(guidance),
+    ).toBe(true);
+  });
+
+  it("does not present every diagnostics result as ground truth", async () => {
+    const guidance = await diagnosticsGuidance();
+    expect(/ground[- ]truth/i.test(guidance)).toBe(false);
+  });
+
+  it("says pending and uncertain results do not prove the file is clean", async () => {
+    const guidance = await diagnosticsGuidance();
+    const sentences = guidance.split(/(?<=[.!?])\s+/);
+    const hedged = sentences.filter((s) => /pending|uncertain/i.test(s));
+    expect(hedged.length).toBeGreaterThan(0);
+    expect(hedged.some((s) => /\b(not|never|no)\b/i.test(s) && /clean/i.test(s))).toBe(true);
+  });
+
+  it("tells the model to re-check unchanged-or-saved state rather than assume currency", async () => {
+    const guidance = (await diagnosticsGuidance()).toLowerCase();
+    expect(/re-?run|re-?check|again/.test(guidance)).toBe(true);
+  });
+});
+
 describe("workspace symbol query guidance (routing file wording)", () => {
   it("lsp_workspace_symbols description and `file` parameter call out the routing-file role", async () => {
     const tools = await registerLsp();

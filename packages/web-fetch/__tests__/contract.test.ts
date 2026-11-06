@@ -350,6 +350,49 @@ const abortOnSignalFetch: typeof globalThis.fetch = async (_url, init) => {
   });
 };
 
+/**
+ * Fetch mock whose headers arrive immediately but whose body never produces a
+ * chunk. Reports how often the body stream was cancelled so cleanup is
+ * observable. `honorSignal: false` models a transport that ignores the request
+ * signal, so the deadline must not depend on the stream reacting to it.
+ */
+function makeStalledBodyFetch(opts: { honorSignal?: boolean } = {}): {
+  fetchFn: typeof globalThis.fetch;
+  cancels: () => number;
+} {
+  let cancelCount = 0;
+  const fetchFn: typeof globalThis.fetch = async (_url, init) => {
+    const signal =
+      opts.honorSignal === false ? undefined : (init as RequestInit | undefined)?.signal;
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {
+        get: () => "text/plain",
+        has: () => false,
+      } as unknown as Headers,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal?.addEventListener(
+            "abort",
+            () => controller.error(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        },
+        pull() {
+          return new Promise<void>(() => {});
+        },
+        cancel() {
+          cancelCount += 1;
+        },
+      }),
+      text: async () => new Promise<string>(() => {}),
+    } as unknown as Response;
+  };
+  return { fetchFn, cancels: () => cancelCount };
+}
+
 function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {
@@ -382,18 +425,60 @@ const SAMPLE_PDF =
   "5 0 obj<</Length 44>>stream\nBT /F1 12 Tf 72 700 Td (Hello PDF world) Tj ET\n" +
   "endstream\nendobj\nxref\n0 6\ntrailer<</Size 6/Root 1 0 R>>\nstartxref\n349\n%%EOF";
 
+/**
+ * Build a synthetic text PDF with `pageCount` distinguishable pages, so tests
+ * can prove whether text beyond any given page survived extraction.
+ */
+function buildTextPdf(pageCount: number): string {
+  const kids = Array.from({ length: pageCount }, (_, i) => `${i + 3} 0 R`).join(" ");
+  const objects: string[] = [
+    "%PDF-1.4",
+    "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj",
+    `2 0 obj<</Type/Pages/Kids[${kids}]/Count ${pageCount}>>endobj`,
+  ];
+  for (let i = 0; i < pageCount; i++) {
+    objects.push(`${i + 3} 0 obj<</Type/Page/Parent 2 0 R>>endobj`);
+  }
+  const text = Array.from(
+    { length: pageCount },
+    (_, i) => `BT /F1 12 Tf 72 700 Td (Page ${i + 1} marker) Tj ET`,
+  ).join("\n");
+  objects.push(`${pageCount + 3} 0 obj<</Length 0>>stream\n${text}\nendstream\nendobj`);
+  objects.push("trailer<</Root 1 0 R>>\n%%EOF");
+  return objects.join("\n");
+}
+
+/**
+ * A PDF whose page tree lives in a compressed object stream: plaintext scanning
+ * cannot see the page objects even though the text objects are readable.
+ */
+const COMPRESSED_PAGE_TREE_PDF =
+  "%PDF-1.5\n" +
+  "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" +
+  "2 0 obj<</Type/ObjStm/N 2/Filter/FlateDecode>>stream\n" +
+  "\u0000\u0001\u0002 compressed page tree data\n" +
+  "BT /F1 12 Tf 72 700 Td (Compressed page text) Tj ET\n" +
+  "endstream\nendobj\n" +
+  "trailer<</Root 1 0 R>>\n%%EOF";
+
 const customPdfExtract: PdfExtractFn = (_body, _url) => ({
   text: "Custom extracted text",
   pageCount: 3,
 });
 
-const truncatingPdf: PdfExtractFn = () => ({
-  text: "Only the beginning",
-  pageCount: 120,
-  truncated: true,
+const verifiedPdfExtract: PdfExtractFn = () => ({
+  text: "Verified extracted text",
+  pageCount: 12,
+  complete: true,
 });
 
-const emptyPdf: PdfExtractFn = () => ({ text: "", pageCount: 0 });
+const partialPdfExtract: PdfExtractFn = () => ({
+  text: "Only the beginning",
+  pageCount: 120,
+  complete: false,
+});
+
+const emptyPdf: PdfExtractFn = () => ({ text: "" });
 
 // ─── Storage helpers ─────────────────────────────────────────────────────────
 
@@ -467,6 +552,15 @@ describe("web_fetch tool metadata", () => {
     for (const g of api.tool.promptGuidelines ?? []) {
       expect(g).not.toMatch(/Jina/i);
     }
+  });
+
+  it("does not claim an enforced PDF page limit or a verified page count", () => {
+    const api = makeFakeApi();
+    const texts = [api.tool.description ?? "", ...(api.tool.promptGuidelines ?? [])];
+    for (const text of texts) {
+      expect(text).not.toMatch(/50 pages|limited to first|truncation notice/i);
+    }
+    expect(texts.join("\n")).toMatch(/unknown/i);
   });
 
   it("prompt guidelines mention web_search, llms.txt, and refetching", () => {
@@ -582,11 +676,11 @@ describe("content-type helpers", () => {
 // ─── PDF extraction ──────────────────────────────────────────────────────────
 
 describe("extractPdfContent", () => {
-  it("extracts text from a simple PDF and reports its page count", () => {
+  it("extracts the text without claiming a page count it cannot verify", () => {
     const result = extractPdfContent(SAMPLE_PDF, "https://example.com/doc.pdf");
     expect(result.text).toContain("Hello PDF world");
-    expect(result.pageCount).toBe(1);
-    expect(result.truncated).toBe(false);
+    expect(result.pageCount).toBeUndefined();
+    expect(result.complete).toBeUndefined();
   });
 
   it("uses the injected extractPdfFn when supplied", () => {
@@ -595,27 +689,41 @@ describe("extractPdfContent", () => {
     });
     expect(result.text).toBe("Custom extracted text");
     expect(result.pageCount).toBe(3);
+    expect(result.complete).toBeUndefined();
   });
 
-  it("returns empty text and zero pages for non-PDF content", () => {
+  it("reports page count and completeness when the extractor declares them", () => {
+    const result = extractPdfContent("%PDF-dummy", "https://example.com/doc.pdf", {
+      extractPdfFn: verifiedPdfExtract,
+    });
+    expect(result.pageCount).toBe(12);
+    expect(result.complete).toBe(true);
+  });
+
+  it("returns empty text for non-PDF content", () => {
     expect(extractPdfContent("", "https://example.com/empty.pdf").text).toBe("");
     expect(extractPdfContent("Not a PDF", "https://example.com/not.pdf").text).toBe("");
   });
 
-  it("marks the result truncated when the page count exceeds the limit", () => {
-    const pdfHeader = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n";
-    const pages = Array.from(
-      { length: 10 },
-      (_, i) => `${i + 2} 0 obj<</Type/Page/Parent 1 0 R>>endobj`,
-    ).join("\n");
+  it("extracts text beyond page 50 without a truncation claim", () => {
+    const result = extractPdfContent(buildTextPdf(60), "https://example.com/long.pdf");
+    expect(result.text).toContain("Page 1 marker");
+    expect(result.text).toContain("Page 51 marker");
+    expect(result.text).toContain("Page 60 marker");
+    expect(result.text).not.toMatch(/truncated/i);
+    expect(result.text).not.toContain("limited to");
+    expect(result.pageCount).toBeUndefined();
+    expect(result.complete).toBeUndefined();
+  });
+
+  it("leaves the page count unknown when page objects are not readable in plaintext", () => {
     const result = extractPdfContent(
-      pdfHeader + pages + "\n/Type /Page\n".repeat(10) + "\ntrailer<</Size 12/Root 1 0 R>>\n%%EOF",
-      "https://example.com/multi.pdf",
-      { pageLimit: 3 },
+      COMPRESSED_PAGE_TREE_PDF,
+      "https://example.com/compressed.pdf",
     );
-    expect(result.pageCount).toBe(10);
-    expect(result.truncated).toBe(true);
-    expect(result.text).toContain("PDF truncated");
+    expect(result.text).toContain("Compressed page text");
+    expect(result.pageCount).toBeUndefined();
+    expect(result.complete).toBeUndefined();
   });
 });
 
@@ -836,6 +944,70 @@ describe("fetchUrl (mocked fetch)", () => {
     );
   });
 
+  it("times out when the body stalls after headers, even if the transport ignores the signal", async () => {
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    const opts: FetchOptions = { fetchFn: stalled.fetchFn, fetchTimeoutMs: 50 };
+    await expect(fetchUrl(validateUrl("https://example.com/stalled"), opts)).rejects.toThrowError(
+      /timed out after 50ms/,
+    );
+    expect(stalled.cancels()).toBe(1);
+  });
+
+  it("keeps the 30-second default deadline through the body", async () => {
+    vi.useFakeTimers();
+    try {
+      const stalled = makeStalledBodyFetch({ honorSignal: false });
+      const pending = fetchUrl(validateUrl("https://example.com/stalled"), {
+        fetchFn: stalled.fetchFn,
+      });
+      const settled = pending.catch((err: Error) => err);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(stalled.cancels()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      const err = await settled;
+      expect(err).toBeInstanceOf(WebFetchError);
+      expect(err.message).toMatch(/timed out after 30000ms/);
+      expect(stalled.cancels()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports caller cancellation during the body as a cancellation, not a timeout", async () => {
+    const controller = new AbortController();
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    const pending = fetchUrl(validateUrl("https://example.com/stalled"), {
+      fetchFn: stalled.fetchFn,
+      fetchTimeoutMs: 10_000,
+      signal: controller.signal,
+    });
+    const settled = pending.catch((err: Error) => err);
+    await new Promise((r) => setTimeout(r, 10));
+    controller.abort();
+    const err = await settled;
+    expect(err.message).toMatch(/cancel/i);
+    expect(err.message).not.toMatch(/timed out/);
+    expect(stalled.cancels()).toBe(1);
+  });
+
+  it("releases the body when a post-header check fails", async () => {
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    const fetchFn: typeof globalThis.fetch = async () => {
+      const response = await stalled.fetchFn("https://example.com");
+      return {
+        ...response,
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+      } as Response;
+    };
+    const opts: FetchOptions = { fetchFn, fetchTimeoutMs: 10_000 };
+    await expect(fetchUrl(validateUrl("https://example.com/err"), opts)).rejects.toThrowError(
+      /HTTP 500/,
+    );
+    expect(stalled.cancels()).toBe(1);
+  });
+
   it("streams body bytes to a sink instead of accumulating them", async () => {
     const mockFetch = makeFetchMock(
       mockResponse("streamed body text", 200, { "content-type": "text/plain" }),
@@ -904,7 +1076,7 @@ describe("web_fetch tool — successful calls", () => {
     expect(text).toContain("Answer:");
     expect(details.source).toBe("html");
     expect(details.artifactPath.startsWith("/")).toBe(true);
-    expect(details.artifactComplete).toBe(true);
+    expect(details.artifactCompleteness).toBe("complete");
     expect(details.artifactPath.endsWith(".md")).toBe(true);
     expect(details.answer).toBe("Mock extraction answer");
     expect(result.usage).toEqual(makeUsage());
@@ -962,7 +1134,7 @@ describe("web_fetch tool — successful calls", () => {
     expect(evidence).toContain("| web\\_fetch |");
     expect(evidence).toContain("```js");
     expect(details.answer).toBe("Mock extraction answer");
-    expect(details.artifactComplete).toBe(true);
+    expect(details.artifactCompleteness).toBe("complete");
     expect(details.modelInputTruncated).toBe(false);
   });
 
@@ -1043,7 +1215,7 @@ describe("web_fetch tool — successful calls", () => {
     expect(await readFile(details.artifactPath, "utf8")).toBe("hello\nworld");
   });
 
-  it("fetching a PDF creates an artifact and reports page count", async () => {
+  it("fetching a PDF creates an artifact with the extracted source", async () => {
     const api = makeFakeApi();
     configureTestRuntime({
       extractionModelSettings: { provider: "test-provider", model: "test-model" },
@@ -1064,21 +1236,82 @@ describe("web_fetch tool — successful calls", () => {
     expect(text).toContain("Pages: 3");
     expect(details.source).toBe("pdf");
     expect(details.pageCount).toBe(3);
-    expect(details.truncated).toBe(false);
-    expect(details.artifactComplete).toBe(true);
+    // Declaring a page count says nothing about completeness.
+    expect(details.artifactCompleteness).toBe("unknown");
     expect(details.answer).toBe("Mock extraction answer");
     expect(await readFile(details.artifactPath, "utf8")).toContain("Custom extracted text");
   });
 
-  it("marks a truncated PDF artifact as partial in content and details", async () => {
+  it("reports a verified page count and a complete artifact when the extractor declares them", async () => {
     const api = makeFakeApi();
     configureTestRuntime({
       extractionModelSettings: { provider: "test-provider", model: "test-model" },
       fetchFn: makeFetchMock(
         mockResponse("%PDF-dummy", 200, { "content-type": "application/pdf" }),
       ),
-      extractPdfFn: truncatingPdf,
-      pdfPageLimit: 50,
+      extractPdfFn: verifiedPdfExtract,
+    });
+
+    const result = await api.tool.execute(
+      "c3",
+      { url: "https://example.com/doc.pdf", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1"),
+    );
+    const text = (result.content[0] as { type: "text"; text: string }).text;
+    const details = result.details as WebFetchDetails;
+
+    expect(text).toContain("Pages: 12");
+    expect(text).not.toContain("unverified");
+    expect(details.source).toBe("pdf");
+    expect(details.pageCount).toBe(12);
+    expect(details.artifactCompleteness).toBe("complete");
+    expect(details.answer).toBe("Mock extraction answer");
+    expect(await readFile(details.artifactPath, "utf8")).toContain("Verified extracted text");
+  });
+
+  it("reports an unverified PDF page count and completeness, not a page limit", async () => {
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(
+        mockResponse(buildTextPdf(60), 200, { "content-type": "application/pdf" }),
+      ),
+    });
+
+    const result = await api.tool.execute(
+      "c3",
+      { url: "https://example.com/long.pdf", prompt: "Summarize" },
+      undefined,
+      undefined,
+      makeCtx("sess-1"),
+    );
+    const text = (result.content[0] as { type: "text"; text: string }).text;
+    const details = result.details as WebFetchDetails;
+
+    expect(text).toContain("Pages: unknown");
+    expect(text).toContain("completeness is unverified");
+    expect(text).not.toMatch(/50 pages|page limit|limited to/i);
+    expect(details.pageCount).toBeUndefined();
+    expect(details.artifactCompleteness).toBe("unknown");
+    expect(details.modelInputTruncated).toBe(false);
+
+    // Completeness is unknown, but the artifact really does hold every page.
+    const artifactText = await readFile(details.artifactPath, "utf8");
+    expect(artifactText).toContain("Page 51 marker");
+    expect(artifactText).toContain("Page 60 marker");
+    expect(artifactText).not.toMatch(/truncated/i);
+  });
+
+  it("reports a known-partial PDF artifact without a page-limit claim", async () => {
+    const api = makeFakeApi();
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: makeFetchMock(
+        mockResponse("%PDF-dummy", 200, { "content-type": "application/pdf" }),
+      ),
+      extractPdfFn: partialPdfExtract,
     });
 
     const result = await api.tool.execute(
@@ -1091,11 +1324,12 @@ describe("web_fetch tool — successful calls", () => {
     const text = (result.content[0] as { type: "text"; text: string }).text;
     const details = result.details as WebFetchDetails;
 
-    expect(text).toContain("Pages: 120 (extraction limited to first 50 pages)");
+    expect(text).toContain("Pages: 120");
     expect(text).toContain("Warning: artifact is partial");
-    expect(details.truncated).toBe(true);
-    expect(details.artifactComplete).toBe(false);
-    expect(details.answer).toBe("Mock extraction answer");
+    expect(text).not.toMatch(/50 pages|page limit|limited to/i);
+    expect(details.pageCount).toBe(120);
+    expect(details.artifactCompleteness).toBe("partial");
+    expect(details.modelInputTruncated).toBe(false);
   });
 
   it("succeeds for a meaningful short page, with only a warning", async () => {
@@ -1119,7 +1353,7 @@ describe("web_fetch tool — successful calls", () => {
     const details = result.details as WebFetchDetails;
 
     expect(details.extractionWarning).toBeDefined();
-    expect(details.artifactComplete).toBe(true);
+    expect(details.artifactCompleteness).toBe("complete");
     expect(details.answer).toBe("Mock extraction answer");
     expect(await readFile(details.artifactPath, "utf8")).toContain("Hi there");
   });
@@ -1408,7 +1642,7 @@ describe("web_fetch tool — AI extraction contract", () => {
     expect(context.messages[0].content[0].text).not.toContain("END-OF-SOURCE");
     // The tool reports the partial-input warning and keeps artifactComplete true.
     expect(details.modelInputTruncated).toBe(true);
-    expect(details.artifactComplete).toBe(true);
+    expect(details.artifactCompleteness).toBe("complete");
   });
 
   it("retains a completed artifact and reports it when the model fails after conversion", async () => {
@@ -1967,6 +2201,27 @@ describe("web_fetch tool — failures never publish artifacts", () => {
     }
   });
 
+  it("a stalled response body fails with a timeout and leaves no files", async () => {
+    const api = makeFakeApi();
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: stalled.fetchFn,
+      fetchTimeoutMs: 50,
+    });
+
+    await expect(
+      api.tool.execute(
+        "stall",
+        { url: "https://example.com/stalled", prompt: "Summarize" },
+        undefined,
+        undefined,
+        makeCtx("sess-1"),
+      ),
+    ).rejects.toThrowError(/timed out after 50ms/);
+    expect(await listFiles(storageRoot)).toEqual([]);
+  });
+
   it("rejects an oversized declared length and cleans up the download", async () => {
     const api = makeFakeApi();
     configureTestRuntime({
@@ -2105,7 +2360,7 @@ describe("web_fetch tool — ownership records", () => {
     expect(record.sessionId).toBe("sess-1");
     expect(record.pid).toBe(process.pid);
     expect(record.artifacts).toEqual([
-      expect.objectContaining({ path: artifactPath, complete: true }),
+      expect.objectContaining({ path: artifactPath, artifactCompleteness: "complete" }),
     ]);
     // The raw download is gone; only the artifact and record remain.
     expect(files.filter((f) => f.endsWith(".download"))).toEqual([]);
@@ -2255,6 +2510,35 @@ describe("web_fetch tool — session lifecycle", () => {
 // ─── Cancellation and pending-work ownership ─────────────────────────────────
 
 describe("web_fetch tool — cancellation and pending work", () => {
+  it("reports caller cancellation during a stalled body as a cancellation, not a timeout", async () => {
+    const api = makeFakeApi();
+    const stalled = makeStalledBodyFetch({ honorSignal: false });
+    configureTestRuntime({
+      extractionModelSettings: { provider: "test-provider", model: "test-model" },
+      fetchFn: stalled.fetchFn,
+      fetchTimeoutMs: 10_000,
+    });
+    const controller = new AbortController();
+    const pending = api.tool
+      .execute(
+        "c1",
+        { url: "https://example.com/stalled", prompt: "Summarize" },
+        controller.signal,
+        undefined,
+        makeCtx("sess-1"),
+      )
+      .catch((err: Error) => err);
+
+    await new Promise((r) => setTimeout(r, 10));
+    controller.abort();
+    const err = await pending;
+    expect(err).toBeInstanceOf(WebFetchError);
+    expect(err.message).toMatch(/cancel/i);
+    expect(err.message).not.toMatch(/timed out/);
+    expect(stalled.cancels()).toBe(1);
+    expect(await listFiles(storageRoot)).toEqual([]);
+  });
+
   it("cancels a pending download and removes the incomplete file", async () => {
     const api = makeFakeApi();
     const gate = deferred<void>();
@@ -2417,7 +2701,7 @@ describe("ArtifactStore internal — finalized artifact retention", () => {
     call.artifactPath = artifactPath;
     await run.registerDownload(join(run.tmpDir, `${call.baseName}.download`));
     await writeFile(artifactPath, "finalized source");
-    await store.settleArtifact(call, "markdown", true);
+    await store.settleArtifact(call, "markdown", "complete");
 
     // A late failure (e.g. releaseDownload throwing) must not remove the finalized artifact.
     await store.failCall(call);
@@ -2659,7 +2943,7 @@ describe("web_fetch tool — crash/abandoned-run cleanup", () => {
     const rogueRun = join(rogueSession, "rogue-run");
     await mkdir(rogueRun, { recursive: true });
     const record = makeOwnerRecord({ sessionId: "rogue-session", runId: "rogue-run", pid: 99999 });
-    record.artifacts.push({ path: outsideFile, kind: "text", complete: true });
+    record.artifacts.push({ path: outsideFile, kind: "text", artifactCompleteness: "complete" });
     await writeOwnerRecord(join(rogueRun, "owner.json"), record);
 
     const store = new ArtifactStore(storageRoot, liveness);
@@ -2774,10 +3058,10 @@ describe("WebFetchDetails shape", () => {
       contentLength: 1234,
       source: "html",
       artifactPath: "/tmp/pi-web-fetch/sess/run/a.md",
-      artifactComplete: true,
+      artifactCompleteness: "complete",
     };
     expect(d.artifactPath.startsWith("/")).toBe(true);
-    expect(d.artifactComplete).toBe(true);
+    expect(d.artifactCompleteness).toBe("complete");
     expect(d.source).toBe("html");
   });
 });

@@ -306,11 +306,17 @@ parent-facing operation, never a per-row control:
 - **Running runs are aborted.** Assistant text captured before the stop is returned as
   clearly marked incomplete partial output; if none was captured, the response explicitly
   says no partial output is available instead of staying ambiguous. Partial text is
-  bounded by the same shared [20,000-byte limit](#bounded-result-text).
+  bounded by the same shared [20,000-byte limit](#bounded-result-text). Pi ends an
+  aborted run by resolving the prompt with a terminal assistant message whose stop reason
+  is `aborted` (it does not reject), so the runner reads that terminal message: a stopped
+  run is reported stopped, never as a completed result carrying the cut-short turn.
 - **Already-terminal runs answer, not change.** A stop on a completed, failed, or
-  already-stopped run reports why the stop did not apply — `already completed before the
-stop request`, `already failed with: …`, `was already stopped` — and leaves the outcome
-  exactly as it was. An unknown id is an actionable error — nothing is stopped.
+  already-stopped run reports why the stop did not apply — `had already reached its
+completed outcome before the stop could be applied`, `had already failed before the
+stop could be applied, with: …`, `had already been stopped` — and leaves the outcome
+  exactly as it was. The response never claims whether that terminal event preceded the
+  stop request or landed while the stop was applied, because a stop cannot observe it.
+  An unknown id is an actionable error — nothing is stopped.
 - **First terminal outcome wins.** A stop racing the run's own completion or failure
   resolves to whichever terminal event landed first; later candidates are ignored, so
   there is exactly one terminal status per run.
@@ -484,6 +490,12 @@ background completions, and failed/stopped partial output — one shared limit.
 - When text is truncated, the result ends with a truncation report stating the original
   and retained byte counts. Run status, failure reasons, and that report sit **outside**
   the limit and are never truncated.
+- Partial output from a stopped or failed run is bounded **as the run proceeds**: the
+  capture retains only the leading prefix and keeps counting, so a long stream does not
+  accumulate without limit there, and a character split across two stream deltas is
+  still retained whole and counted once. This is not a bound on total child-session
+  memory — the child session keeps its own message history, and the streaming UI still
+  receives every delta.
 - This deliberately changes previous behavior: foreground `Agent` results used to be
   unbounded.
 - There is **no dedicated recovery mechanism** for omitted text — it is not retrievable

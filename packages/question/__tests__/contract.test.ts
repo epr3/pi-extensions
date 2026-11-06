@@ -42,16 +42,20 @@ function noUICtx(): ExtensionContext {
  * Captured editor calls (title + initial) are recorded in `capturedEditorCalls`.
  * The active bounded dialog's rendered lines are available via `renderWidgetLines`,
  * so tests can inspect focus and checkbox state after each redraw.
+ * Live terminal handlers are tracked as a subscription set (like Pi's real
+ * listener list) so a handler that fails to unsubscribe keeps receiving keys.
  */
 function scriptedCtx(responses: { select?: string; editor?: string }[]): {
   ctx: ExtensionContext;
   sendKey: (data: string) => void;
   capturedEditorCalls: { title: string; initial: string }[];
   renderWidgetLines: (width: number) => string[];
+  inputHandlerCount: () => number;
+  hasWidget: () => boolean;
 } {
   const queue = [...responses];
   const capturedEditorCalls: { title: string; initial: string }[] = [];
-  let inputHandler: ((data: string) => void) | undefined;
+  const inputHandlers = new Set<(data: string) => { consume?: boolean } | undefined>();
   let widgetRender: (() => Component) | undefined;
   const ui = {
     select: async () => queue.shift()?.select,
@@ -60,9 +64,9 @@ function scriptedCtx(responses: { select?: string; editor?: string }[]): {
       return queue.shift()?.editor;
     },
     onTerminalInput: (handler: (data: string) => { consume?: boolean }) => {
-      inputHandler = handler;
+      inputHandlers.add(handler);
       return () => {
-        inputHandler = undefined;
+        inputHandlers.delete(handler);
       };
     },
     setWidget: (_id: string, render: (() => Component) | undefined) => {
@@ -71,12 +75,16 @@ function scriptedCtx(responses: { select?: string; editor?: string }[]): {
   } as unknown as ExtensionUIContext;
   return {
     ctx: { hasUI: true, ui } as ExtensionContext,
-    sendKey: (data: string) => inputHandler?.(data),
+    sendKey: (data: string) => {
+      for (const handler of inputHandlers) handler(data);
+    },
     capturedEditorCalls,
     renderWidgetLines: (width: number) => {
       const dialog = widgetRender?.();
       return dialog ? dialog.render(width) : [];
     },
+    inputHandlerCount: () => inputHandlers.size,
+    hasWidget: () => widgetRender !== undefined,
   };
 }
 
@@ -283,6 +291,40 @@ describe("question tool contract", () => {
     // Should be significantly shorter than the unbounded question text
     const suffix = ": Type your answer";
     expect(editorTitle).toBe("Size" + suffix);
+  });
+
+  it("free-prose editor title bounds an oversized header", async () => {
+    const tool = registerQuestion();
+    const ENTER = "\r";
+    const DOWN = "\x1b[B";
+    const { ctx, sendKey, capturedEditorCalls } = scriptedCtx([{ editor: "  custom text  " }]);
+    const resultPromise = tool.execute(
+      "tc",
+      {
+        question: "Right size?",
+        header:
+          "An extremely long supplied header that keeps going and going well past any reasonable display budget",
+        options: [{ label: "Yes" }, { label: "No" }],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+    // Navigate to the free-text option (last of 3 items) and confirm
+    sendKey(DOWN);
+    sendKey(DOWN);
+    sendKey(ENTER);
+    await resultPromise;
+
+    expect(capturedEditorCalls).toHaveLength(1);
+    const editorTitle = capturedEditorCalls[0]!.title;
+    const suffix = ": Type your answer";
+    expect(editorTitle).toContain(suffix);
+    const boundedPortion = editorTitle.slice(0, -suffix.length);
+    // A supplied header is still header text, not an exemption from the cap.
+    expect(boundedPortion.length).toBeLessThanOrEqual(60);
+    expect(boundedPortion).toMatch(/…$/);
+    expect(editorTitle).not.toContain("well past any reasonable display budget");
   });
 
   it("free-prose editor title caps the question when no header is given", async () => {
@@ -495,5 +537,218 @@ describe("question tool contract", () => {
     expect(details.interaction).toBe("freeProse");
     expect(details.selectedLabels).toEqual([]);
     expect(details.freeText).toBe("my own");
+  });
+});
+
+// Cancellation is deliberate: only Done confirms a multi-select interaction.
+// Escape discards whatever was collected, and Pi-level abort cleans up the
+// widget and terminal handler so later interaction still works.
+const settle = () => new Promise((r) => setTimeout(r, 5));
+
+describe("question cancellation", () => {
+  const ENTER = "\r";
+  const ESCAPE = "\x1b";
+  const DOWN = "\x1b[B";
+
+  it("single-select Escape returns no selection and clears the widget and terminal handler", async () => {
+    const tool = registerQuestion();
+    const { ctx, sendKey, hasWidget, inputHandlerCount } = scriptedCtx([]);
+    const resultPromise = tool.execute(
+      "tc",
+      { question: "Pick one", options: [{ label: "A" }, { label: "B" }] },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(hasWidget()).toBe(true);
+    sendKey(ESCAPE);
+    const result = await resultPromise;
+
+    const details = result.details as { interaction: string; selectedLabels: string[] };
+    expect(details.interaction).toBe("none");
+    expect(details.selectedLabels).toEqual([]);
+    expect(result.content[0]?.text).toBe("No selection");
+    expect(hasWidget()).toBe(false);
+    expect(inputHandlerCount()).toBe(0);
+  });
+
+  it("multi-select Escape discards partial selections instead of confirming them", async () => {
+    const tool = registerQuestion();
+    const { ctx, sendKey, hasWidget, inputHandlerCount } = scriptedCtx([]);
+    const resultPromise = tool.execute(
+      "tc",
+      {
+        question: "Pick any",
+        multiSelect: true,
+        options: [{ label: "A" }, { label: "B" }, { label: "C" }],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    // Dialog 1: ○ A, ○ B, ○ C, ✎ Type..., ✓ Done. Choose A.
+    sendKey(ENTER);
+    await settle();
+
+    // Dialog 2 shows ✓ A. Escape now, before Done, discards that choice.
+    sendKey(ESCAPE);
+    const result = await resultPromise;
+
+    const details = result.details as { interaction: string; selectedLabels: string[] };
+    expect(details.interaction).toBe("none");
+    expect(details.selectedLabels).toEqual([]);
+    expect(result.content[0]?.text).not.toContain("Selected: A");
+    expect(hasWidget()).toBe(false);
+    expect(inputHandlerCount()).toBe(0);
+  });
+
+  it("multi-select Escape after a Free prose answer discards the text and any selections", async () => {
+    const tool = registerQuestion();
+    const { ctx, sendKey, hasWidget, inputHandlerCount } = scriptedCtx([{ editor: "my own" }]);
+    const resultPromise = tool.execute(
+      "tc",
+      {
+        question: "Pick any",
+        multiSelect: true,
+        options: [{ label: "A" }, { label: "B" }],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    // Dialog 1: choose A, then the Free prose row.
+    sendKey(ENTER);
+    await settle();
+    sendKey(DOWN);
+    sendKey(DOWN);
+    sendKey(ENTER);
+    await settle();
+
+    // Dialog 2 focuses Done; Escape discards the whole interaction.
+    sendKey(ESCAPE);
+    const result = await resultPromise;
+
+    const details = result.details as {
+      interaction: string;
+      selectedLabels: string[];
+      freeText?: string;
+    };
+    expect(details.interaction).toBe("none");
+    expect(details.selectedLabels).toEqual([]);
+    expect(details.freeText).toBeUndefined();
+    expect(hasWidget()).toBe(false);
+    expect(inputHandlerCount()).toBe(0);
+  });
+
+  it("multi-select Done still confirms the selections collected so far", async () => {
+    const tool = registerQuestion();
+    const { ctx, sendKey } = scriptedCtx([]);
+    const resultPromise = tool.execute(
+      "tc",
+      {
+        question: "Pick any",
+        multiSelect: true,
+        options: [{ label: "A" }, { label: "B" }],
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    // Toggle A, then jump straight to Done (3 downs from A).
+    sendKey(ENTER);
+    await settle();
+    sendKey(DOWN);
+    sendKey(DOWN);
+    sendKey(DOWN);
+    sendKey(ENTER);
+    const result = await resultPromise;
+
+    const details = result.details as { interaction: string; selectedLabels: string[] };
+    expect(details.interaction).toBe("preset");
+    expect(details.selectedLabels).toEqual(["A"]);
+    expect(result.content[0]?.text).toBe("Selected: A");
+  });
+
+  it("abort rejects with a cancellation error and clears the widget and terminal handler", async () => {
+    const tool = registerQuestion();
+    const controller = new AbortController();
+    const { ctx, sendKey, hasWidget, inputHandlerCount } = scriptedCtx([]);
+    const resultPromise = tool.execute(
+      "tc",
+      {
+        question: "Pick any",
+        multiSelect: true,
+        options: [{ label: "A" }, { label: "B" }],
+      },
+      controller.signal,
+      undefined,
+      ctx,
+    );
+
+    // Choose A, then Pi cancels the run while the redrawn dialog is open.
+    sendKey(ENTER);
+    await settle();
+    expect(hasWidget()).toBe(true);
+    controller.abort();
+
+    await expect(resultPromise).rejects.toThrow(/cancelled/i);
+    expect(hasWidget()).toBe(false);
+    expect(inputHandlerCount()).toBe(0);
+  });
+
+  it("abort before the dialog opens rejects without leaving a widget or handler behind", async () => {
+    const tool = registerQuestion();
+    const controller = new AbortController();
+    controller.abort();
+    const { ctx, hasWidget, inputHandlerCount } = scriptedCtx([]);
+
+    await expect(
+      tool.execute(
+        "tc",
+        { question: "Pick one", options: [{ label: "A" }, { label: "B" }] },
+        controller.signal,
+        undefined,
+        ctx,
+      ),
+    ).rejects.toThrow(/cancelled/i);
+    expect(hasWidget()).toBe(false);
+    expect(inputHandlerCount()).toBe(0);
+  });
+
+  it("leaves the next question answerable after an abort", async () => {
+    const tool = registerQuestion();
+    const controller = new AbortController();
+    const { ctx, sendKey, inputHandlerCount } = scriptedCtx([]);
+
+    const aborted = tool.execute(
+      "tc",
+      { question: "First", options: [{ label: "A" }, { label: "B" }] },
+      controller.signal,
+      undefined,
+      ctx,
+    );
+    controller.abort();
+    await expect(aborted).rejects.toThrow(/cancelled/i);
+
+    // A fresh question through the same UI context still resolves normally,
+    // which is only possible if the aborted handler was unsubscribed.
+    const resultPromise = tool.execute(
+      "tc",
+      { question: "Second", options: [{ label: "A" }, { label: "B" }] },
+      undefined,
+      undefined,
+      ctx,
+    );
+    sendKey(ENTER);
+    const result = await resultPromise;
+
+    const details = result.details as { interaction: string; selectedLabels: string[] };
+    expect(details.interaction).toBe("preset");
+    expect(details.selectedLabels).toEqual(["A"]);
+    expect(inputHandlerCount()).toBe(0);
   });
 });

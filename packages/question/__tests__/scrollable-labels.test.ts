@@ -53,9 +53,6 @@ function makeDialog(overrides?: {
     title: overrides?.title ?? "Pick one?",
     options: overrides?.options ?? [{ label: "Yes" }, { label: "No" }],
     freeTextLabel: overrides?.freeTextLabel ?? "Type your answer",
-    freeTextDisplay: overrides?.freeTextLabel
-      ? `✎ ${overrides.freeTextLabel} — Write a custom response`
-      : "✎ Type your answer — Write a custom response",
     maxLines: overrides?.maxLines,
     maxWidth: overrides?.maxWidth,
   });
@@ -126,7 +123,7 @@ describe("scrollable option labels — item navigation", () => {
     expect(afterOne).not.toContain("Alpha this option has an");
 
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Beta");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Beta");
   });
 
   it("Up moves back to the previous item in one press", () => {
@@ -140,7 +137,7 @@ describe("scrollable option labels — item navigation", () => {
 
     expect(d.render(80).join("\n")).toContain("Alpha this option has an");
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Alpha");
   });
 
   it("reaches the last free-prose item and wraps back to the first in one press each", () => {
@@ -158,15 +155,15 @@ describe("scrollable option labels — item navigation", () => {
     d.handleInput(DOWN); // Beta
     d.handleInput(DOWN); // free prose — still one press despite 5 wrapped rows
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("✎");
+    expect(onSelect.mock.calls[0]![0].label).toContain("✎");
 
     d.handleInput(DOWN); // wraps to the first item
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[1]![0].value).toContain("Alpha");
+    expect(onSelect.mock.calls[1]![0].label).toContain("Alpha");
 
     d.handleInput(UP); // wraps back to free prose
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[2]![0].value).toContain("✎");
+    expect(onSelect.mock.calls[2]![0].label).toContain("✎");
   });
 });
 
@@ -199,7 +196,7 @@ describe("scrollable option labels — explicit label paging", () => {
     const onSelect = vi.fn();
     d.onSelect = onSelect;
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Alpha");
   });
 
   it("PageUp reveals preceding rows of the focused long label", () => {
@@ -235,11 +232,11 @@ describe("scrollable option labels — explicit label paging", () => {
     const onSelect = vi.fn();
     d.onSelect = onSelect;
     d.handleInput(ENTER); // still the TALL item
-    expect(onSelect.mock.calls[0]![0].value).toContain("Tallest");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Tallest");
 
     d.handleInput(DOWN); // one press moves on to Beta
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[1]![0].value).toContain("Beta");
+    expect(onSelect.mock.calls[1]![0].label).toContain("Beta");
   });
 });
 
@@ -254,23 +251,23 @@ describe("scrollable option labels — short labels unchanged", () => {
 
     d.handleInput(DOWN);
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("Middle");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Middle");
 
     d.handleInput(DOWN);
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[1]![0].value).toContain("Bottom");
+    expect(onSelect.mock.calls[1]![0].label).toContain("Bottom");
 
     d.handleInput(DOWN);
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[2]![0].value).toContain("✎"); // free prose
+    expect(onSelect.mock.calls[2]![0].label).toContain("✎"); // free prose
 
     d.handleInput(DOWN); // wraps to the first option
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[3]![0].value).toContain("Top");
+    expect(onSelect.mock.calls[3]![0].label).toContain("Top");
 
     d.handleInput(UP); // wraps back to the last option
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[4]![0].value).toContain("✎");
+    expect(onSelect.mock.calls[4]![0].label).toContain("✎");
   });
 
   it("keeps the recommended marker readable on a long label", () => {
@@ -286,7 +283,7 @@ describe("scrollable option labels — short labels unchanged", () => {
     const onSelect = vi.fn();
     d.onSelect = onSelect;
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("recommended");
+    expect(onSelect.mock.calls[0]![0].label).toContain("recommended");
   });
 });
 
@@ -306,7 +303,6 @@ describe("multi-select scrollable option labels", () => {
       title: "Pick many",
       options: [{ label: LONG_LABEL }, { label: "Beta" }],
       freeTextLabel: LONG_FREE_TEXT_LABEL,
-      freeTextDisplay: `✎ ${LONG_FREE_TEXT_LABEL} — Write a custom response`,
       multiSelect: true,
       chosenLabels: overrides?.chosenLabels ?? [],
       maxLines: overrides?.maxLines,
@@ -339,11 +335,11 @@ describe("multi-select scrollable option labels", () => {
     d.onSelect = onSelect;
 
     d.handleInput(ENTER); // toggle the focused LONG item
-    expect(onSelect.mock.calls[0]![0].value).toContain("Alpha");
+    expect(onSelect.mock.calls[0]![0].label).toContain("Alpha");
 
     d.handleInput(DOWN); // one press crosses the whole wrapped label onto Beta
     d.handleInput(ENTER); // toggle Beta
-    expect(onSelect.mock.calls[1]![0].value).toContain("Beta");
+    expect(onSelect.mock.calls[1]![0].label).toContain("Beta");
   });
 
   it("keeps the free-prose choice reachable in multi-select", () => {
@@ -355,7 +351,7 @@ describe("multi-select scrollable option labels", () => {
     d.handleInput(DOWN); // Beta
     d.handleInput(DOWN); // free prose — one press despite its wrapped height
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toContain("✎");
+    expect(onSelect.mock.calls[0]![0].label).toContain("✎");
   });
 
   it("reaches the Done completion and wraps around one press at a time", () => {
@@ -368,15 +364,15 @@ describe("multi-select scrollable option labels", () => {
     d.handleInput(DOWN); // free prose
     d.handleInput(DOWN); // Done
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[0]![0].value).toBe(DONE_DISPLAY);
+    expect(onSelect.mock.calls[0]![0].label).toBe(DONE_DISPLAY);
 
     d.handleInput(DOWN); // wraps back to the long first item
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[1]![0].value).toContain("Alpha");
+    expect(onSelect.mock.calls[1]![0].label).toContain("Alpha");
 
     d.handleInput(UP); // wraps back to Done
     d.handleInput(ENTER);
-    expect(onSelect.mock.calls[2]![0].value).toBe(DONE_DISPLAY);
+    expect(onSelect.mock.calls[2]![0].label).toBe(DONE_DISPLAY);
   });
 
   it("keeps every multi-select rendered state within the Display budget while navigating and paging", () => {

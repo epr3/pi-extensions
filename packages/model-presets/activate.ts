@@ -1,4 +1,4 @@
-import type { ModelPresetCatalog, ThinkingLevel } from "./catalog.ts";
+import { findPresetIssue, type ModelPresetCatalog, type ThinkingLevel } from "./catalog.ts";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -41,7 +41,12 @@ export async function activatePreset(
 ): Promise<ActivationResult> {
   const preset = catalog.presets.get(presetName);
   if (!preset) {
-    services.notify(`Unknown preset "${presetName}"`, "error");
+    const issue = findPresetIssue(catalog, presetName);
+    if (issue) {
+      services.notify(issue.message, "error");
+    } else {
+      services.notify(`Unknown preset "${presetName}"`, "error");
+    }
     return { success: false, presetName };
   }
 

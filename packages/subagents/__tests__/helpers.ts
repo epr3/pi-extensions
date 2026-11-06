@@ -1,6 +1,89 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
-import { runSubagent } from "../runner.ts";
+import { runSubagent, type SubagentSession } from "../runner.ts";
+
+/**
+ * Fake sub-session that mirrors how the installed Pi SDK ends an aborted run.
+ *
+ * Real Pi encodes the abort in the terminal assistant message and lets
+ * `agent.prompt()` resolve — `runAgentLoop` emits `turn_end`/`agent_end` and
+ * returns when `message.stopReason === "aborted"` rather than throwing
+ * (`@earendil-works/pi-agent-core@0.84.1` `dist/agent-loop.js`), and
+ * `AgentSession.prompt()` awaits that loop with no abort-related catch. Driving
+ * the SDK's own `Agent` with a fake provider stream confirms it at runtime:
+ * the prompt resolves, and the terminal assistant message carries
+ * `stopReason: "aborted"` plus the text streamed before the abort. Tests
+ * driven through this fake therefore exercise the resolution semantics the
+ * extension actually meets in Pi, instead of a hand-picked rejection.
+ *
+ * `emitText` streams assistant deltas (what the runner captures as partial
+ * text); `abort()` ends the run the way the SDK does (aborted terminal message,
+ * prompt resolves); `finish()` ends it as a genuine completion.
+ */
+export function sdkAbortResolvingSession() {
+  let handler: ((event: any) => void) | undefined;
+  let resolvePrompt: (() => void) | undefined;
+  let promptSettled = false;
+  const promptPromise = new Promise<void>((resolve) => {
+    resolvePrompt = resolve;
+  });
+  const messages: any[] = [];
+  const streamed: string[] = [];
+  let aborted = false;
+  let disposed = false;
+
+  const terminate = (stopReason: "end" | "aborted", text: string) => {
+    if (promptSettled) return;
+    promptSettled = true;
+    messages.push({
+      role: "assistant",
+      content: text ? [{ type: "text", text }] : [],
+      stopReason,
+      timestamp: 0,
+    });
+    resolvePrompt?.();
+  };
+
+  const session: SubagentSession & {
+    emitText: (delta: string) => void;
+    finish: (text: string) => void;
+  } = {
+    get aborted() {
+      return aborted;
+    },
+    get disposed() {
+      return disposed;
+    },
+    abort() {
+      if (aborted) return;
+      aborted = true;
+      terminate("aborted", streamed.join(""));
+    },
+    dispose() {
+      disposed = true;
+    },
+    subscribe(h) {
+      handler = h;
+      return () => {
+        handler = undefined;
+      };
+    },
+    prompt() {
+      return promptPromise;
+    },
+    get messages() {
+      return messages;
+    },
+    emitText(delta: string) {
+      streamed.push(delta);
+      handler?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta } });
+    },
+    finish(text: string) {
+      terminate("end", text);
+    },
+  };
+  return session;
+}
 
 /** A captured pi.sendMessage call: the attributed message and its options. */
 export interface CapturedSend {

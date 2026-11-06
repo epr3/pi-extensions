@@ -98,27 +98,27 @@ web_fetch({
 
 ## Behavior
 
-| Scenario                                                 | Result                                                                                                                                           |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Valid HTML / text / Markdown / supported PDF             | AI extraction answer + finalized Readable artifact path                                                                                          |
-| HTML page                                                | Converted to whole-page Markdown (Turndown): scripts/styles removed; tables, nested lists, code language, entities, and relative links preserved |
-| Missing or blank `prompt`                                | Clear error before any fetch                                                                                                                     |
-| Explicit Extraction `thinkingLevel`                      | Sent through Pi's provider-neutral reasoning interface; unsupported levels clamp and warn                                                        |
-| Malformed `webFetch.extractionModel.thinkingLevel`       | Warning in `details`/UI; behaves as absent via the existing completion path                                                                      |
-| Extraction model not configured                          | Actionable error pointing to `webFetch.extractionModel` settings                                                                                 |
-| Configured model unavailable or missing credentials      | Actionable error before expensive retrieval                                                                                                      |
-| Model provider fails after successful conversion         | Error includes the completed artifact path and source metadata                                                                                   |
-| Source larger than the model input budget                | Model sees only a leading portion; tool warns about partial evidence; artifact remains complete                                                  |
-| PDF document (application/pdf or URL ending in .pdf)     | Text extracted with page count; truncated at 50 pages with notice                                                                                |
-| PDF exceeding 10MB                                       | Error with byte counts                                                                                                                           |
-| PDF with no extractable text (compressed/scanned)        | Clear error suggesting the file may need OCR                                                                                                     |
-| Plain text / Markdown file                               | Content passes through as a `.txt` Readable artifact                                                                                             |
-| Invalid URL, HTTP error (4xx/5xx), timeout               | Clear error message; nothing is written to disk                                                                                                  |
-| Binary content type (images, audio, video, archives)     | Error with content-type explanation; PDFs are handled, not rejected                                                                              |
-| Response exceeds size cap (512 KiB ordinary, 10 MiB PDF) | Error with byte counts; partial downloads are removed                                                                                            |
-| JavaScript-only / unextractable page                     | Actionable error — **no** alternate-service (Jina/browser) fallback                                                                              |
-| Process crash leaves abandoned artifacts                 | Swept on next extension init/fetch; live/ambiguous owners preserved                                                                              |
-| Redirects                                                | Followed automatically; relative links resolve against the final URL                                                                             |
+| Scenario                                                 | Result                                                                                                                                                                                                       |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Valid HTML / text / Markdown / supported PDF             | AI extraction answer + finalized Readable artifact path                                                                                                                                                      |
+| HTML page                                                | Converted to whole-page Markdown (Turndown): scripts/styles removed; tables, nested lists, code language, entities, and relative links preserved                                                             |
+| Missing or blank `prompt`                                | Clear error before any fetch                                                                                                                                                                                 |
+| Explicit Extraction `thinkingLevel`                      | Sent through Pi's provider-neutral reasoning interface; unsupported levels clamp and warn                                                                                                                    |
+| Malformed `webFetch.extractionModel.thinkingLevel`       | Warning in `details`/UI; behaves as absent via the existing completion path                                                                                                                                  |
+| Extraction model not configured                          | Actionable error pointing to `webFetch.extractionModel` settings                                                                                                                                             |
+| Configured model unavailable or missing credentials      | Actionable error before expensive retrieval                                                                                                                                                                  |
+| Model provider fails after successful conversion         | Error includes the completed artifact path and source metadata                                                                                                                                               |
+| Source larger than the model input budget                | Model sees only a leading portion; tool warns about partial evidence; artifact completeness is reported separately                                                                                           |
+| PDF document (application/pdf or URL ending in .pdf)     | Text extracted with no page limit; page count and artifact completeness reported as unknown (the extractor cannot verify them)                                                                               |
+| PDF exceeding 10MB                                       | Error with byte counts                                                                                                                                                                                       |
+| PDF with no extractable text (compressed/scanned)        | Clear error suggesting the file may need OCR                                                                                                                                                                 |
+| Plain text / Markdown file                               | Content passes through as a `.txt` Readable artifact                                                                                                                                                         |
+| Invalid URL, HTTP error (4xx/5xx), timeout, cancellation | Clear error message; nothing is written to disk. The 30-second deadline covers headers and the response body, so a stalled download fails; caller cancellation is reported as cancellation, not as a timeout |
+| Binary content type (images, audio, video, archives)     | Error with content-type explanation; PDFs are handled, not rejected                                                                                                                                          |
+| Response exceeds size cap (512 KiB ordinary, 10 MiB PDF) | Error with byte counts; partial downloads are removed                                                                                                                                                        |
+| JavaScript-only / unextractable page                     | Actionable error — **no** alternate-service (Jina/browser) fallback                                                                                                                                          |
+| Process crash leaves abandoned artifacts                 | Swept on next extension init/fetch; live/ambiguous owners preserved                                                                                                                                          |
+| Redirects                                                | Followed automatically; relative links resolve against the final URL                                                                                                                                         |
 
 ## AI extraction
 
@@ -192,11 +192,15 @@ Answer:
 - **Old transcripts**: a path from an earlier session becomes stale once that
   session ends. **Refetch the URL** to regenerate the artifact — resuming a
   session does not restore deleted source files.
-- **Completeness**: for PDFs over the page limit, the result and `details`
-  report a partial artifact (`artifactComplete: false`). Model-input truncation
-  is reported separately (`modelInputTruncated: true`) and does not make the
-  artifact partial. The path is published only after the file is finalized;
-  failed or cancelled calls never leave usable files behind.
+- **Completeness**: reported as a tri-state `artifactCompleteness` — `complete`
+  (verified in full), `partial` (the extractor reported missing content), or
+  `unknown` (the extractor cannot verify it). HTML and plain-text conversion
+  inside the response cap is `complete`; the built-in PDF extractor reports
+  `unknown`, because it scans the whole capped file but cannot prove it
+  captured every page. Model-input truncation is reported separately
+  (`modelInputTruncated: true`) and never changes artifact completeness. The
+  path is published only after the file is finalized; failed or cancelled calls
+  never leave usable files behind.
 - **Model-stage failures**: if AI extraction fails after conversion succeeds,
   the error includes the still-readable artifact path and source metadata. The
   completed artifact remains available until the session is cleaned up.
@@ -221,14 +225,31 @@ Answer:
 
 - **Detection**: By `Content-Type: application/pdf` header, or URL ending in `.pdf` (case-insensitive).
 - **Size limit**: PDFs up to **10MB** are fetched (vs 512KB for HTML/text).
-- **Page limit**: Up to **50 pages** are extracted. Longer PDFs produce a
-  clearly marked partial artifact with a truncation notice.
+- **No page limit**: the extractor scans the whole size-capped file. No page
+  limit is enforced, so the result never claims truncated pages.
+- **Page count and completeness are unknown**: the text extractor is regex-based
+  over the file bytes. It cannot count pages reliably (compressed object
+  streams hide the page tree) and cannot prove every page's text was captured.
+  The result therefore reports `Pages: unknown` and
+  `artifactCompleteness: "unknown"`. A page count is reported only when an
+  extractor can actually verify one.
 - **Extraction**: Uses a built-in text extractor that parses PDF text objects
   (`BT...ET` blocks). Works well for text-based PDFs. Compressed or scanned
   PDFs may not extract — the tool reports a clear error when no text is found.
 - **When to try another source**: If a PDF fails to extract (e.g., scanned
   document, complex formatting), try finding an HTML version of the same
   content, or use a dedicated PDF-to-text service.
+
+### Result-details compatibility
+
+`details.artifactCompleteness` (`"complete" | "partial" | "unknown"`) and the
+optional `details.pageCount` replace the former `details.artifactComplete:
+boolean` and `details.truncated: boolean`. This is a deliberate change: a
+boolean could not express "the extractor cannot verify this", and `truncated`
+described a 50-page extraction limit that was never enforced. Consumers that
+read `artifactComplete` must switch to `artifactCompleteness` (treating
+`"unknown"` and `"partial"` as not provably complete), and `truncated` no longer
+exists. `modelInputTruncated` keeps its meaning.
 
 ## Architecture
 
@@ -308,7 +329,8 @@ fake Pi API, including lifecycle events:
 - Extraction model configuration errors: missing settings, unavailable model,
   missing credentials
 - Successful HTML/text/PDF calls return an AI extraction answer and a
-  finalized artifact; PDF truncation is reported as a partial artifact
+  finalized artifact; PDF text beyond page 50 is retained, and unverifiable
+  page counts/completeness are reported as unknown rather than guessed
 - Structured fidelity through registered calls: tables, nested lists, code
   language, entities, and relative links reach both the artifact and the model
   evidence; relative links resolve against the post-redirect URL

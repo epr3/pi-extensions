@@ -13,6 +13,7 @@ import {
   boundedEditorTitle,
   boundedSelectionSummary,
   DONE_DISPLAY,
+  DONE_VALUE,
   type DialogOption,
 } from "../dialog.ts";
 
@@ -28,7 +29,6 @@ function makeDialog(overrides?: {
   title?: string;
   options?: DialogOption[];
   freeTextLabel?: string;
-  freeTextDisplay?: string;
   maxLines?: number;
   maxWidth?: number;
   maxHeaderLines?: number;
@@ -40,7 +40,6 @@ function makeDialog(overrides?: {
       { label: "No", description: "Negative" },
     ],
     freeTextLabel: overrides?.freeTextLabel ?? "Type your answer",
-    freeTextDisplay: overrides?.freeTextDisplay ?? "✎ Type your answer — Write a custom response",
     maxLines: overrides?.maxLines,
     maxWidth: overrides?.maxWidth,
     maxHeaderLines: overrides?.maxHeaderLines,
@@ -204,6 +203,56 @@ describe("BoundedQuestionDialog header truncation", () => {
   });
 });
 
+describe("BoundedQuestionDialog long supplied header layout", () => {
+  const DOWN = "\x1b[B";
+  const LONG_HEADER =
+    "An extremely long supplied header that keeps going and going well past any reasonable header budget for a question dialog";
+
+  /** Multi-select dialog whose wrapped answers overflow a narrow viewport. */
+  function longHeaderDialog(): BoundedQuestionDialog {
+    return new BoundedQuestionDialog({
+      title: `${LONG_HEADER}: Right size?`,
+      options: [
+        {
+          label: "A",
+          description:
+            "first option whose description is deliberately long enough to wrap several times at narrow width",
+        },
+        {
+          label: "B",
+          description:
+            "second option whose description is deliberately long enough to wrap several times at narrow width",
+        },
+        {
+          label: "C",
+          description:
+            "third option whose description is deliberately long enough to wrap several times at narrow width",
+        },
+      ],
+      freeTextLabel: "Type your answer",
+      freeTextDisplay: "✎ Type your answer — Write a custom response",
+      multiSelect: true,
+      chosenLabels: ["A"],
+    });
+  }
+
+  it("keeps the focused answer visible when the header fills the header budget", () => {
+    // A narrow terminal: the header wraps to the full 3-line budget and the
+    // selection summary adds one more line, so the list viewport must shrink
+    // with it instead of pushing the focused answer off the bottom.
+    const WIDTH = 40;
+    const d = longHeaderDialog();
+    for (let i = 0; i < 4; i++) d.handleInput(DOWN); // Done is the last answer item
+
+    const lines = d.render(WIDTH);
+    expect(lines.length).toBeLessThanOrEqual(d.maxLines);
+    expect(maxLineWidth(lines)).toBeLessThanOrEqual(WIDTH);
+    // Exactly one focused answer item is marked, and it is not clipped away.
+    expect(lines.filter((line) => line.startsWith("→ "))).toHaveLength(1);
+    expect(lines.join("\n")).toContain(DONE_DISPLAY);
+  });
+});
+
 describe("BoundedQuestionDialog option completeness", () => {
   it("includes all preset options in the rendered output", () => {
     const d = makeDialog({
@@ -223,7 +272,6 @@ describe("BoundedQuestionDialog option completeness", () => {
   it("includes the free-prose escape hatch in the rendered output", () => {
     const d = makeDialog({
       freeTextLabel: "My answer",
-      freeTextDisplay: "✎ My answer — Custom text",
     });
     const lines = d.render(80);
     const output = lines.join(" ");
@@ -284,7 +332,7 @@ describe("BoundedQuestionDialog interaction", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0];
-    expect(item.value).toContain("Choice A");
+    expect(item.label).toContain("Choice A");
   });
 
   it("fires onSelect with the navigated-to option after moving down", () => {
@@ -299,7 +347,7 @@ describe("BoundedQuestionDialog interaction", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0];
-    expect(item.value).toContain("Second");
+    expect(item.label).toContain("Second");
   });
 
   it("fires onCancel when escape is pressed", () => {
@@ -325,7 +373,7 @@ describe("BoundedQuestionDialog interaction", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0];
-    expect(item.value).toContain("Middle");
+    expect(item.label).toContain("Middle");
   });
 
   it("wraps to the last item when pressing up at the first item", () => {
@@ -341,7 +389,7 @@ describe("BoundedQuestionDialog interaction", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0];
-    expect(item.value).toContain("✎");
+    expect(item.label).toContain("✎");
   });
 });
 
@@ -383,18 +431,28 @@ describe("boundedEditorTitle", () => {
     expect(boundedEditorTitle("Go", "")).toBe("Go");
   });
 
+  it("caps an oversized header to 60 chars with ellipsis", () => {
+    const longHeader =
+      "An extremely long supplied header that keeps going and going well past any reasonable display budget";
+    const result = boundedEditorTitle(longHeader, "Right size?");
+    expect(result.length).toBe(60);
+    expect(result).toMatch(/…$/);
+    expect(longHeader.startsWith(result.slice(0, -1))).toBe(true);
+    expect(result).not.toContain("display budget");
+  });
+
   it("returns empty string when both header and question are empty/undefined", () => {
     expect(boundedEditorTitle(undefined, "")).toBe("");
   });
 });
 
-// ── Selection value matching ────────────────────────────────────────────
+// ── Selection identity ────────────────────────────────────────────────
 
-describe("BoundedQuestionDialog selection value matches existing contract", () => {
+describe("BoundedQuestionDialog selection identity", () => {
   const ENTER = "\r";
   const DOWN = "\x1b[B";
 
-  it("returns the combined display string for a preset option (matching byDisplay lookup)", () => {
+  it("reports the preset option item identity, not its display text", () => {
     const d = makeDialog({
       options: [
         { label: "Right", description: "feels right", recommended: true },
@@ -409,18 +467,15 @@ describe("BoundedQuestionDialog selection value matches existing contract", () =
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0]!;
-    // The value should match the display string used for byDisplay() lookup
-    // "Right  (recommended) — feels right"
-    expect(item.value).toMatch(/Right/);
-    expect(item.value).toMatch(/recommended/);
-    expect(item.value).toMatch(/feels right/);
+    expect(item.value).toBe("option:0");
+    // The display text stays available for rendering.
+    expect(item.label).toBe("Right  (recommended)");
   });
 
-  it("returns the free-prose display string when free-text option is selected", () => {
+  it("reports the free-prose control identity when free text is selected", () => {
     const d = makeDialog({
       options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "My answer",
-      freeTextDisplay: "✎ My answer — Custom text",
     });
     const onSelect = vi.fn();
     d.onSelect = onSelect;
@@ -432,7 +487,8 @@ describe("BoundedQuestionDialog selection value matches existing contract", () =
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0]!;
-    expect(item.value).toContain("✎ My answer");
+    expect(item.value).toBe("freeText");
+    expect(item.label).toContain("✎ My answer");
   });
 });
 
@@ -444,7 +500,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick any",
       options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: ["Alpha"],
     });
@@ -459,7 +514,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick any",
       options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: [],
     });
@@ -474,7 +528,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick any",
       options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: [],
     });
@@ -488,7 +541,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick any",
       options: [{ label: "Alpha" }, { label: "Beta" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: [],
       hasFreeText: true,
@@ -506,7 +558,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick any",
       options: [{ label: "Alpha" }, { label: "Beta" }, { label: "Gamma" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: ["Alpha", "Beta"],
     });
@@ -527,7 +578,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
         { label: "Gamma" },
       ],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: [
         "A very long option label that must never appear as a shortened preview",
@@ -554,7 +604,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick",
       options: [{ label: "Alpha" }, { label: "Beta" }, { label: "Gamma" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: ["Alpha", "Beta"],
       maxWidth: 30,
@@ -570,7 +619,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick any",
       options: [{ label: "Alpha" }, { label: "Beta" }, { label: "Gamma" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: [],
     });
@@ -587,7 +635,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick any",
       options: [{ label: "First", recommended: true }, { label: "Second" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: [],
     });
@@ -602,7 +649,6 @@ describe("BoundedQuestionDialog multi-select rendering", () => {
       title: "Pick",
       options: [{ label: "A" }, { label: "B" }, { label: "C" }, { label: "D" }],
       freeTextLabel: "Type",
-      freeTextDisplay: "✎ Type — Custom",
       multiSelect: true,
       chosenLabels: ["A", "B"],
       maxLines: 6,
@@ -623,7 +669,6 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
       title: "Pick any",
       options: [{ label: "A", description: "First option" }, { label: "B" }],
       freeTextLabel: "Type",
-      freeTextDisplay: "✎ Type — Custom",
       multiSelect: true,
       chosenLabels: [],
     });
@@ -634,7 +679,7 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0]!;
-    expect(item.value).toContain("A");
+    expect(item.label).toContain("A");
   });
 
   it("fires onSelect with DONE_DISPLAY when Done is pressed", () => {
@@ -642,7 +687,6 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
       title: "Pick any",
       options: [{ label: "A" }, { label: "B" }],
       freeTextLabel: "Type",
-      freeTextDisplay: "✎ Type — Custom",
       multiSelect: true,
       chosenLabels: [],
     });
@@ -658,15 +702,14 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0]!;
-    expect(item.value).toBe(DONE_DISPLAY);
+    expect(item.label).toBe(DONE_DISPLAY);
   });
 
-  it("fires onSelect with freeTextDisplay when free text is selected", () => {
+  it("fires onSelect with the free-prose control identity when free text is selected", () => {
     const d = new BoundedQuestionDialog({
       title: "Pick any",
       options: [{ label: "A" }, { label: "B" }],
       freeTextLabel: "My answer",
-      freeTextDisplay: "✎ My answer — Custom",
       multiSelect: true,
       chosenLabels: [],
     });
@@ -681,7 +724,8 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     const item = onSelect.mock.calls[0]![0]!;
-    expect(item.value).toContain("My answer");
+    expect(item.value).toBe("freeText");
+    expect(item.label).toContain("My answer");
   });
 
   it("fires onCancel when escape is pressed", () => {
@@ -689,7 +733,6 @@ describe("BoundedQuestionDialog multi-select interaction", () => {
       title: "Pick any",
       options: [{ label: "A" }, { label: "B" }],
       freeTextLabel: "Type",
-      freeTextDisplay: "✎ Type — Custom",
       multiSelect: true,
       chosenLabels: [],
     });
@@ -712,10 +755,9 @@ describe("BoundedQuestionDialog requested initial focus", () => {
       title: "Pick any",
       options: [{ label: "A" }, { label: "B" }, { label: "C" }],
       freeTextLabel: "Type your answer",
-      freeTextDisplay: "✎ Type your answer — Write a custom response",
       multiSelect: true,
       chosenLabels: ["B"],
-      initialFocusValue: "B",
+      initialFocusValue: "option:1",
     });
     const lines = d.render(80).join("\n");
     // The focus prefix sits on B and its checkbox reflects the chosen state.
@@ -725,7 +767,7 @@ describe("BoundedQuestionDialog requested initial focus", () => {
     d.onSelect = onSelect;
     d.handleInput(ENTER);
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect.mock.calls[0]![0].value).toBe("B");
+    expect(onSelect.mock.calls[0]![0].label).toBe("✓ B");
   });
 
   it("falls back to the first item when the requested focus value is unknown", () => {
@@ -733,7 +775,6 @@ describe("BoundedQuestionDialog requested initial focus", () => {
       title: "Pick any",
       options: [{ label: "A" }, { label: "B" }],
       freeTextLabel: "Type",
-      freeTextDisplay: "✎ Type — Write a custom response",
       multiSelect: true,
       chosenLabels: [],
       initialFocusValue: "No such option",
@@ -742,7 +783,7 @@ describe("BoundedQuestionDialog requested initial focus", () => {
     d.onSelect = onSelect;
     d.handleInput(ENTER);
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect.mock.calls[0]![0].value).toBe("A");
+    expect(onSelect.mock.calls[0]![0].label).toBe("○ A");
   });
 
   it("can start focused on the Done completion button", () => {
@@ -750,16 +791,15 @@ describe("BoundedQuestionDialog requested initial focus", () => {
       title: "Pick any",
       options: [{ label: "A" }, { label: "B" }],
       freeTextLabel: "Type",
-      freeTextDisplay: "✎ Type — Write a custom response",
       multiSelect: true,
       chosenLabels: [],
-      initialFocusValue: DONE_DISPLAY,
+      initialFocusValue: "done",
     });
     const onSelect = vi.fn();
     d.onSelect = onSelect;
     d.handleInput(ENTER);
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect.mock.calls[0]![0].value).toBe(DONE_DISPLAY);
+    expect(onSelect.mock.calls[0]![0].label).toBe(DONE_DISPLAY);
   });
 });
 
@@ -790,5 +830,49 @@ describe("boundedSelectionSummary", () => {
     const result = boundedSelectionSummary(["A", "B"], 10);
     expect(result).toBe("[2]");
     expect(visibleWidth(result)).toBeLessThanOrEqual(10);
+  });
+});
+// ── Cancellation ────────────────────────────────────────────────────────
+
+describe("BoundedQuestionDialog cancellation", () => {
+  const ENTER = "\r";
+  const ESCAPE = "\x1b";
+
+  it("fires only onCancel when escape discards partial multi-selections", () => {
+    const d = new BoundedQuestionDialog({
+      title: "Pick any",
+      options: [{ label: "A" }, { label: "B" }, { label: "C" }],
+      freeTextLabel: "Type",
+      multiSelect: true,
+      chosenLabels: ["A", "C"],
+    });
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    d.onSelect = onSelect;
+    d.onCancel = onCancel;
+
+    d.handleInput(ESCAPE);
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("keeps Done as the only way to confirm multi-select choices", () => {
+    const d = new BoundedQuestionDialog({
+      title: "Pick any",
+      options: [{ label: "A" }, { label: "B" }],
+      freeTextLabel: "Type",
+      multiSelect: true,
+      chosenLabels: ["A"],
+      initialFocusValue: DONE_VALUE,
+    });
+    const onSelect = vi.fn();
+    d.onSelect = onSelect;
+
+    // Focus starts on Done; confirming reports the Done value, never a preset.
+    d.handleInput(ENTER);
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0]![0]!.value).toBe(DONE_VALUE);
   });
 });

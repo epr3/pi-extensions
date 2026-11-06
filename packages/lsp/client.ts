@@ -122,6 +122,13 @@ export class LspClient {
       this.notify("initialized", {});
     } catch (e) {
       this.proc = null;
+      // A server that spawned but failed the handshake must not linger: keep no
+      // reference to a process we could no longer stop through stop().
+      try {
+        proc.kill();
+      } catch {
+        /* already exited or never spawned */
+      }
       throw e;
     } finally {
       this.startReject = null;
@@ -238,16 +245,26 @@ export class LspClient {
   }
 
   /**
-   * Wait up to `budgetMs` for the server to publish diagnostics that answer
-   * the document's current state, resolving early when one arrives. The
-   * budget is only a timeout, never evidence of a current result: after the
-   * wait, callers must read getDiagnostics() and honor its state — a publish
-   * may still be pending or unverifiable (unversioned server).
+   * Wait up to `budgetMs` for the server to publish diagnostics correlated with
+   * the document's current version, resolving early only when such a publish
+   * arrives. A publish for an older version is not treated as the answer: the
+   * wait keeps looking for the correlated one, so a lagging versioned server
+   * can still catch up inside the budget.
+   *
+   * A publish that carries no version at all is a different case: it proves the
+   * server does not correlate versions, so no later publish could match and the
+   * wait ends immediately (typescript-language-server publishes this way;
+   * gopls includes the version). The budget stays a timeout, never evidence of
+   * a current result: after the wait, callers must read getDiagnostics() and
+   * honor its state, which may still be `pending` or `uncertain`.
    */
   async waitForDiagnostics(uri: string, budgetMs: number): Promise<void> {
     const deadline = Date.now() + Math.max(0, budgetMs);
     for (;;) {
-      if (this.getDiagnostics(uri).state !== "pending") return;
+      const status = this.getDiagnostics(uri);
+      if (status.state === "current") return;
+      // No version on an uncorrelated publish: this server cannot correlate.
+      if (status.state === "uncertain" && status.sinceVersion === null) return;
       const remaining = deadline - Date.now();
       if (remaining <= 0) return;
       await new Promise<void>((resolve) => {

@@ -33,6 +33,7 @@ _Avoid_: Summary row, compact UI, todo badge.
 - **Current Todo item** is derived from **Todo status** `in_progress`, not stored as an independent selector.
 - A valid **Todo list** keeps at most one **Todo item** in `in_progress`.
 - A malformed **Todo list** with multiple `in_progress` **Todo items** has no single **Current Todo item** and surfaces all active candidates as invalid workflow state.
+- Plain-text `todo_write` and `todo_read` `content` appends an advisory warning line when multiple **Todo items** are `in_progress`; the warning never rejects the list and structured `details` stay authoritative.
 - **Session todo state** survives reloads by reconstructing from the session branch.
 - **Collapsed Todo result** shows the **Current Todo item** when exactly one **Todo item** is `in_progress`, keeps the invalid-state warning when multiple are `in_progress`, and otherwise stays a compact progress summary.
 

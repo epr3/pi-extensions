@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import subagentsExtension from "../index.ts";
 import { makeFakeApi } from "./helpers.ts";
+
+const testDir = path.dirname(fileURLToPath(import.meta.url));
 
 function registerSubagents(): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
@@ -64,6 +69,43 @@ describe("get_subagent_result tool metadata", () => {
   it("description mentions Subagent without hyphens", () => {
     expect(resultTool!.description).toContain("Subagent");
     expect(resultTool!.description).not.toMatch(/sub-agent/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Package metadata — the description a user sees before installing
+// ---------------------------------------------------------------------------
+
+describe("package metadata", () => {
+  const packageJsonPath = path.resolve(testDir, "../package.json");
+  const description: string = JSON.parse(readFileSync(packageJsonPath, "utf-8")).description;
+  let tools: ToolDefinition[];
+
+  beforeAll(() => {
+    tools = registerSubagents();
+  });
+
+  it("registers exactly the three documented tools (contract unchanged)", () => {
+    expect(tools.map((t) => t.name).toSorted()).toEqual([
+      "Agent",
+      "get_subagent_result",
+      "stop_subagent",
+    ]);
+  });
+
+  it("description names every registered tool", () => {
+    const registered = tools.map((t) => t.name);
+    const missing = registered.filter((name) => !description.includes(name));
+    expect(missing, `description omits registered tool(s): ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("description carries no stale tool identifier", () => {
+    // Snake_case tokens in the description are Pi tool names (types such as
+    // explore/general are prose), so each one must still be registered.
+    const named = [...description.matchAll(/`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`/g)].map((m) => m[1]!);
+    const registered = new Set(tools.map((t) => t.name));
+    const stale = named.filter((name) => !registered.has(name));
+    expect(stale, `description names unregistered tool(s): ${stale.join(", ")}`).toEqual([]);
   });
 });
 

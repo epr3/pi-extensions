@@ -27,6 +27,10 @@ function text(result: { content: { type: "text"; text: string }[] }): string {
   return result.content.map((c) => c.text).join("\n");
 }
 
+function warningLine(value: string): string | undefined {
+  return value.split("\n").find((line) => line.includes("warning"));
+}
+
 describe("todo_read — single in_progress", () => {
   it("shows Current: line with active item, summary, and full checklist", async () => {
     const { write, read } = registerTodos();
@@ -81,7 +85,7 @@ describe("todo_read — no in_progress", () => {
 });
 
 describe("todo_read — multiple in_progress", () => {
-  it('shows "multiple" with active candidates in details, no warning', async () => {
+  it('shows "multiple", an advisory warning, and unchanged active candidates', async () => {
     const { write, read } = registerTodos();
 
     await write.execute("tc", {
@@ -98,11 +102,33 @@ describe("todo_read — multiple in_progress", () => {
 
     expect(txt).toContain("Current:");
     expect(txt).toContain("multiple");
-    expect(txt).not.toContain("warning");
+    expect(txt).toContain("warning");
+    expect(txt).toContain("invalid workflow state");
+    expect(txt).toContain("2 items in_progress");
 
+    // Structured details stay unchanged: still no single current item, warnings
+    // remain advisory rather than a rejection.
     expect(det.currentItem).toBeNull();
     expect(det.currentIndex).toBeNull();
     expect(Array.isArray(det.activeCandidates)).toBe(true);
     expect((det.activeCandidates as unknown[]).length).toBe(2);
+    expect(det.activeCandidates).toEqual([
+      { content: "Active A", status: "in_progress", index: 0 },
+      { content: "Active B", status: "in_progress", index: 2 },
+    ]);
+  });
+
+  it("warns with the same wording as todo_write for identical invalid state", async () => {
+    const { write, read } = registerTodos();
+    const todos = [
+      { content: "Active P", status: "in_progress" },
+      { content: "Active Q", status: "in_progress" },
+    ];
+
+    const writeText = text(await write.execute("tc", { todos }));
+    const readText = text(await read.execute());
+
+    expect(warningLine(readText)).toBeDefined();
+    expect(warningLine(readText)).toBe(warningLine(writeText));
   });
 });

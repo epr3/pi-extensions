@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { AgentManager, type StopOutcome } from "../manager.ts";
 import { RESULT_TEXT_LIMIT } from "../result-limit.ts";
-import type { RunResult } from "../runner.ts";
+import { runSubagentSession, type RunResult } from "../runner.ts";
+import { sdkAbortResolvingSession } from "./helpers.ts";
 
 // ---------------------------------------------------------------------------
 // Fake exec thunks
@@ -223,6 +224,144 @@ describe("AgentManager.stop — races and terminal runs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Manager seam: stop/completion interleavings and first-terminal-outcome rules
+// ---------------------------------------------------------------------------
+
+describe("AgentManager.stop — stop/completion interleavings", () => {
+  it("settles a completion that was already resolved when the stop arrived", async () => {
+    const names: string[] = [];
+    const manager = new AgentManager({
+      maxConcurrency: 1,
+      onEvent: (name) => names.push(name),
+    });
+    const { record } = manager.launch(
+      { type: "general", description: "task", background: true },
+      () => Promise.resolve({ result: "finished", tokens: 2, toolUses: 1 }),
+    );
+    // Same tick as the launch: the exec has resolved but the manager has not
+    // applied it yet, so the record still reads "running". The completion is
+    // therefore the outcome that lands first.
+    expect(record.status).toBe("running");
+
+    const outcome = await manager.stop(record.id);
+
+    expect(outcome.action).toBe("unchanged");
+    expect(record.status).toBe("completed");
+    expect(record.result).toContain("finished");
+    expect(record.stopReason).toBeUndefined();
+    expect(record.partialText).toBeUndefined();
+    expect(names.filter((n) => n === "completed")).toHaveLength(1);
+    expect(names).not.toContain("stopped");
+  });
+
+  it("applies exactly one terminal outcome for concurrent stop requests", async () => {
+    const names: string[] = [];
+    const manager = new AgentManager({
+      maxConcurrency: 1,
+      onEvent: (name) => names.push(name),
+    });
+    const { record } = manager.launch(
+      { type: "general", description: "task", background: true },
+      abortableExec("captured text"),
+    );
+
+    const [first, second] = await Promise.all([manager.stop(record.id), manager.stop(record.id)]);
+
+    expect(first.action).toBe("stopped");
+    expect(second.action).toBe("stopped");
+    expect(second.record.status).toBe("stopped");
+    expect(second.record.stopReason).toBe(first.record.stopReason);
+    expect(second.record.partialText).toBe("captured text");
+    expect(names.filter((n) => n === "stopped")).toHaveLength(1);
+    expect(names.filter((n) => n === "completed" || n === "failed")).toHaveLength(0);
+  });
+
+  it("reports a second stop after a stopped outcome as unchanged", async () => {
+    const names: string[] = [];
+    const manager = new AgentManager({
+      maxConcurrency: 1,
+      onEvent: (name) => names.push(name),
+    });
+    const { record } = manager.launch(
+      { type: "general", description: "task", background: true },
+      abortableExec("half"),
+    );
+    const first = await manager.stop(record.id);
+    const reason = record.stopReason;
+
+    const second = await manager.stop(record.id);
+
+    expect(first.action).toBe("stopped");
+    expect(second.action).toBe("unchanged");
+    expect(record.status).toBe("stopped");
+    expect(record.stopReason).toBe(reason);
+    expect(record.partialText).toBe("half");
+    expect(names.filter((n) => n === "stopped")).toHaveLength(1);
+  });
+
+  it("reports the stopped outcome to a blocking retrieval already waiting", async () => {
+    const manager = new AgentManager({ maxConcurrency: 1 });
+    const { record } = manager.launch(
+      { type: "general", description: "task", background: true },
+      abortableExec("waiting text"),
+    );
+    const waiting = manager.getResult(record.id, true);
+
+    await manager.stop(record.id);
+
+    await expect(waiting).resolves.toMatchObject({
+      status: "stopped",
+      partialText: "waiting text",
+    });
+    expect(record.status).toBe("stopped");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Manager seam: the abort semantics real Pi exhibits (see helpers fixture)
+// ---------------------------------------------------------------------------
+
+describe("AgentManager.stop — Pi abort semantics", () => {
+  it("settles a stopped run as stopped when the session resolves its aborted prompt", async () => {
+    // The composed manager + runner path: Pi resolves prompt() for an aborted
+    // run, so the stop outcome must come from the runner's abort handling, not
+    // from an exec rejection the SDK never produces.
+    const manager = new AgentManager({ maxConcurrency: 1 });
+    const session = sdkAbortResolvingSession();
+    const { record } = manager.launch(
+      { type: "general", description: "task", background: true },
+      (signal: AbortSignal) => runSubagentSession({ session, prompt: "work", abortSignal: signal }),
+    );
+    session.emitText("half-written findings");
+
+    const outcome = await manager.stop(record.id);
+
+    expect(outcome.action).toBe("stopped");
+    expect(record.status).toBe("stopped");
+    expect(record.result).toBeUndefined();
+    expect(record.stopReason).toBeTruthy();
+    expect(record.partialText).toBe("half-written findings");
+  });
+
+  it("still completes a run the session finished before any stop", async () => {
+    const manager = new AgentManager({ maxConcurrency: 1 });
+    const session = sdkAbortResolvingSession();
+    const { record } = manager.launch(
+      { type: "general", description: "task", background: true },
+      (signal: AbortSignal) => runSubagentSession({ session, prompt: "work", abortSignal: signal }),
+    );
+    session.finish("complete answer");
+    await manager.getResult(record.id, true);
+
+    const outcome = await manager.stop(record.id);
+
+    expect(outcome.action).toBe("unchanged");
+    expect(record.status).toBe("completed");
+    expect(record.result).toBe("complete answer");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Manager seam: foreground interruption behavior is preserved
 // ---------------------------------------------------------------------------
 
@@ -364,6 +503,33 @@ async function launchBackground(bgExec: (opts: any) => Promise<any>): Promise<st
     undefined,
     fakeCtx(),
   )) as any;
+  expect(res.details.agent_id).toBeTypeOf("string");
+  return res.details.agent_id as string;
+}
+
+/**
+ * Launch a background run end-to-end through the extension with the real
+ * runner over a fake session that ends aborts the way Pi does (`seed` streams
+ * assistant text once the run has subscribed).
+ */
+async function launchBackgroundWithSession(
+  seed: (session: ReturnType<typeof sdkAbortResolvingSession>) => void,
+): Promise<string> {
+  const session = sdkAbortResolvingSession();
+  runSubagentMock.mockImplementation((opts: any) => {
+    const run = runSubagentSession({ session, prompt: "work", abortSignal: opts.abortSignal });
+    seed(session);
+    return run;
+  });
+  const res = (await toolsRef!
+    .get("Agent")!
+    .execute(
+      "call-1",
+      { subagent_type: "general", prompt: "work", description: "task", run_in_background: true },
+      undefined,
+      undefined,
+      fakeCtx(),
+    )) as any;
   expect(res.details.agent_id).toBeTypeOf("string");
   return res.details.agent_id as string;
 }
@@ -511,6 +677,57 @@ describe("stop_subagent tool — unknown and already-terminal runs", () => {
     const res = (await stop.execute("call-6", { agent_id: id })) as any;
     expect(res.details.status).toBe("failed");
     expect(contentText(res)).toContain("model unavailable");
+  });
+});
+
+describe("stop_subagent tool — stop/completion race reporting", () => {
+  it("reports a completion that landed during the stop without claiming it came first", async () => {
+    const { stop, result } = toolRefs();
+    // The run resolves *on* the abort: the completion lands while the stop is
+    // being applied, so the response reports the terminal outcome (completed)
+    // and that the stop changed nothing — but the tool cannot know whether the
+    // completion preceded the request, so it must not assert that ordering.
+    const id = await launchBackground(
+      (opts: any) =>
+        new Promise((resolve) => {
+          opts.abortSignal?.addEventListener(
+            "abort",
+            () => resolve({ result: "finished during the stop", tokens: 1, toolUses: 0 }),
+            { once: true },
+          );
+        }),
+    );
+
+    const res = (await stop.execute("call-2", { agent_id: id })) as any;
+
+    expect(res.details.status).toBe("completed");
+    expect(res.details.changed).toBe(false);
+    const text = contentText(res);
+    expect(text).not.toMatch(/before the stop request/);
+    expect(text).toMatch(/completed/);
+    expect(text).toMatch(/did not change the outcome/i);
+    // The completed outcome is intact for later retrieval.
+    const retrieved = (await result.execute("call-3", { agent_id: id })) as any;
+    expect((retrieved.details as any).status).toBe("completed");
+    expect(contentText(retrieved)).toContain("finished during the stop");
+  });
+
+  it("reports a Pi-semantics stop as stopped with partial output, never completed", async () => {
+    const { stop, result } = toolRefs();
+    // A fake session that ends an aborted run the way Pi's agent loop does:
+    // stopReason "aborted" and a resolved prompt rather than a rejection.
+    const id = await launchBackgroundWithSession((session) => session.emitText("draft findings"));
+
+    const res = (await stop.execute("call-2", { agent_id: id })) as any;
+
+    expect(res.details.status).toBe("stopped");
+    expect(res.details.changed).toBe(true);
+    const text = contentText(res);
+    expect(text).toMatch(/^Stopped /);
+    expect(text).toContain("Partial assistant output (incomplete):");
+    expect(text).toContain("draft findings");
+    const retrieved = (await result.execute("call-3", { agent_id: id })) as any;
+    expect((retrieved.details as any).status).toBe("stopped");
   });
 });
 

@@ -11,14 +11,20 @@ export interface WebFetchDetails {
   source: "html" | "text" | "pdf";
   /** Error message if the fetch succeeded but extraction was poor. */
   extractionWarning?: string;
-  /** Page count for PDFs. */
+  /**
+   * Page count when the extractor could verify it. Absent means unknown — the
+   * built-in PDF extractor cannot count pages reliably, so it never claims one.
+   */
   pageCount?: number;
-  /** Whether PDF content was truncated (page limit hit). */
-  truncated?: boolean;
   /** Absolute path of the finalized Readable artifact on disk. */
   artifactPath: string;
-  /** Whether the artifact contains the full converted source within limits. */
-  artifactComplete: boolean;
+  /**
+   * Whether the artifact provably contains the whole converted source:
+   * `complete` (verified in full), `partial` (extractor reported missing
+   * content), or `unknown` (the extractor cannot verify completeness).
+   * Independent of `modelInputTruncated`.
+   */
+  artifactCompleteness: ArtifactCompleteness;
   /** AI extraction answer returned by the Extraction model. */
   answer: string;
   /** Character count of the AI extraction answer. */
@@ -35,6 +41,14 @@ export interface WebFetchDetails {
   warnings?: ExtractionThinkingWarning[];
 }
 
+/**
+ * How much of the fetched source a Readable artifact provably contains.
+ *
+ * `unknown` is not a synonym for either — the built-in PDF extractor scans the
+ * whole capped file but cannot prove it captured every page's text.
+ */
+export type ArtifactCompleteness = "complete" | "partial" | "unknown";
+
 /** Options for fetching a URL. */
 export interface FetchOptions {
   signal?: AbortSignal;
@@ -42,7 +56,7 @@ export interface FetchOptions {
   maxContentBytes?: number;
   /** Max bytes for PDF responses (default 10MB). */
   maxPdfBytes?: number;
-  /** Fetch timeout in ms (default 30s). */
+  /** Deadline in ms for the whole request, response body included (default 30s). */
   fetchTimeoutMs?: number;
   /** Custom fetch implementation (for tests). */
   fetchFn?: typeof globalThis.fetch;
@@ -50,29 +64,29 @@ export interface FetchOptions {
   userAgent?: string;
   /** Custom PDF extraction function (for tests). */
   extractPdfFn?: PdfExtractFn;
-  /** Maximum pages to extract from a PDF (default 50). */
-  pdfPageLimit?: number;
   /** When provided, body bytes are streamed here instead of accumulated. */
   sink?: (chunk: Uint8Array) => Promise<void>;
 }
 
 /**
  * Result of PDF text extraction.
+ *
+ * Page count and completeness are optional claims: an extractor that cannot
+ * verify them must omit them rather than guess. No page limit is enforced —
+ * extraction reads the whole capped file.
  */
 export interface PdfExtractResult {
   text: string;
-  pageCount: number;
-  truncated?: boolean;
+  /** Total page count when the extractor can verify it; omit when unknown. */
+  pageCount?: number;
+  /** Whether every page's text was captured when the extractor can verify it. */
+  complete?: boolean;
 }
 
 /**
  * PDF extraction function signature — injectable for testability.
  */
-export type PdfExtractFn = (
-  body: string,
-  url: string,
-  options?: { pageLimit?: number },
-) => PdfExtractResult;
+export type PdfExtractFn = (body: string, url: string) => PdfExtractResult;
 
 // ─── Error ───────────────────────────────────────────────────────────────────
 
@@ -103,10 +117,7 @@ const PDF_MIME = "application/pdf";
 const BINARY_TYPE_RE =
   /^(image|audio|video|font)\/|^application\/(?!json|xml|.*\+xml|.*json|.*javascript|.*ecmascript|pdf)/;
 
-const DEFAULT_PDF_PAGE_LIMIT = 50;
 const DEFAULT_PDF_MAX_BYTES = 10 * 1024 * 1024; // 10 MB for PDFs
-
-export { DEFAULT_PDF_PAGE_LIMIT };
 
 // ─── URL validation (pure) ───────────────────────────────────────────────────
 
@@ -214,46 +225,39 @@ export function isTextContentType(contentType: string): boolean {
  * Extract text content from a PDF.
  *
  * Uses an injectable extraction function (defaultPdfExtractFn by default).
- * The default handler does basic text extraction from simple PDFs by parsing
- * text objects (BT...ET blocks) and extracting text between parentheses.
- * For compressed or complex PDFs, consider using a dedicated PDF library.
+ * No page limit is applied: the whole (already size-capped) file is scanned.
  *
  * @param body - Raw PDF bytes as string
  * @param url - Source URL (for error messages)
- * @param options - Optional custom extractor and page limit
- * @returns Extracted text and page count
+ * @param options - Optional custom extractor
+ * @returns Extracted text plus any page-count/completeness claim the extractor
+ *   can actually verify
  */
 export function extractPdfContent(
   body: string,
   url: string,
-  options: { extractPdfFn?: PdfExtractFn; pageLimit?: number } = {},
+  options: { extractPdfFn?: PdfExtractFn } = {},
 ): PdfExtractResult {
   const extractFn = options.extractPdfFn ?? defaultPdfExtractFn;
-  const pageLimit = options.pageLimit ?? DEFAULT_PDF_PAGE_LIMIT;
-  return extractFn(body, url, { pageLimit });
+  return extractFn(body, url);
 }
 
 /**
  * Default PDF text extractor.
  *
  * Handles simple PDFs by scanning for text objects (BT...ET blocks)
- * and extracting text between parentheses after Tj/TJ operators.
- * For compressed or complex PDFs this will return empty text.
+ * and extracting text between parentheses after Tj/TJ operators. For
+ * compressed or complex PDFs this will return empty text.
+ *
+ * It reports no page count and no completeness claim: the scan is
+ * regex-based over the whole file and cannot know how many pages the document
+ * has or whether every page's text was found. Omitting those claims is
+ * deliberate — an unverified number is reported as unknown, not guessed.
  */
-export function defaultPdfExtractFn(
-  body: string,
-  _url: string,
-  options: { pageLimit?: number } = {},
-): PdfExtractResult {
-  const pageLimit = options.pageLimit ?? DEFAULT_PDF_PAGE_LIMIT;
-
+export function defaultPdfExtractFn(body: string, _url: string): PdfExtractResult {
   if (!body || !body.includes("%PDF")) {
-    return { text: "", pageCount: 0 };
+    return { text: "" };
   }
-
-  // Count pages by looking for /Type /Page (but not /Pages) in obj..endobj blocks
-  const pageMatches = body.match(/obj[\s\S]*?\/Type\s*\/Page[^s\w][\s\S]*?endobj/g);
-  const pageCount = pageMatches ? pageMatches.length : 0;
 
   // Extract text from PDF text objects
   const textFragments: string[] = [];
@@ -297,19 +301,9 @@ export function defaultPdfExtractFn(
     }
   }
 
-  let text = textFragments.join(" ");
+  const text = textFragments.join(" ");
 
-  // Check page limit
-  const truncated = pageCount > pageLimit;
-  if (truncated) {
-    text += `\n\n[... PDF truncated: ${pageCount} pages total, extraction limited to first ${pageLimit} pages]`;
-  }
-
-  return {
-    text: text.trim(),
-    pageCount,
-    truncated,
-  };
+  return { text: text.trim() };
 }
 
 // ─── Fetch (IO, injected for testability) ────────────────────────────────────
@@ -318,7 +312,9 @@ export function defaultPdfExtractFn(
  * Fetch a URL with browser-like user agent, timeout, and size caps.
  *
  * Returns the response + body text. Throws WebFetchError on network failure,
- * timeout, binary content, oversized responses, or HTTP errors.
+ * timeout, caller cancellation, binary content, oversized responses, or HTTP
+ * errors. The deadline covers the whole download, response body included; on
+ * any early exit the body stream and its connection are released.
  */
 export async function fetchUrl(
   url: URL,
@@ -328,19 +324,43 @@ export async function fetchUrl(
   const timeoutMs = options.fetchTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxContentBytes ?? DEFAULT_MAX_BYTES;
   const userAgent = options.userAgent ?? BROWSER_UA;
+  const urlStr = url.toString();
 
-  // Set up timeout via AbortController
+  // The deadline spans headers *and* body, so a stalled body cannot outlive it.
+  // Firing aborts the request so the transport can release the connection.
   const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+  let stopCause: "timeout" | "cancelled" | undefined;
+  const callerSignal = options.signal;
+  const onCallerAbort = () => {
+    stopCause ??= "cancelled";
+  };
+  if (callerSignal) {
+    if (callerSignal.aborted) stopCause = "cancelled";
+    else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+  const timeoutId = setTimeout(() => {
+    stopCause ??= "timeout";
+    timeoutController.abort();
+  }, timeoutMs);
 
-  // Combine with caller's signal if provided
-  const signal = options.signal
-    ? anySignal([options.signal, timeoutController.signal])
-    : timeoutController.signal;
+  const combined = callerSignal ? anySignal([callerSignal, timeoutController.signal]) : undefined;
+  const signal = combined?.signal ?? timeoutController.signal;
+
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+    combined?.dispose();
+  };
+
+  // Report why the request stopped, based on whichever event came first.
+  const abortError = (): WebFetchError =>
+    stopCause === "cancelled" || callerSignal?.aborted
+      ? new WebFetchError(urlStr, cancellationReason(callerSignal))
+      : new WebFetchError(urlStr, `Request timed out after ${timeoutMs}ms`);
 
   let response: Response;
   try {
-    response = await fetchFn(url.toString(), {
+    response = await fetchFn(urlStr, {
       signal,
       headers: {
         "User-Agent": userAgent,
@@ -350,66 +370,68 @@ export async function fetchUrl(
       redirect: "follow",
     });
   } catch (err) {
-    clearTimeout(timeoutId);
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new WebFetchError(url.toString(), `Request timed out after ${timeoutMs}ms`);
-    }
-    throw new WebFetchError(url.toString(), `Network error: ${(err as Error).message}`);
-  }
-  clearTimeout(timeoutId);
-
-  // Check for HTTP errors
-  if (!response.ok) {
-    throw new WebFetchError(
-      url.toString(),
-      `HTTP ${response.status} ${response.statusText ?? ""}`.trim(),
-    );
+    const aborted = signal.aborted || isAbortError(err);
+    const wrapped = aborted
+      ? abortError()
+      : new WebFetchError(urlStr, `Network error: ${(err as Error).message}`);
+    cleanup();
+    throw wrapped;
   }
 
-  // Check Content-Type
-  const contentType = normalizeContentType(response.headers.get("content-type"));
-
-  if (isBinaryContentType(contentType)) {
-    throw new WebFetchError(
-      url.toString(),
-      `Unsupported content type "${contentType}" — the tool can only fetch HTML, plain text, and PDFs`,
-    );
-  }
-
-  // Determine effective size cap (PDFs get a larger cap)
-  const effectiveMaxBytes = isPdfContentType(contentType, url.toString())
-    ? (options.maxPdfBytes ?? DEFAULT_PDF_MAX_BYTES)
-    : maxBytes;
-
-  // Enforce size cap
-  const contentLength = response.headers.get("content-length");
-  if (contentLength) {
-    const len = parseInt(contentLength, 10);
-    if (!isNaN(len) && len > effectiveMaxBytes) {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let bodyConsumed = false;
+  try {
+    // Check for HTTP errors
+    if (!response.ok) {
       throw new WebFetchError(
-        url.toString(),
-        `Response too large: ${len} bytes (max ${effectiveMaxBytes} bytes)`,
+        urlStr,
+        `HTTP ${response.status} ${response.statusText ?? ""}`.trim(),
       );
     }
-  }
 
-  // Read body with size cap. When a sink is provided, bytes are streamed to it
-  // incrementally (disk-backed download) instead of accumulated in memory;
-  // the cap is enforced identically in both modes.
-  let body: string;
-  try {
-    const reader = response.body?.getReader();
+    // Check Content-Type
+    const contentType = normalizeContentType(response.headers.get("content-type"));
+
+    if (isBinaryContentType(contentType)) {
+      throw new WebFetchError(
+        urlStr,
+        `Unsupported content type "${contentType}" — the tool can only fetch HTML, plain text, and PDFs`,
+      );
+    }
+
+    // Determine effective size cap (PDFs get a larger cap)
+    const effectiveMaxBytes = isPdfContentType(contentType, urlStr)
+      ? (options.maxPdfBytes ?? DEFAULT_PDF_MAX_BYTES)
+      : maxBytes;
+
+    // Enforce size cap
+    const contentLength = response.headers.get("content-length");
+    if (contentLength) {
+      const len = parseInt(contentLength, 10);
+      if (!isNaN(len) && len > effectiveMaxBytes) {
+        throw new WebFetchError(
+          urlStr,
+          `Response too large: ${len} bytes (max ${effectiveMaxBytes} bytes)`,
+        );
+      }
+    }
+
+    // Read body with size cap. When a sink is provided, bytes are streamed to it
+    // incrementally (disk-backed download) instead of accumulated in memory;
+    // the cap is enforced identically in both modes. Every await is raced
+    // against the signal so the deadline also bounds a stalled body.
+    let body: string;
+    reader = response.body?.getReader();
     if (reader) {
       const chunks: Uint8Array[] = [];
       let total = 0;
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await withAbort(reader.read(), signal);
         if (done) break;
         total += value.byteLength;
         if (total > effectiveMaxBytes) {
-          reader.cancel();
           throw new WebFetchError(
-            url.toString(),
+            urlStr,
             `Response exceeded size cap: read over ${effectiveMaxBytes} bytes`,
           );
         }
@@ -419,45 +441,54 @@ export async function fetchUrl(
           chunks.push(value);
         }
       }
+      bodyConsumed = true;
       if (options.sink) {
         body = "";
       } else {
-        const combined = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
+        const combinedBytes = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
         let offset = 0;
         for (const chunk of chunks) {
-          combined.set(chunk, offset);
+          combinedBytes.set(chunk, offset);
           offset += chunk.byteLength;
         }
-        body = new TextDecoder().decode(combined);
+        body = new TextDecoder().decode(combinedBytes);
       }
     } else if (options.sink) {
-      const text = await response.text();
+      const text = await withAbort(response.text(), signal);
+      bodyConsumed = true;
       if (text.length > effectiveMaxBytes) {
         throw new WebFetchError(
-          url.toString(),
+          urlStr,
           `Response too large: ${text.length} bytes (max ${effectiveMaxBytes} bytes)`,
         );
       }
       await options.sink(new TextEncoder().encode(text));
       body = "";
     } else {
-      body = await response.text();
+      body = await withAbort(response.text(), signal);
+      bodyConsumed = true;
       if (body.length > effectiveMaxBytes) {
         throw new WebFetchError(
-          url.toString(),
+          urlStr,
           `Response too large: ${body.length} bytes (max ${effectiveMaxBytes} bytes)`,
         );
       }
     }
+
+    return { response, body };
   } catch (err) {
     if (err instanceof WebFetchError) throw err;
-    throw new WebFetchError(
-      url.toString(),
-      `Failed to read response body: ${(err as Error).message}`,
-    );
+    if (signal.aborted) throw abortError();
+    throw new WebFetchError(urlStr, `Failed to read response body: ${(err as Error).message}`);
+  } finally {
+    cleanup();
+    if (!bodyConsumed) {
+      // Stop consuming and let the transport release the connection.
+      if (reader) void reader.cancel().catch(() => {});
+      else if (response.body) void response.body.cancel().catch(() => {});
+      timeoutController.abort();
+    }
   }
-
-  return { response, body };
 }
 
 // ─── Plain-text pass-through (pure) ─────────────────────────────────────────
@@ -469,19 +500,62 @@ export function processPlainText(body: string): string {
   return body.trim();
 }
 
-// ─── Signal combiner ─────────────────────────────────────────────────────────
+// ─── Signal helpers ─────────────────────────────────────────────────────────
+
+function isAbortError(err: unknown): boolean {
+  return (err as { name?: string } | undefined)?.name === "AbortError";
+}
+
+/**
+ * Human-readable reason for a caller-initiated cancellation. Pi's cancellation
+ * carries no reason, so the fallback wording stays neutral.
+ */
+function cancellationReason(signal: AbortSignal | undefined): string {
+  const reason = signal?.reason as unknown;
+  if (reason instanceof Error && reason.name !== "AbortError" && reason.message) {
+    return `Request cancelled: ${reason.message}`;
+  }
+  return "Request cancelled";
+}
 
 /**
  * Combine multiple AbortSignals into one that fires when any fires.
+ * Call `dispose` to remove the listeners it registered.
  */
-function anySignal(signals: AbortSignal[]): AbortSignal {
+function anySignal(signals: AbortSignal[]): { signal: AbortSignal; dispose: () => void } {
   const controller = new AbortController();
+  const removers: Array<() => void> = [];
   for (const signal of signals) {
     if (signal.aborted) {
       controller.abort(signal.reason);
-      return controller.signal;
+      break;
     }
-    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+    const onAbort = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    removers.push(() => signal.removeEventListener("abort", onAbort));
   }
-  return controller.signal;
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      for (const remove of removers) remove();
+    },
+  };
+}
+
+/**
+ * Await `promise`, but reject as soon as `signal` aborts — a transport that
+ * ignores the signal must not outlive the deadline.
+ */
+async function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
 }

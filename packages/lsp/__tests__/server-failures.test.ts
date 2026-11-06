@@ -8,13 +8,16 @@
  * PATH and a tiny node fixture script.
  */
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { LspManager, lspToolSpecs, type LspToolSpec, type ServerDef } from "../tools.ts";
 
 const MISSING_CMD = "definitely-not-an-lsp-server-4f9d2";
+
+const STARTUP_FIXTURE = fileURLToPath(new URL("./fixtures/startup-lsp.mjs", import.meta.url));
 
 function tempDir(): string {
   return mkdtempSync(path.join(os.tmpdir(), "lsp-fail-"));
@@ -78,6 +81,87 @@ describe("unsupported file type", () => {
     const { text } = result as { text: string };
     expect(text).toContain("no language server configured");
     expect(text).toContain(".unknownext");
+  });
+});
+
+describe("concurrent server startup", () => {
+  /**
+   * One workspace whose fixture server records every process start and, unless
+   * `failFirstStartup` is false, fails its very first `initialize` (see
+   * fixtures/startup-lsp.mjs). `starts()` is therefore the number of server
+   * processes spawned so far.
+   */
+  function startupWorkspace({ failFirstStartup = true }: { failFirstStartup?: boolean } = {}) {
+    const dir = tempDir();
+    const startLog = path.join(dir, "starts.ndjson");
+    const failMarker = path.join(dir, "startup-failed-once");
+    // A pre-existing marker tells the fixture that its failing attempt is over.
+    if (!failFirstStartup) writeFileSync(failMarker, "no failing startup\n");
+    const manager = new LspManager(
+      {
+        fake: {
+          cmd: process.execPath,
+          args: [STARTUP_FIXTURE, startLog, failMarker],
+          extensions: [".fake"],
+        },
+      },
+      dir,
+    );
+    const specs = lspToolSpecs(() => Promise.resolve(manager), { diagnosticsDelayMs: 10 });
+    const file = path.join(dir, "sample.fake");
+    writeFileSync(file, "const x = 1;");
+    return {
+      file,
+      definition: specs.find((s) => s.name === "lsp_definition")!,
+      starts: () =>
+        readFileSync(startLog, "utf8")
+          .split("\n")
+          .filter((line) => line.trim()).length,
+      dispose: () => manager.stopAll(),
+    };
+  }
+
+  it("shares one startup across concurrent first requests", async () => {
+    const ws = startupWorkspace({ failFirstStartup: false });
+    try {
+      const results = await Promise.all([
+        ws.definition.run({ file: ws.file, line: 1, column: 1 }),
+        ws.definition.run({ file: ws.file, line: 1, column: 1 }),
+        ws.definition.run({ file: ws.file, line: 1, column: 1 }),
+      ]);
+
+      for (const result of results) {
+        expect((result as { text: string }).text).toContain("sample.fake:1:1");
+      }
+      expect(ws.starts()).toBe(1);
+    } finally {
+      await ws.dispose();
+    }
+  });
+
+  it("discards a failed startup so a later request can retry", async () => {
+    const ws = startupWorkspace();
+    try {
+      const failed = await Promise.all([
+        ws.definition.run({ file: ws.file, line: 1, column: 1 }),
+        ws.definition.run({ file: ws.file, line: 1, column: 1 }),
+      ]);
+
+      for (const result of failed) {
+        expect((result as { text: string }).text).toContain(
+          "fixture language server startup failed",
+        );
+      }
+      // The concurrent pair shared one startup attempt, which then failed.
+      expect(ws.starts()).toBe(1);
+
+      const retried = await ws.definition.run({ file: ws.file, line: 1, column: 1 });
+
+      expect((retried as { text: string }).text).toContain("sample.fake:1:1");
+      expect(ws.starts()).toBe(2);
+    } finally {
+      await ws.dispose();
+    }
   });
 });
 

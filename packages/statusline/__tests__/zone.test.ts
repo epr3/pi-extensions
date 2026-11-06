@@ -7,11 +7,9 @@ import {
   ZONE_LABEL,
   ZONE_COLOR,
   ZONE_DEFAULTS,
-  configFromEnv,
   formatStatusSegments,
   AWAITING_CONTEXT_TEXT,
   type Zone,
-  type ZoneConfig,
 } from "../zone.ts";
 
 const PARTIAL_GLYPHS = /[\u258F\u258E\u258D\u258C\u258B\u258A\u2589]/; // ▏▎▍▌▋▊▉
@@ -134,43 +132,6 @@ describe("zone presentation", () => {
     expect(ZONE_COLOR.fading).toBe("warning");
     expect(ZONE_COLOR.risky).toBe("warning");
     expect(ZONE_COLOR.caveman).toBe("error");
-  });
-});
-
-describe("environment-derived config", () => {
-  it("uses defaults when no env vars are set", () => {
-    const c = configFromEnv({}, ZONE_DEFAULTS);
-    expect(c.effectiveLimit).toBe(ZONE_DEFAULTS.effectiveLimit);
-    expect(c.thresholds.sharp).toBe(ZONE_DEFAULTS.thresholds.sharp);
-    expect(c.thresholds.fading).toBe(ZONE_DEFAULTS.thresholds.fading);
-    expect(c.thresholds.risky).toBe(ZONE_DEFAULTS.thresholds.risky);
-  });
-
-  it("accepts k-suffix token counts and overrides individual thresholds", () => {
-    const c = configFromEnv(
-      { EFFECTIVE_LIMIT: "200k", Z_SHARP: "0.5", Z_RISKY: "0.9" },
-      ZONE_DEFAULTS,
-    );
-    expect(c.effectiveLimit).toBe(200_000);
-    expect(c.thresholds.sharp).toBe(0.5);
-    expect(c.thresholds.fading).toBe(ZONE_DEFAULTS.thresholds.fading);
-    expect(c.thresholds.risky).toBe(0.9);
-  });
-
-  it("handles M-suffix and plain number token limits", () => {
-    expect(configFromEnv({ EFFECTIVE_LIMIT: "0.5M" }, ZONE_DEFAULTS).effectiveLimit).toBe(500_000);
-    expect(configFromEnv({ EFFECTIVE_LIMIT: "80000" }, ZONE_DEFAULTS).effectiveLimit).toBe(80_000);
-  });
-
-  it("applies an env-derived effective limit to classification", () => {
-    const base: ZoneConfig = {
-      effectiveLimit: 100_000,
-      thresholds: ZONE_DEFAULTS.thresholds,
-    };
-    const c = configFromEnv({ EFFECTIVE_LIMIT: "200k" }, base);
-    expect(c.effectiveLimit).toBe(200_000);
-    expect(classify(150_000, 300_000, c).zone).toBe("risky"); // 75% of 200k
-    expect(classify(200_000, 400_000, c).zone).toBe("caveman");
   });
 });
 

@@ -17,10 +17,9 @@ import {
   processPlainText,
   extractPdfContent,
   WebFetchError,
-  DEFAULT_PDF_PAGE_LIMIT,
 } from "./fetch.ts";
 import { convertHtmlFileToMarkdown } from "./converter.ts";
-import type { WebFetchDetails, FetchOptions, PdfExtractFn } from "./fetch.ts";
+import type { ArtifactCompleteness, WebFetchDetails, FetchOptions, PdfExtractFn } from "./fetch.ts";
 import { ArtifactStore, FileSink } from "./storage.ts";
 import type { ArtifactKind } from "./storage.ts";
 import { getRuntimeKnobs } from "./runtime.ts";
@@ -99,8 +98,10 @@ interface ConvertedSource {
   text: string;
   title?: string;
   warning?: string;
+  /** Page count when the extractor could verify it; absent means unknown. */
   pageCount?: number;
-  truncated?: boolean;
+  /** How much of the source the artifact provably contains. */
+  artifactCompleteness: ArtifactCompleteness;
   source: WebFetchDetails["source"];
   contentType: string;
   /** Absolute path when the conversion wrote the artifact directly. */
@@ -135,6 +136,9 @@ async function convertHtmlPage(
     contentType: "text/html",
     artifactPath,
     sourceLength: outputChars,
+    // The response cap fails before conversion, so the artifact holds the whole
+    // convertible source rather than a prefix of it.
+    artifactCompleteness: "complete",
   };
 }
 
@@ -142,9 +146,8 @@ function convertPdf(
   body: string,
   urlStr: string,
   extractPdfFn: PdfExtractFn | undefined,
-  pageLimit: number,
 ): ConvertedSource {
-  const result = extractPdfContent(body, urlStr, { extractPdfFn, pageLimit });
+  const result = extractPdfContent(body, urlStr, { extractPdfFn });
   if (!result.text) {
     throw new WebFetchError(
       urlStr,
@@ -155,14 +158,23 @@ function convertPdf(
     kind: "markdown",
     text: result.text,
     pageCount: result.pageCount,
-    truncated: result.truncated ?? false,
+    // No page limit is enforced and the regex scan cannot prove it found every
+    // page's text, so completeness stays unknown unless the extractor says so.
+    artifactCompleteness:
+      result.complete === undefined ? "unknown" : result.complete ? "complete" : "partial",
     source: "pdf",
     contentType: "application/pdf",
   };
 }
 
 function convertText(body: string, contentType: string): ConvertedSource {
-  return { kind: "text", text: processPlainText(body), source: "text", contentType };
+  return {
+    kind: "text",
+    text: processPlainText(body),
+    artifactCompleteness: "complete",
+    source: "text",
+    contentType,
+  };
 }
 
 function artifactExtension(contentType: string, url: string): string {
@@ -220,9 +232,10 @@ export default function (pi: ExtensionAPI) {
       "article/main element are preserved in source order; relative links resolve against " +
       "the final URL after redirects. An explicitly configured Extraction model answers the " +
       "prompt using the converted source; only a bounded leading portion of large sources is " +
-      "sent to the model. The artifact contains the full converted source (within limits) and " +
-      "lives only for the creating session. A path from an old transcript is stale — refetch " +
-      "the URL to regenerate it. Unsupported binary media types, unusable extraction, " +
+      "sent to the model. The artifact holds the converted source within the fetch limits and " +
+      "lives only for the creating session; for PDFs the page count and artifact completeness " +
+      "are reported as unknown because the lightweight extractor cannot verify them. " +
+      "A path from an old transcript is stale — refetch the URL to regenerate it. Unsupported binary media types, unusable extraction, " +
       "exceeded limits, and missing extraction-model configuration produce clear errors.",
     promptSnippet: "Fetch a URL and answer a specific question about its content",
     promptGuidelines: [
@@ -234,8 +247,8 @@ export default function (pi: ExtensionAPI) {
         "sections outside article/main elements remain in source order. Scripts and styles are " +
         "excluded. Exotic structures (colspan/rowspan spreads, definition lists, form controls) " +
         "are simplified rather than perfectly reproduced.",
-      "Large sources may be truncated for the model input; the artifact remains complete unless the source itself was truncated or the PDF page limit was reached. Refetch the URL after leaving a session instead of reusing an old artifact path.",
-      "PDFs are extracted up to 10MB and 50 pages; longer PDFs include a truncation notice and a partial artifact.",
+      "Large sources may be truncated for the model input while the artifact stays complete; artifact completeness is reported separately as complete, partial, or unknown. Refetch the URL after leaving a session instead of reusing an old artifact path.",
+      "PDFs are text-extracted up to 10 MB with a lightweight extractor and no page limit; its page count and artifact completeness are reported as unknown because it cannot verify them. Compressed or scanned PDFs may not extract at all.",
       "Combine with web_search to first discover relevant URLs, then fetch the most promising ones.",
       "For documentation-heavy topics, check for /llms.txt on the host before fetching individual pages.",
       "Fetching is direct only: JavaScript-only or blocked pages are not sent to any alternate service.",
@@ -312,12 +325,7 @@ export default function (pi: ExtensionAPI) {
 
         if (isPdfContentType(contentType, urlStr)) {
           const body = await readFile(downloadPath, "utf8");
-          conv = convertPdf(
-            body,
-            urlStr,
-            callKnobs.extractPdfFn,
-            callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT,
-          );
+          conv = convertPdf(body, urlStr, callKnobs.extractPdfFn);
           await writeFile(artifactPath, conv.text);
         } else if (isHtmlContentType(contentType) || contentType === "") {
           // Relative links resolve against the final URL after redirects.
@@ -335,7 +343,7 @@ export default function (pi: ExtensionAPI) {
         }
 
         // 3. Finalize the Readable artifact, then release the raw download.
-        await store.settleArtifact(call, conv.kind, !conv.truncated);
+        await store.settleArtifact(call, conv.kind, conv.artifactCompleteness);
         call.assertActive();
         await store.releaseDownload(call);
 
@@ -351,7 +359,7 @@ export default function (pi: ExtensionAPI) {
               title: conv.title ?? "",
               prompt,
               artifactPath,
-              artifactComplete: !conv.truncated,
+              artifactCompleteness: conv.artifactCompleteness,
             },
             budgetPolicy,
             call.combinedSignal,
@@ -369,7 +377,7 @@ export default function (pi: ExtensionAPI) {
             `AI extraction failed: ${(err as Error).message}`,
             urlStr,
             artifactPath,
-            !conv.truncated,
+            conv.artifactCompleteness,
             err instanceof ExtractionModelError ? err.usage : undefined,
             err,
           );
@@ -381,16 +389,20 @@ export default function (pi: ExtensionAPI) {
         if (conv.title) lines.push(`# ${conv.title}\n`);
         lines.push(`Source: ${urlStr}`);
         lines.push(`Artifact: ${artifactPath}`);
-        if (conv.pageCount !== undefined) {
-          const pageInfo = conv.truncated
-            ? `Pages: ${conv.pageCount} (extraction limited to first ${callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} pages)`
-            : `Pages: ${conv.pageCount}`;
-          lines.push(pageInfo);
-        }
-        if (conv.truncated) {
+        if (conv.source === "pdf") {
           lines.push(
-            `Warning: artifact is partial — PDF extraction limited to ${callKnobs.pdfPageLimit ?? DEFAULT_PDF_PAGE_LIMIT} of ${conv.pageCount} pages`,
+            conv.pageCount === undefined
+              ? "Pages: unknown — the built-in PDF extractor cannot verify the page count"
+              : `Pages: ${conv.pageCount}`,
           );
+          if (conv.artifactCompleteness === "unknown") {
+            lines.push(
+              "Warning: PDF artifact completeness is unverified — the whole file was scanned, " +
+                "but the extractor cannot confirm every page's text was captured",
+            );
+          } else if (conv.artifactCompleteness === "partial") {
+            lines.push("Warning: artifact is partial — the extractor reported missing text");
+          }
         }
         if (extraction.modelInputTruncated) {
           lines.push(
@@ -409,9 +421,8 @@ export default function (pi: ExtensionAPI) {
           source: conv.source,
           extractionWarning: conv.warning,
           pageCount: conv.pageCount,
-          truncated: conv.truncated,
           artifactPath,
-          artifactComplete: !conv.truncated,
+          artifactCompleteness: conv.artifactCompleteness,
           answer: extraction.answer,
           answerLength: extraction.answer.length,
           sourceLength: conv.sourceLength ?? conv.text.length,

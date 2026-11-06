@@ -92,6 +92,20 @@ web_search({
 });
 ```
 
+## Behavior
+
+| Scenario                                        | Result                                                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Results returned                                | Numbered results with title, URL, and snippet, plus structured `details`                          |
+| No results                                      | `No results for: <composed query>`                                                                |
+| Stalled headers or stalled response body        | Fails after the 15-second deadline with `web_search: Search timed out after 15000ms`              |
+| Caller cancels the tool call                    | Fails with `web_search: Search cancelled`, never reported as a timeout                            |
+| Network failure (DNS, connection refused, etc.) | Fails with `web_search: Network error: <detail>`                                                  |
+| HTTP error from Google CSE                      | Fails with the shaped Google error message                                                        |
+| Missing credentials                             | Fails before any request with a setup message naming both environment variables and the auth file |
+
+The deadline covers headers **and** the response body, so discovery cannot hang indefinitely. On timeout, cancellation, or an unreadable body the response body is cancelled and the request aborted so the connection is released.
+
 ## Architecture
 
 ```
@@ -105,15 +119,19 @@ packages/web-search/
 ```
 
 - `search.ts` exports pure functions (`composeQuery`, `normalizeTerm`, `normalizeSite`, `cleanInput`, `shapeApiError`, `formatSearchResults`) and IO functions (`resolveCredentials`, `searchGoogle`).
-- `searchGoogle` accepts an optional `fetchFn` parameter for testability (no live web calls in tests).
+- `searchGoogle` accepts optional `{ fetchFn, signal, timeoutMs }` options for testability and caller cancellation (no live web calls in tests).
 - `index.ts` wires the tool using Pi's `ExtensionAPI.registerTool` with the dual-result contract (stable `content` text for the model, structured `details` for renderers).
-- `render.ts` exports `renderWebSearchCall` and `renderWebSearchResult` for compact/expanded TUI rendering.
+- `render.ts` exports `renderWebSearchCall` and `renderWebSearchResult` for compact/expanded TUI rendering. Collapsed rows report the number of results actually returned (including `no results`), not the requested `count`.
+
+## Google query syntax
+
+`composeQuery` combines exact-phrase inclusions as quote-enclosed phrases and exclusions by prefixing a minus sign. Google's [Custom Search XML results documentation](https://developers.google.com/custom-search/docs/xml_results) documents `-` before a word or phrase to exclude it and quotation marks around a phrase to require that phrase. The API's [`q` parameter reference](https://developers.google.com/custom-search/v1/reference/rest/v1/cse/list) documents the query parameter but does not specify how embedded literal quotation marks are escaped. No escaping behavior is claimed here; inputs containing quotation marks are passed through by the current composer and their interpretation is not established by these sources.
 
 ## Testing
 
 The pure functions in `search.ts` (`composeQuery`, `normalizeTerm`, `normalizeSite`, `cleanInput`, `shapeApiError`, `formatSearchResults`) are designed for deterministic unit tests with no live web calls. `searchGoogle` accepts an optional `fetchFn` parameter for injecting a mock fetch.
 
-Tests live in `packages/web-search/__tests__/` as the package's **Package test suite** and run through the shared Vitest harness — they use the **Vitest test idiom** (`describe` / `it` / `expect`), mock the network boundary with `vi.fn()`, and never require Google Custom Search credentials, environment variables, or live network access. `resolveCredentials` is exercised with explicit env objects.
+Tests live in `packages/web-search/__tests__/` as the package's **Package test suite** and run through the shared Vitest harness — they use the **Vitest test idiom** (`describe` / `it` / `expect`), mock the network boundary with `vi.fn()`, and never require Google Custom Search credentials, environment variables, or live network access. `resolveCredentials` is exercised with explicit env objects and an injected `authPath`, so a developer's own `~/.pi/agent/auth/web-search.json` can never affect the outcome.
 
 Run the package's tests locally:
 
