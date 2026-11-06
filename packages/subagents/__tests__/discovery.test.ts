@@ -8,6 +8,7 @@ import {
   customSubagentScopes,
   validNames,
   parseToolListField,
+  parseThinkingLevelField,
 } from "../discovery.ts";
 import type { CustomTypeDiscovery } from "../discovery.ts";
 
@@ -163,6 +164,54 @@ describe("frontmatter field validation", () => {
       expect(d.diagnostics[0].kind, `${field}: ${value}`).toBe(kind);
       expect(d.diagnostics[0].message, `${field}: ${value}`).toMatch(pattern);
     }
+  });
+
+  describe("thinkingLevel frontmatter field", () => {
+    it("accepts Pi's thinking levels and records them on the definition", () => {
+      const scopes = [dir("agents")];
+      def(
+        scopes[0],
+        "focused.md",
+        "---\nname: focused\ndescription: D\nthinkingLevel: low\n---\nBody.\n",
+      );
+
+      const d = discoverCustomSubagents(scopes);
+      expect(d.valid.get("focused")!.thinkingLevel).toBe("low");
+      expect(d.diagnostics).toHaveLength(0);
+    });
+
+    it.each(["off", "minimal", "low", "medium", "high", "xhigh", "max"])(
+      "parseThinkingLevelField accepts %s",
+      (value) => {
+        expect(parseThinkingLevelField(value)).toEqual({ value });
+      },
+    );
+
+    it.each(["Low", " high ", "", "bogus", false, null, 2, ["low"]])(
+      "parseThinkingLevelField rejects %j with the valid levels named",
+      (value) => {
+        const r = parseThinkingLevelField(value);
+        expect(r.value).toBeUndefined();
+        expect(r.error).toMatch(/thinkingLevel/);
+        expect(r.error).toMatch(/low/);
+        expect(r.error).toMatch(/max/);
+      },
+    );
+
+    it("rejects an invalid thinkingLevel at discovery with an actionable message", () => {
+      const scopes = [dir("agents")];
+      def(
+        scopes[0],
+        "typoed.md",
+        "---\nname: typoed\ndescription: D\nthinkingLevel: higg\n---\nBody.\n",
+      );
+
+      const d = discoverCustomSubagents(scopes);
+      expect(d.valid.size).toBe(0);
+      expect(d.diagnostics[0].kind).toBe("invalid-definition");
+      expect(d.diagnostics[0].message).toMatch(/higg/);
+      expect(d.diagnostics[0].message).toMatch(/thinkingLevel/);
+    });
   });
 
   describe("skills frontmatter field", () => {

@@ -3,7 +3,9 @@ import type { AgentType } from "./agents.ts";
 import type { WarningScope } from "./warnings.ts";
 
 /** A per-type scope or the shared scope — custom Subagent types have no
- *  per-type settings of their own yet, so they resolve at shared scope. */
+ *  per-type settings of their own; their per-type preference is the
+ *  definition's own `thinkingLevel` frontmatter (see
+ *  resolveDefinitionThinkingLevel). */
 export type AgentTypeOrShared = AgentType | "shared";
 
 /**
@@ -79,6 +81,68 @@ export function resolveTypeThinkingLevel(
       scope: type,
       setting: thinkingSetting(type),
       reference: JSON.stringify(typeRaw),
+      type: "malformed",
+    });
+  }
+
+  if (sharedRaw !== undefined) {
+    if (isThinkingLevel(sharedRaw)) {
+      return {
+        winner: { level: sharedRaw, setting: thinkingSetting("shared"), scope: "shared" },
+        warnings,
+      };
+    }
+    warnings.push({
+      scope: "shared",
+      setting: thinkingSetting("shared"),
+      reference: JSON.stringify(sharedRaw),
+      type: "malformed",
+    });
+  }
+
+  return { warnings };
+}
+
+/**
+ * Resolve the Subagent thinking level for a custom **Subagent type** from its
+ * definition's frontmatter `thinkingLevel` and the shared settings
+ * preference.
+ *
+ * The definition's own preference replaces the per-type settings slot of the
+ * built-in cascade: a definition preference short-circuits (the shared setting
+ * is never inspected, so a broken shared value stays silent), and omission
+ * falls through to the shared setting exactly as before. Discovery rejects an
+ * invalid definition value up front (parseThinkingLevelField), so a valid
+ * definition value always wins; the defensive malformed branch below exists
+ * only to keep the cascade total should an unvalidated raw value ever reach
+ * it.
+ *
+ * `name` is the custom type name; it labels the definition's field in
+ * warnings and effective-level reports, e.g.
+ * `definition "reader" thinkingLevel requested "high"; effective "low"`.
+ */
+export function resolveDefinitionThinkingLevel(
+  definitionRaw: unknown,
+  sharedRaw: unknown,
+  name: string,
+): ThinkingResolution {
+  const warnings: ThinkingWarning[] = [];
+
+  if (definitionRaw !== undefined) {
+    if (isThinkingLevel(definitionRaw)) {
+      return {
+        winner: {
+          level: definitionRaw,
+          setting: `definition "${name}" thinkingLevel`,
+          scope: "definition",
+        },
+        warnings,
+      };
+    }
+    warnings.push({
+      scope: "definition",
+      setting: `definition "${name}" thinkingLevel`,
+      reference: JSON.stringify(definitionRaw),
       type: "malformed",
     });
   }

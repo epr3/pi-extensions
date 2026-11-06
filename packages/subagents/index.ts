@@ -45,7 +45,7 @@ import {
   resolveDefinitionModel,
   checkDefaultModelWarnings,
 } from "./model-ref.ts";
-import { resolveTypeThinkingLevel } from "./thinking-level.ts";
+import { resolveTypeThinkingLevel, resolveDefinitionThinkingLevel } from "./thinking-level.ts";
 import { resolveSkillPreloads, type PreloadedSkill } from "./skills.ts";
 import type { AgentWarning } from "./warnings.ts";
 import { readFileSync } from "node:fs";
@@ -856,13 +856,21 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
+      // Custom Subagent types carry their per-type preference in the
+      // definition's own `thinkingLevel` frontmatter (validated at discovery),
+      // so the per-type slot of the cascade is the definition. It short-
+      // circuits over the shared setting exactly like the built-ins' per-type
+      // settings: a broken shared value stays silent when a defined
+      // preference wins, and omission falls through to shared then the
+      // SDK/settings behavior. Explicit `off` is a real preference, not
+      // omission.
       const thinking = isBuiltin
         ? resolveTypeThinkingLevel(
             cfg[resolved.type].thinkingLevel,
             cfg.thinkingLevel,
             resolved.type,
           )
-        : resolveTypeThinkingLevel(undefined, cfg.thinkingLevel, "shared");
+        : resolveDefinitionThinkingLevel(agentDef?.thinkingLevel, cfg.thinkingLevel, resolved.name);
 
       const warnings: AgentWarning[] = [...modelWarnings, ...thinking.warnings];
       for (const w of thinking.warnings) {

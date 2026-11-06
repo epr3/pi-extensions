@@ -1,7 +1,11 @@
 import type { AgentType } from "./agents.ts";
 
-/** Which settings level a subagent warning applies to. */
-export type WarningScope = "shared" | AgentType;
+/**
+ * Which settings level a subagent warning applies to. `"definition"` marks a
+ * warning about a **Custom Subagent definition**'s own frontmatter
+ * capability rather than a Pi settings key.
+ */
+export type WarningScope = "shared" | AgentType | "definition";
 
 /**
  * User-facing warning about a configured-but-unusable subagent setting.

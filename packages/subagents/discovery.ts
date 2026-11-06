@@ -15,6 +15,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { parseModelRef } from "./model-ref.ts";
+import { isThinkingLevel, type ThinkingLevel } from "./thinking-level.ts";
 
 /** Fields the frontmatter grammar accepts. Every accepted field is
  *  implemented; anything else is an explicitly rejected `unknown-field`, so
@@ -28,6 +29,7 @@ export const SUPPORTED_FIELDS = [
   "tools",
   "disallowedTools",
   "model",
+  "thinkingLevel",
 ] as const;
 
 /** The explicit parent-model sentinel for the `model` frontmatter field. */
@@ -62,6 +64,11 @@ export interface CustomSubagentDef {
    *  defaults then parent-model fallback. Syntax is validated here; the
    *  registry lookup happens at launch and a miss fails the run. */
   model?: string;
+  /** Pi thinking level for the type's runs (see thinking-level.ts). Omitted
+   *  keeps defined resolution: the shared `subagents.thinkingLevel` setting,
+   *  then the SDK/settings behavior. Validated here against Pi's vocabulary;
+   *  a malformed value invalidates the definition, like `model`. */
+  thinkingLevel?: ThinkingLevel;
 }
 
 export type DefinitionDiagnosticKind =
@@ -141,7 +148,12 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
 
   // Optional capability fields: validated in declaration order so an error
   // always points at the first offending field.
-  const custom: { tools?: string[]; disallowedTools?: string[]; model?: string } = {};
+  const custom: {
+    tools?: string[];
+    disallowedTools?: string[];
+    model?: string;
+    thinkingLevel?: ThinkingLevel;
+  } = {};
   if ("tools" in frontmatter) {
     const parsed = parseToolListField(frontmatter["tools"], "tools");
     if (parsed.error) return fail("invalid-definition", parsed.error);
@@ -156,6 +168,11 @@ function parseDefinitionFile(filePath: string, raw: string): ParseOutcome {
     const parsed = parseModelField(frontmatter["model"]);
     if (parsed.error) return fail("invalid-definition", parsed.error);
     custom.model = parsed.value;
+  }
+  if ("thinkingLevel" in frontmatter) {
+    const parsed = parseThinkingLevelField(frontmatter["thinkingLevel"]);
+    if (parsed.error) return fail("invalid-definition", parsed.error);
+    custom.thinkingLevel = parsed.value;
   }
 
   for (const field of Object.keys(frontmatter)) {
@@ -291,6 +308,29 @@ export function parseModelField(value: unknown): { value?: string; error?: strin
     };
   }
   return { value: trimmed };
+}
+
+/**
+ * Validate a `thinkingLevel` frontmatter value.
+ * Accepted: exactly one of Pi's settings-level thinking levels (`off`,
+ * `minimal`, `low`, `medium`, `high`, `xhigh`, `max` — case sensitive, no
+ * trimming). A non-string value or any other string names the valid levels in
+ * the error message. Unlike the configured settings cascade — where a
+ * malformed value warns and falls through — a definition value is part of the
+ * definition grammar, so a malformed value invalidates the definition, the
+ * same treatment as a malformed `model`.
+ *
+ * Explicit `off` is a real preference, distinct from omission: an explicit
+ * `thinkingLevel: off` still wins the cascade over a shared enabled level.
+ */
+export function parseThinkingLevelField(value: unknown): FieldParseResult<ThinkingLevel> {
+  if (isThinkingLevel(value)) return { value };
+  return {
+    error:
+      `\`thinkingLevel\` must be one of Pi's thinking levels: ` +
+      `off, minimal, low, medium, high, xhigh, max (exact, lowercase) — got ` +
+      `${JSON.stringify(value) ?? String(value)}`,
+  };
 }
 
 // ─── Scope walking ──────────────────────────────────────────────────────────

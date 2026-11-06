@@ -28,7 +28,7 @@ You are a code review Subagent. The Markdown body is the Subagent's system promp
 
 - Required frontmatter: `name` (identity, matched exactly as `subagent_type`) and `description` (surfaced to the parent so it can pick a type).
 - The body is the system prompt. Markdown without frontmatter or without a `name` is documentation and is ignored.
-- Frontmatter accepts `name`, `description`, `skills` (a YAML list of Pi skill names to preload — see [Skill preloading](#skill-preloading)), plus `tools`, `disallowedTools`, and `model` (see below). Unknown fields are **rejected explicitly** — never silently ignored, so unimplemented settings are never mistaken for guarantees.
+- Frontmatter accepts `name`, `description`, `skills` (a YAML list of Pi skill names to preload — see [Skill preloading](#skill-preloading)), plus `tools`, `disallowedTools`, `model`, and `thinkingLevel` (see below). Unknown fields are **rejected explicitly** — never silently ignored, so unimplemented settings are never mistaken for guarantees.
 - `explore` and `general` are reserved names and cannot be redefined.
 
 ### Discovery locations and precedence
@@ -101,6 +101,39 @@ A definition can pin its model:
   consulted for that launch and produces no model warning for it. Thinking-level settings
   keep applying independently of the model choice.
 
+### Thinking level: `thinkingLevel`
+
+A definition can pin its reasoning-effort preference for its runs, using Pi's
+settings-level vocabulary — `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`:
+
+```markdown
+---
+name: deep-analyst
+description: Slow, careful analysis
+model: anthropic/claude-sonnet-4-20250514
+thinkingLevel: high
+---
+
+Body.
+```
+
+- **Omitted** — the shared `subagents.thinkingLevel` setting still applies, then the
+  SDK/settings behavior; unchanged from before this field existed.
+- **Set** — it wins over the shared setting per type, exactly like the
+  `subagents.{explore,general}.thinkingLevel` per-type settings for the built-ins. Model
+  resolution is independent: a `model` frontmatter and a `thinkingLevel` preference apply
+  together or alone.
+- **Explicit `"off"`** is a real preference, not omission — it overrides a shared enabled
+  level (through Pi's capability adaptation for the model).
+- A value outside that vocabulary is **rejected at discovery** — the definition is
+  invalid with a message naming the accepted levels. This is stricter than the settings
+  cascade (where a malformed value warns and falls through) because a definition value is
+  part of the definition grammar, the same treatment as a malformed `model`.
+- Thinking–effort adaptation is unchanged: the requested level passes into session
+  creation, Pi clamps it to the resolved model's capabilities, and a warning carrying
+  scope `"definition"`, the requested, and the effective level is emitted when they
+  differ (in `details.warnings`, plus a UI toast) — never in result prose.
+
 ### Claude compatibility limitations
 
 Definitions written for Claude Code must be adapted; compatibility is deliberately partial:
@@ -115,9 +148,9 @@ Definitions written for Claude Code must be adapted; compatibility is deliberate
   (`write`, `bash`). Claude habits like relying on a narrower default permission profile do
   not transfer; state read-only intentions with an explicit read-only allowlist.
 - **Strict field validation:** unknown fields (anything other than `name`, `description`,
-  `tools`, `disallowedTools`, `model`, and `skills`) make the definition invalid rather
-  than ignored — remove or adapt unsupported fields (`mode`, `permission-mode`, scoped
-  tool patterns, model aliases) when migrating.
+  `tools`, `disallowedTools`, `model`, `thinkingLevel`, and `skills`) make the definition
+  invalid rather than ignored — remove or adapt unsupported fields (`mode`,
+  `permission-mode`, scoped tool patterns, model aliases) when migrating.
 - **Model identifiers:** exact `provider/model` strings or `inherit` only; Claude aliases
   such as `sonnet` or `opus` are invalid.
 - **Safety boundaries take precedence over any frontmatter value:** subagents cannot
@@ -607,7 +640,9 @@ value beats a global shared value). Accepted values are Pi's `off`, `minimal`,
 ### Resolution precedence
 
 1. **Per-type** — `subagents.{explore,general}.thinkingLevel` for the type
-   being launched.
+   being launched; a custom type's per-type slot is its definition's own
+   `thinkingLevel` frontmatter instead ([Custom Subagent types → Thinking
+   level](#thinking-level-thinkinglevel)).
 2. **Shared** — the top-level `subagents.thinkingLevel` setting.
 3. **SDK/settings** — no session override: Pi's own defaults and capability
    adaptation remain in effect.
