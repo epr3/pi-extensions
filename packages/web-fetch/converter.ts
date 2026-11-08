@@ -7,7 +7,7 @@
 // relative links resolve against the retrieved document URL.
 
 import { readFile, writeFile } from "node:fs/promises";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import TurndownService from "turndown";
 import {
   tables as gfmTables,
@@ -167,7 +167,8 @@ export function convertHtmlToMarkdown(
   title: string;
   textChars: number;
 } {
-  const dom = new JSDOM(html, { url: baseUrl });
+  // Keep jsdom's page diagnostics out of the host terminal.
+  const dom = new JSDOM(html, { url: baseUrl, virtualConsole: new VirtualConsole() });
   const doc = dom.window.document;
   const title = (doc.title || "").trim();
   const body = doc.body;
